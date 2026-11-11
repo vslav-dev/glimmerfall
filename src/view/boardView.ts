@@ -2,7 +2,7 @@ import 'pixi.js/text-bitmap';
 import { BitmapFont, BitmapText, Container, Sprite, type Texture } from 'pixi.js';
 import { isAdjacent } from '@/core/board';
 import { findMoves } from '@/core/moves';
-import { type Blast, BlastKind, type Board, type GameEvent, NO_COLOR, type Piece, type Pos, Special } from '@/core/types';
+import { type Blast, BlastKind, type Board, type GameEvent, NO_COLOR, type Piece, type Pos, Special, type SwapEvent } from '@/core/types';
 import { FrameName, GEM_TINTS } from '@/view/art';
 import { Atlas } from '@/view/atlas';
 import { Particles } from '@/view/particles';
@@ -11,7 +11,6 @@ import { Ease } from '@/view/tween';
 
 type ClearEvent = Extract<GameEvent, { type: 'clear' }>;
 type FallEvent = Extract<GameEvent, { type: 'fall' }>;
-type SwapEvent = Extract<GameEvent, { type: 'swap' }>;
 type PiecesEvent = Extract<GameEvent, { type: 'transform' | 'shuffle' }>;
 
 /** Delay between playback "waves" inside one clear step (special chains fire one after another). */
@@ -72,6 +71,10 @@ export class BoardView {
   private hintTimer = 0;
   private hintToken = 0;
   private hinted: Sprite[] = [];
+  /** cells being animated; the player can grab only the rest, so moves are possible during a cascade */
+  private readonly locked = new Set<number>();
+  /** bumped when the board is replaced or removed: playback still in flight stops */
+  private epoch = 0;
 
   public constructor(
     private readonly scene: Scene,
@@ -111,6 +114,8 @@ export class BoardView {
   }
 
   public setBoard(board: Board): void {
+    this.epoch++;
+    this.locked.clear();
     this.board = board;
     this.grid = board.cells.map((c) => c.piece);
     this.deselect();
@@ -119,6 +124,16 @@ export class BoardView {
 
   /** Removes the board from the screen (menus show the bare background). */
   public clear(): void {
+    this.epoch++;
+    this.locked.clear();
+    this.wipe();
+    this.board = null;
+    this.grid = [];
+    this.scene.request();
+  }
+
+  /** Destroys every sprite; running animations jump to their end first. */
+  private wipe(): void {
     this.scene.tweens.finishAll();
     this.cancelHint();
     this.particles.clear();
@@ -129,10 +144,7 @@ export class BoardView {
     this.ice.clear();
     this.crates.clear();
     this.chains.clear();
-    this.board = null;
-    this.grid = [];
     this.selected = null;
-    this.scene.request();
   }
 
   /** Fits the board into the canvas area (CSS pixels). */
@@ -153,12 +165,7 @@ export class BoardView {
 
   private rebuild(): void {
     const b = this.board!;
-    const grid = this.grid;
-    // Running animations jump to their end first, so nothing animates a destroyed sprite.
-    this.clear();
-    this.board = b;
-    this.grid = grid;
-
+    this.wipe();
     b.cells.forEach((cell, i) => {
       if (!cell.exists) return;
       const { r, c } = this.posOf(i);
@@ -174,8 +181,19 @@ export class BoardView {
 
   // ---------- playback ----------
 
-  public async play(events: GameEvent[]): Promise<void> {
+  /**
+   * Plays a script; `onEvent` fires as each event starts (sound, haptics).
+   * Every cell the script touches stays locked until it ends.
+   */
+  public async play(events: GameEvent[], onEvent: (ev: GameEvent) => void): Promise<void> {
+    const epoch = this.epoch;
+    const cells = this.cellsOf(events);
+    for (const i of cells) this.locked.add(i);
+    if (this.selected && cells.has(this.indexOf(this.selected))) this.deselect();
+
     for (const ev of events) {
+      if (epoch !== this.epoch) return;
+      onEvent(ev);
       switch (ev.type) {
         case 'swap':
           await this.playSwap(ev);
@@ -194,6 +212,34 @@ export class BoardView {
           break;
       }
     }
+    if (epoch === this.epoch) for (const i of cells) this.locked.delete(i);
+  }
+
+  private cellsOf(events: GameEvent[]): Set<number> {
+    const b = this.board!;
+    const cells = new Set<number>();
+    const add = (p: Pos): void => {
+      if (p.r >= 0 && p.r < b.rows) cells.add(this.indexOf(p));
+    };
+    for (const ev of events) {
+      switch (ev.type) {
+        case 'swap':
+          add(ev.a);
+          add(ev.b);
+          break;
+        case 'clear':
+          for (const x of [...ev.removed, ...ev.created, ...ev.layers]) add(x.pos);
+          break;
+        case 'fall':
+          for (const m of ev.moves) m.path.forEach(add);
+          break;
+        case 'transform':
+        case 'shuffle':
+          for (const p of ev.pieces) add(p.pos);
+          break;
+      }
+    }
+    return cells;
   }
 
   /** Pieces rain in column by column at level start. */
@@ -596,7 +642,7 @@ export class BoardView {
   private onDown(e: PointerEvent): void {
     if (!this.inputEnabled) return;
     const pos = this.pointToCell(e);
-    if (!pos || !this.grid[this.indexOf(pos)]) {
+    if (!pos || !this.isFree(pos)) {
       this.deselect();
       return;
     }
@@ -604,7 +650,7 @@ export class BoardView {
     if (this.selected && isAdjacent(this.selected, pos)) {
       const from = this.selected;
       this.deselect();
-      this.input.onSwap(from, pos);
+      this.swap(from, pos);
       return;
     }
     this.select(pos);
@@ -621,7 +667,19 @@ export class BoardView {
     const to = Math.abs(dx) > Math.abs(dy) ? { r: from.r, c: from.c + Math.sign(dx) } : { r: from.r + Math.sign(dy), c: from.c };
     this.drag = null;
     this.deselect();
-    this.input.onSwap(from, to);
+    this.swap(from, to);
+  }
+
+  /** Both cells must still be calm: a selection or a drag may have started before a cascade reached them. */
+  private swap(from: Pos, to: Pos): void {
+    if (this.isFree(from) && this.isFree(to)) this.input.onSwap(from, to);
+  }
+
+  private isFree(p: Pos): boolean {
+    const b = this.board!;
+    if (p.r < 0 || p.r >= b.rows || p.c < 0 || p.c >= b.cols) return false;
+    const i = this.indexOf(p);
+    return this.grid[i] !== null && !this.locked.has(i);
   }
 
   private pointToCell(e: PointerEvent): Pos | null {
@@ -642,7 +700,8 @@ export class BoardView {
     void this.scene.tweens.run(
       110,
       (k) => {
-        if (this.selected) sprite.scale.set(1 + 0.14 * k);
+        // Only while this very cell stays selected: a quick re-selection must not leave it enlarged.
+        if (this.selected === pos) sprite.scale.set(1 + 0.14 * k);
       },
       { ease: Ease.outQuad },
     );
@@ -718,8 +777,14 @@ export class BoardView {
     void this.scene.tweens.run(duration, update, { ease: Ease.outQuad }).then(() => sprite.destroy());
   }
 
+  /** Delayed effect; dropped when the board was replaced meanwhile. */
   private after(delay: number, fn: () => void): void {
+    const epoch = this.epoch;
     if (delay <= 0) fn();
-    else void this.scene.tweens.wait(delay).then(fn);
+    else {
+      void this.scene.tweens.wait(delay).then(() => {
+        if (epoch === this.epoch) fn();
+      });
+    }
   }
 }

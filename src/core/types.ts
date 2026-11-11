@@ -178,7 +178,16 @@ export type GameEvent =
   | { type: 'fall'; moves: FallMove[] }
   | { type: 'shuffle'; pieces: CreatedPiece[] };
 
+export type SwapEvent = Extract<GameEvent, { type: 'swap' }>;
+
 export type GameStatus = 'playing' | 'won' | 'lost';
+
+/** A valid swap already made on the board, waiting for the next step to clear it. Cell indices. */
+export interface PendingSwap {
+  from: number;
+  /** where the moved piece now is; a created special or a combo centers here */
+  to: number;
+}
 
 /** Everything that changes during a level. JSON-serializable for save/resume. */
 export interface GameState {
@@ -191,4 +200,7 @@ export interface GameState {
   progress: number[];
   extraMovesUsed: boolean;
   status: GameStatus;
+  pending: PendingSwap | null;
+  /** cascade depth of the next step: drives the score multiplier and praise */
+  cascade: number;
 }

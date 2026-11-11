@@ -1,6 +1,6 @@
-import { cellAt, indexOf, isAdjacent, isMovable, newPiece, randomFreeColor } from '@/core/board';
-import { hasMove } from '@/core/moves';
-import { resolveFinale, resolveSwap, type Tally, type TargetScorer } from '@/core/resolve';
+import { cellAt, indexOf, isAdjacent, isMovable, newPiece, randomFreeColor, swapPieces } from '@/core/board';
+import { hasMove, isValidSwap, shuffleBoard } from '@/core/moves';
+import { resolveFinale, resolveStep, type Tally, type TargetScorer } from '@/core/resolve';
 import {
   type Board,
   type Cell,
@@ -10,6 +10,7 @@ import {
   type Objective,
   ObjectiveKind,
   type Pos,
+  type SwapEvent,
 } from '@/core/types';
 
 export const EXTRA_MOVES = 5;
@@ -59,37 +60,74 @@ export function createGame(level: LevelDef, seed = level.seed): GameState {
     progress: level.objectives.map(() => 0),
     extraMovesUsed: false,
     status: 'playing',
+    pending: null,
+    cascade: 0,
   };
 }
 
-export interface MoveResult {
-  valid: boolean;
-  events: GameEvent[];
+/** The player may swap now: the level runs, moves remain, and no earlier swap still waits for its step. */
+export function canAct(state: GameState): boolean {
+  return state.status === 'playing' && state.movesLeft > 0 && state.pending === null;
 }
 
 export function canSwap(state: GameState, a: Pos, b: Pos): boolean {
-  if (state.status !== 'playing' || !isAdjacent(a, b)) return false;
+  if (!canAct(state) || !isAdjacent(a, b)) return false;
   const ca = cellAt(state.board, a.r, a.c);
   const cb = cellAt(state.board, b.r, b.c);
   return ca !== null && cb !== null && isMovable(ca) && isMovable(cb);
 }
 
-/** Player swaps piece `a` onto `b`. Invalid swaps cost nothing and only produce a bounce event. */
-export function makeMove(state: GameState, a: Pos, b: Pos): MoveResult {
-  if (!canSwap(state, a, b)) return { valid: false, events: [] };
+/**
+ * Player swaps piece `a` onto `b`, also in the middle of a cascade.
+ * A valid swap costs a move and waits as `pending` for the next step; an invalid one only bounces.
+ */
+export function makeMove(state: GameState, a: Pos, b: Pos): SwapEvent | null {
+  if (!canSwap(state, a, b)) return null;
   const board = state.board;
-  const res = resolveSwap(board, indexOf(board, a.r, a.c), indexOf(board, b.r, b.c), scorerFor(state));
-  if (!res.valid) return res;
-
-  state.movesLeft--;
-  state.movesMade++;
-  applyTally(state, res.tally);
-  if (isComplete(state)) state.status = 'won';
-  else if (state.movesLeft <= 0) state.status = 'lost';
-  return res;
+  const from = indexOf(board, a.r, a.c);
+  const to = indexOf(board, b.r, b.c);
+  const valid = isValidSwap(board, from, to);
+  if (valid) {
+    swapPieces(board, from, to);
+    state.pending = { from, to };
+    state.movesLeft--;
+    state.movesMade++;
+  }
+  return { type: 'swap', a, b, valid };
 }
 
-/** Remaining moves become fireworks. Call once after a win. */
+/**
+ * Advances the board by one step and applies its gains right away, so goals count up during a cascade.
+ * Null once the board rests; that is when a level without moves is lost.
+ */
+export function advance(state: GameState): GameEvent[] | null {
+  const { board, pending } = state;
+  const level = pending ? 0 : state.cascade;
+  state.pending = null;
+  const step = resolveStep(board, pending, level, scorerFor(state));
+  if (step) {
+    state.cascade = level + 1;
+    applyTally(state, step.tally);
+    if (state.status === 'playing' && isComplete(state)) state.status = 'won';
+    return step.events;
+  }
+  state.cascade = 0;
+  if (state.status !== 'playing') return null;
+  if (state.movesLeft <= 0) {
+    state.status = 'lost';
+    return null;
+  }
+  return hasMove(board) ? null : [{ type: 'shuffle', pieces: shuffleBoard(board) }];
+}
+
+/** Makes a move and runs the board to rest at once, without playback (bot, tests). */
+export function playMove(state: GameState, a: Pos, b: Pos): boolean {
+  const valid = makeMove(state, a, b)?.valid ?? false;
+  while (advance(state)) continue;
+  return valid;
+}
+
+/** Remaining moves become fireworks. Call once after a win, at rest. */
 export function runFinale(state: GameState): GameEvent[] {
   const { events, tally } = resolveFinale(state.board, state.movesLeft, scorerFor(state));
   state.movesLeft = 0;

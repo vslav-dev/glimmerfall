@@ -3,7 +3,7 @@ import { type DirectorState, newDirector } from '@/difficulty/director';
 import { loadJson, saveText } from '@/platform/platform';
 
 const KEY = 'glimmerfall-save';
-const VERSION = 1;
+const VERSION = 2;
 
 export interface Settings {
   sound: boolean;
@@ -46,8 +46,11 @@ export function defaultSave(): SaveData {
 
 export async function loadSave(): Promise<SaveData> {
   const data = await loadJson<SaveData>(KEY);
-  // One schema version so far; future versions migrate here instead of discarding progress.
-  if (!data || data.version !== VERSION) return defaultSave();
+  if (!data) return defaultSave();
+  // v1 games predate step-by-step resolution; progress stays, the unfinished attempt restarts.
+  if (data.version === 1 && data.current) data.current.game = null;
+  if (data.version === 1) data.version = VERSION;
+  if (data.version !== VERSION) return defaultSave();
   return { ...defaultSave(), ...data };
 }
 

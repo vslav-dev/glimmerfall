@@ -1,5 +1,5 @@
 import { neighbors4, posOf, swapPieces } from '@/core/board';
-import { createGame, makeMove } from '@/core/game';
+import { createGame, playMove } from '@/core/game';
 import { findGroups } from '@/core/matches';
 import { findMoves, isComboPair, type Move } from '@/core/moves';
 import { random, type RngHolder } from '@/core/rng';
@@ -37,7 +37,7 @@ export function simulate(level: LevelDef, seed: number, maxMoves: number, noise 
     const move = chooseMove(game, wanted, bot, noise);
     if (!move) break;
     const b = game.board;
-    makeMove(game, posOf(b, move[0]), posOf(b, move[1]));
+    playMove(game, posOf(b, move[0]), posOf(b, move[1]));
     scoreAt.push(game.score);
   }
   return { movesNeeded: game.status === 'won' ? game.movesMade : null, score: game.score, scoreAt };

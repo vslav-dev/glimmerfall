@@ -1,7 +1,7 @@
 import { type SaveData, defaultSave, loadSave, persist } from '@/app/save';
 import { AudioBus } from '@/audio/audio';
 import { Sfx } from '@/audio/synth';
-import { addExtraMoves, canSwap, createGame, EXTRA_MOVES, makeMove, runFinale, starsFor } from '@/core/game';
+import { addExtraMoves, advance, canAct, createGame, EXTRA_MOVES, makeMove, runFinale, starsFor } from '@/core/game';
 import { BlastKind, type GameEvent, type GameState, type LevelDef, type Pos } from '@/core/types';
 import { recordAttempt, targetWinRate } from '@/difficulty/director';
 import { LevelDrafts } from '@/gen/drafts';
@@ -39,8 +39,10 @@ export class GameApp {
   private game: GameState | null = null;
   private mode: Mode = Mode.Title;
   private settingsReturn: Mode = Mode.Title;
-  /** a move is being played back */
-  private busy = false;
+  /** game whose board steps are being played back; the player may keep swapping meanwhile */
+  private running: GameState | null = null;
+  /** swap animations in flight; the next board step waits for them */
+  private readonly swaps = new Set<Promise<void>>();
   private actionRunning = false;
   /** `?debug` in the URL shows level and director numbers for tuning */
   private readonly debugEl = new URLSearchParams(location.search).has('debug') ? createDebugEl() : null;
@@ -83,6 +85,7 @@ export class GameApp {
 
   private showTitle(): void {
     this.mode = Mode.Title;
+    this.game = null;
     this.view.inputEnabled = false;
     this.view.clear();
     this.ui.hideHud();
@@ -114,7 +117,7 @@ export class GameApp {
     const game = current.game ?? createGame(current.def);
     current.game = game;
     this.game = game;
-    this.busy = true;
+    this.view.inputEnabled = false;
     this.persist();
     await this.ui.curtain(() => {
       this.ui.hideOverlay();
@@ -124,33 +127,57 @@ export class GameApp {
     });
     this.mode = Mode.Play;
     await this.view.entrance();
-    // A save made right after the last move resumes into its result.
-    if (game.status === 'won') await this.finishWin(game);
-    else if (game.status === 'lost') this.showLose(game);
-    else {
-      this.busy = false;
-      this.enableInput();
-    }
+    // A save made mid-cascade or right after the last move resumes from there.
+    void this.run(game);
   }
 
-  private async onSwap(a: Pos, b: Pos): Promise<void> {
+  /** Swaps are accepted while a cascade plays on, as long as both cells are calm (the view checks that). */
+  private onSwap(a: Pos, b: Pos): void {
     const game = this.game;
-    if (this.mode !== Mode.Play || this.busy || !game || !canSwap(game, a, b)) return;
-    this.busy = true;
-    this.view.inputEnabled = false;
+    if (this.mode !== Mode.Play || !game) return;
+    const swap = makeMove(game, a, b);
+    if (!swap) return;
     this.view.cancelHint();
-
-    const result = makeMove(game, a, b);
-    await this.present(result.events);
+    const anim = this.view.play([swap], (ev) => this.feedback(ev));
+    this.swaps.add(anim);
+    void anim.then(() => this.swaps.delete(anim));
+    if (!swap.valid) {
+      if (this.running !== game) this.view.armHint();
+      return;
+    }
     this.ui.updateHud(game);
-    if (result.valid) this.persist();
+    this.updateInput();
+    void this.run(game);
+  }
 
+  /** Plays board steps one by one until the board rests, then ends the level or waits for the player. */
+  private async run(game: GameState): Promise<void> {
+    if (this.running === game) return;
+    this.running = game;
+    while (this.game === game) {
+      while (this.swaps.size > 0) await Promise.all(this.swaps);
+      if (this.game !== game) break;
+      const events = advance(game);
+      if (!events) break;
+      this.ui.updateHud(game);
+      this.updateInput();
+      await this.view.play(events, (ev) => this.feedback(ev));
+    }
+    if (this.running === game) this.running = null;
+    if (this.game !== game) return;
+    this.ui.updateHud(game);
+    this.updateInput();
+    this.persist();
+    await this.onRest();
+  }
+
+  /** The board is calm: finish the level or let the player think. Deferred while paused. */
+  private async onRest(): Promise<void> {
+    const game = this.game;
+    if (!game || this.running === game || this.mode !== Mode.Play) return;
     if (game.status === 'won') await this.finishWin(game);
     else if (game.status === 'lost') this.showLose(game);
-    else {
-      this.busy = false;
-      this.enableInput();
-    }
+    else this.view.armHint();
   }
 
   private async finishWin(game: GameState): Promise<void> {
@@ -160,7 +187,7 @@ export class GameApp {
     this.ui.flashText(S.win);
     if (game.movesLeft > 0) {
       this.ui.showSkipLayer();
-      await this.present(runFinale(game));
+      await this.view.play(runFinale(game), (ev) => this.feedback(ev));
       this.scene.tweens.speed = 1;
       this.ui.hideOverlay();
       this.ui.updateHud(game);
@@ -182,7 +209,6 @@ export class GameApp {
     this.persist();
 
     await this.view.vanish();
-    this.busy = false;
     this.mode = Mode.Won;
     this.ui.hideHud();
     this.ui.showWin(stars, game.score);
@@ -192,7 +218,6 @@ export class GameApp {
 
   private showLose(game: GameState): void {
     this.mode = Mode.Lost;
-    this.busy = false;
     this.audio.play(Sfx.Lose);
     this.ui.showLose(game, !game.extraMovesUsed, EXTRA_MOVES);
   }
@@ -225,13 +250,12 @@ export class GameApp {
   private resume(): void {
     this.mode = Mode.Play;
     this.ui.hideOverlay();
-    this.enableInput();
+    this.updateInput();
+    void this.onRest();
   }
 
-  private enableInput(): void {
-    const on = this.mode === Mode.Play && !this.busy;
-    this.view.inputEnabled = on;
-    if (on) this.view.armHint();
+  private updateInput(): void {
+    this.view.inputEnabled = this.mode === Mode.Play && this.game !== null && canAct(this.game);
   }
 
   // ---------- actions ----------
@@ -283,7 +307,8 @@ export class GameApp {
           this.ui.updateHud(this.game);
           this.ui.hideOverlay();
           this.mode = Mode.Play;
-          this.enableInput();
+          // Runs the board to rest again: a board without moves gets shuffled.
+          void this.run(this.game);
         }
         break;
       case Action.Menu:
@@ -351,14 +376,6 @@ export class GameApp {
   }
 
   // ---------- presentation ----------
-
-  /** Plays events one by one with sound and haptics. */
-  private async present(events: GameEvent[]): Promise<void> {
-    for (const ev of events) {
-      this.feedback(ev);
-      await this.view.play([ev]);
-    }
-  }
 
   private feedback(ev: GameEvent): void {
     switch (ev.type) {

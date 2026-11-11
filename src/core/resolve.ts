@@ -1,7 +1,7 @@
-import { neighbors4, newPiece, posOf, swapPieces } from '@/core/board';
+import { neighbors4, newPiece, posOf } from '@/core/board';
 import { settle } from '@/core/fall';
 import { findGroups, type MatchGroup } from '@/core/matches';
-import { hasMove, isComboPair, shuffleBoard } from '@/core/moves';
+import { isComboPair } from '@/core/moves';
 import { random, shuffleInPlace } from '@/core/rng';
 import {
   type Blast,
@@ -12,6 +12,7 @@ import {
   type LayerChange,
   MAX_COLORS,
   NO_COLOR,
+  type PendingSwap,
   type Piece,
   type RemovedPiece,
   type ScorePopup,
@@ -43,8 +44,8 @@ export interface Tally {
 /** How attractive a cell is as a spark target. The game derives it from its objectives. */
 export type TargetScorer = (b: Board, i: number) => number;
 
-export interface Resolution {
-  valid: boolean;
+/** What a step (or the finale) did: the playback script and its gains. */
+export interface Step {
   events: GameEvent[];
   tally: Tally;
 }
@@ -78,41 +79,21 @@ export function newTally(): Tally {
   return { score: 0, collected: new Array<number>(MAX_COLORS).fill(0), ice: 0, crate: 0 };
 }
 
-/** Resolves a player swap completely: matches or combo, specials, gravity, cascades, reshuffle. */
-export function resolveSwap(b: Board, ai: number, bi: number, scorer: TargetScorer): Resolution {
-  const tally = newTally();
-  const events: GameEvent[] = [];
-  const a = posOf(b, ai);
-  const bp = posOf(b, bi);
-
-  swapPieces(b, ai, bi);
-  const moved = b.cells[bi].piece!;
-  const other = b.cells[ai].piece!;
-  const combo = isComboPair(moved, other);
-  const groups = combo ? [] : findGroups(b, [bi, ai]);
-
-  if (!combo && groups.length === 0) {
-    swapPieces(b, ai, bi);
-    events.push({ type: 'swap', a, b: bp, valid: false });
-    return { valid: false, events, tally };
-  }
-
-  events.push({ type: 'swap', a, b: bp, valid: true });
-  const ctx = newCtx(b, tally, scorer, events, 0);
-  if (combo) runCombo(ctx, bi, ai);
-  else clearGroups(ctx, groups);
-  finishStep(ctx);
-  cascade(b, tally, scorer, events, 1);
-  return { valid: true, events, tally };
+/**
+ * One board step: the pending player swap (combo or match) and every ready match clear together,
+ * specials fire, pieces fall. Null when nothing matches: the board is calm.
+ */
+export function resolveStep(b: Board, swap: PendingSwap | null, cascadeLevel: number, scorer: TargetScorer): Step | null {
+  const step: Step = { events: [], tally: newTally() };
+  return stepInto(b, swap, cascadeLevel, scorer, step) ? step : null;
 }
 
 /**
  * End-of-level celebration: remaining moves turn random pieces into line specials,
  * then every special on the board fires until the board is calm.
  */
-export function resolveFinale(b: Board, movesLeft: number, scorer: TargetScorer): { events: GameEvent[]; tally: Tally } {
-  const tally = newTally();
-  const events: GameEvent[] = [];
+export function resolveFinale(b: Board, movesLeft: number, scorer: TargetScorer): Step {
+  const step: Step = { events: [], tally: newTally() };
   const plain = shuffleInPlace(
     b,
     b.cells.flatMap((cell, i) => (cell.piece && cell.chain === 0 && cell.piece.special === Special.None ? [i] : [])),
@@ -122,41 +103,42 @@ export function resolveFinale(b: Board, movesLeft: number, scorer: TargetScorer)
     piece.special = random(b) < 0.5 ? Special.LineH : Special.LineV;
     return { pos: posOf(b, i), piece };
   });
-  if (converted.length > 0) events.push({ type: 'transform', pieces: converted });
+  if (converted.length > 0) step.events.push({ type: 'transform', pieces: converted });
 
   for (let round = 0; round < 20; round++) {
     const specials = b.cells.flatMap((cell, i) => (cell.piece && cell.piece.special !== Special.None ? [i] : []));
     if (specials.length === 0) break;
-    const ctx = newCtx(b, tally, scorer, events, round);
+    const ctx = newCtx(b, step, scorer, round);
     specials.forEach((i, k) => {
       unchain(ctx, i, k % 6);
       removePiece(ctx, i, k % 6, -1, true);
     });
     finishStep(ctx);
-    cascade(b, tally, scorer, events, round + 1);
+    step.events.push({ type: 'fall', moves: settle(b) });
+    let level = round + 1;
+    while (stepInto(b, null, level, scorer, step)) level++;
   }
-  return { events, tally };
+  return step;
 }
 
-function cascade(b: Board, tally: Tally, scorer: TargetScorer, events: GameEvent[], startLevel: number): void {
-  events.push({ type: 'fall', moves: settle(b) });
-  for (let level = startLevel; ; level++) {
-    const groups = findGroups(b, []);
-    if (groups.length === 0) break;
-    const ctx = newCtx(b, tally, scorer, events, level);
-    clearGroups(ctx, groups);
-    finishStep(ctx);
-    events.push({ type: 'fall', moves: settle(b) });
-  }
-  if (!hasMove(b)) events.push({ type: 'shuffle', pieces: shuffleBoard(b) });
+/** Appends one step to `step`; false when there is nothing to clear. */
+function stepInto(b: Board, swap: PendingSwap | null, cascadeLevel: number, scorer: TargetScorer, step: Step): boolean {
+  const ctx = newCtx(b, step, scorer, cascadeLevel);
+  if (swap && isComboPair(b.cells[swap.to].piece!, b.cells[swap.from].piece!)) runCombo(ctx, swap.to, swap.from);
+  const groups = findGroups(b, swap ? [swap.to, swap.from] : []);
+  if (ctx.removed.length === 0 && groups.length === 0) return false;
+  clearGroups(ctx, groups);
+  finishStep(ctx);
+  step.events.push({ type: 'fall', moves: settle(b) });
+  return true;
 }
 
-function newCtx(b: Board, tally: Tally, scorer: TargetScorer, events: GameEvent[], cascadeLevel: number): Ctx {
+function newCtx(b: Board, step: Step, scorer: TargetScorer, cascadeLevel: number): Ctx {
   return {
     b,
-    tally,
+    tally: step.tally,
     scorer,
-    events,
+    events: step.events,
     multiplier: Math.min(cascadeLevel + 1, MAX_MULTIPLIER),
     cascade: cascadeLevel,
     removed: [],

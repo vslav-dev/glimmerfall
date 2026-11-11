@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { indexOf } from '@/core/board';
+import { indexOf, posOf, swapPieces } from '@/core/board';
 import { settle } from '@/core/fall';
-import { createGame, makeMove } from '@/core/game';
+import { advance, canSwap, createGame, makeMove, playMove } from '@/core/game';
 import { findGroups } from '@/core/matches';
-import { findMoves, hasAnyMatch, hasMove } from '@/core/moves';
-import { resolveSwap } from '@/core/resolve';
-import { type Board, type LevelDef, LevelKind, ObjectiveKind, Special } from '@/core/types';
+import { findMoves, hasAnyMatch, hasMove, isValidSwap } from '@/core/moves';
+import { resolveStep } from '@/core/resolve';
+import { type Board, type GameEvent, type LevelDef, LevelKind, ObjectiveKind, type PendingSwap, Special } from '@/core/types';
 
 /** Digits are colors, '.' is a hole, '#' a crate, '_' an empty cell. */
 function boardFrom(rows: string[], colors = 6): Board {
@@ -73,20 +73,32 @@ describe('findGroups', () => {
   });
 });
 
-describe('resolveSwap', () => {
-  it('rejects a swap without a match and restores the board', () => {
-    const b = boardFrom(['012', '120', '201']);
-    const before = b.cells.map((c) => c.piece?.id);
-    const res = resolveSwap(b, 0, 1, noTarget);
-    expect(res.valid).toBe(false);
-    expect(b.cells.map((c) => c.piece?.id)).toEqual(before);
+/** Swaps and resolves to rest like a whole move; null for an invalid swap. */
+function resolveMove(b: Board, from: number, to: number): { events: GameEvent[]; score: number } | null {
+  if (!isValidSwap(b, from, to)) return null;
+  swapPieces(b, from, to);
+  const events: GameEvent[] = [];
+  let score = 0;
+  let swap: PendingSwap | null = { from, to };
+  for (let level = 0; ; level++) {
+    const step = resolveStep(b, swap, level, noTarget);
+    if (!step) break;
+    events.push(...step.events);
+    score += step.tally.score;
+    swap = null;
+  }
+  return { events, score };
+}
+
+describe('resolveStep', () => {
+  it('rejects a swap without a match', () => {
+    expect(resolveMove(boardFrom(['012', '120', '201']), 0, 1)).toBeNull();
   });
 
   it('clears a match and refills the board', () => {
     const b = boardFrom(['0120', '1201', '0012', '2340']);
-    const res = resolveSwap(b, indexOf(b, 1, 2), indexOf(b, 2, 2), noTarget);
-    expect(res.valid).toBe(true);
-    expect(res.tally.score).toBeGreaterThan(0);
+    const res = resolveMove(b, indexOf(b, 1, 2), indexOf(b, 2, 2));
+    expect(res?.score).toBeGreaterThan(0);
     expect(b.cells.every((c) => c.piece !== null)).toBe(true);
     expect(hasAnyMatch(b)).toBe(false);
   });
@@ -95,16 +107,14 @@ describe('resolveSwap', () => {
     const b = boardFrom(['01234', '12340', '23401', '34012', '40123']);
     b.cells[indexOf(b, 2, 1)].piece!.special = Special.LineH;
     b.cells[indexOf(b, 2, 2)].piece!.special = Special.LineV;
-    const res = resolveSwap(b, indexOf(b, 2, 1), indexOf(b, 2, 2), noTarget);
-    const clear = res.events.find((e) => e.type === 'clear');
+    const clear = resolveMove(b, indexOf(b, 2, 1), indexOf(b, 2, 2))?.events.find((e) => e.type === 'clear');
     expect(clear?.type === 'clear' && clear.removed.length).toBe(9);
   });
 
   it('prism + plain wipes that color', () => {
     const b = boardFrom(['0123', '1230', '2301', '3012']);
     b.cells[0].piece = { id: 99, color: -1, special: Special.Prism };
-    const res = resolveSwap(b, 0, 1, noTarget);
-    const clear = res.events.find((e) => e.type === 'clear');
+    const clear = resolveMove(b, 0, 1)?.events.find((e) => e.type === 'clear');
     // prism + four pieces of color 1
     expect(clear?.type === 'clear' && clear.removed.length).toBe(5);
   });
@@ -148,11 +158,31 @@ describe('game', () => {
       expect(moves.length).toBeGreaterThan(0);
       const [i, j] = moves[(step * 7) % moves.length];
       const b = game.board;
-      const res = makeMove(game, { r: Math.floor(i / b.cols), c: i % b.cols }, { r: Math.floor(j / b.cols), c: j % b.cols });
-      expect(res.valid).toBe(true);
+      expect(playMove(game, posOf(b, i), posOf(b, j))).toBe(true);
       expect(hasAnyMatch(b)).toBe(false);
       const ids = b.cells.flatMap((c) => (c.piece ? [c.piece.id] : []));
       expect(new Set(ids).size).toBe(ids.length);
     }
+  });
+
+  it('a swap made during a cascade joins its next step, and goals count per step', () => {
+    const game = createGame(level({ moves: 1 }));
+    // Row 0 is a ready cascade match; swapping (2,2) down completes 333 at the bottom.
+    game.board = boardFrom(['00012', '12340', '12312', '33401']);
+    const swap = makeMove(game, { r: 2, c: 2 }, { r: 3, c: 2 });
+    expect(swap).toEqual({ type: 'swap', a: { r: 2, c: 2 }, b: { r: 3, c: 2 }, valid: true });
+    expect(game.movesLeft).toBe(0);
+    expect(canSwap(game, { r: 0, c: 3 }, { r: 0, c: 4 })).toBe(false);
+
+    const step = advance(game);
+    const clear = step?.find((e) => e.type === 'clear');
+    expect(clear?.type === 'clear' && clear.removed.length).toBe(6);
+    expect(game.score).toBeGreaterThan(0);
+    expect(game.progress[0]).toBe(game.score);
+    expect(game.status).toBe('playing');
+
+    while (advance(game)) continue;
+    expect(game.status).toBe('lost');
+    expect(hasAnyMatch(game.board)).toBe(false);
   });
 });
