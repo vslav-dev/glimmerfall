@@ -39,6 +39,14 @@ export const FrameName = {
   Glow: 'glow',
 } as const;
 
+/** Chain per layer, bottom to top: ends (cell units) and sag. Each one hangs at its own angle. */
+const CHAIN_LAYERS: { from: [number, number]; to: [number, number]; sag: number }[] = [
+  { from: [0.07, 0.24], to: [0.93, 0.34], sag: 0.22 },
+  { from: [0.07, 0.56], to: [0.93, 0.28], sag: 0.3 },
+  { from: [0.07, 0.12], to: [0.93, 0.5], sag: 0.12 },
+  { from: [0.07, 0.74], to: [0.93, 0.7], sag: 0.12 },
+];
+
 type Painter = (ctx: CanvasRenderingContext2D, s: number) => void;
 
 function buildPainters(): Map<string, Painter> {
@@ -55,8 +63,7 @@ function buildPainters(): Map<string, Painter> {
   painters.set(FrameName.ice(1), (ctx, s) => drawIce(ctx, s, 1));
   painters.set(FrameName.ice(2), (ctx, s) => drawIce(ctx, s, 2));
   for (const strength of [1, 2, 3]) painters.set(FrameName.crate(strength), (ctx, s) => drawCrate(ctx, s, strength));
-  painters.set(FrameName.chain(1), (ctx, s) => drawChain(ctx, s, 1));
-  painters.set(FrameName.chain(2), (ctx, s) => drawChain(ctx, s, 2));
+  for (let layers = 1; layers <= CHAIN_LAYERS.length; layers++) painters.set(FrameName.chain(layers), (ctx, s) => drawChain(ctx, s, layers));
   painters.set(FrameName.Dot, drawDot);
   painters.set(FrameName.Star, (ctx, s) => {
     ctx.fillStyle = '#fff';
@@ -321,30 +328,86 @@ function drawCrate(ctx: CanvasRenderingContext2D, s: number, strength: number): 
   }
 }
 
+/** One sagging chain per layer, each laid over the previous; breaking a layer removes the top chain. */
 function drawChain(ctx: CanvasRenderingContext2D, s: number, layers: number): void {
-  const link = (cx: number, cy: number, angle: number): void => {
-    ctx.save();
-    ctx.translate(cx, cy);
-    ctx.rotate(angle);
+  for (const spec of CHAIN_LAYERS.slice(0, layers)) drawHangingChain(ctx, s, spec.from, spec.to, spec.sag);
+}
+
+function drawHangingChain(ctx: CanvasRenderingContext2D, s: number, from: [number, number], to: [number, number], sag: number): void {
+  // Quadratic curve whose middle dips `sag` below the straight line between the anchors.
+  const [x0, y0] = [from[0] * s, from[1] * s];
+  const [x2, y2] = [to[0] * s, to[1] * s];
+  const [x1, y1] = [(x0 + x2) / 2, (y0 + y2) / 2 + sag * s * 2];
+  const at = (t: number): [number, number] => {
+    const u = 1 - t;
+    return [u * u * x0 + 2 * u * t * x1 + t * t * x2, u * u * y0 + 2 * u * t * y1 + t * t * y2];
+  };
+
+  // Walk the curve by arc length so links sit at an even pitch.
+  const pitch = s * 0.1;
+  const links: { x: number; y: number; angle: number }[] = [];
+  let [px, py] = at(0);
+  let travelled = pitch / 2;
+  for (let k = 1; k <= 200; k++) {
+    const [x, y] = at(k / 200);
+    const step = Math.hypot(x - px, y - py);
+    while (travelled <= step) {
+      const f = travelled / step;
+      links.push({ x: px + (x - px) * f, y: py + (y - py) * f, angle: Math.atan2(y - py, x - px) });
+      travelled += pitch;
+    }
+    travelled -= step;
+    [px, py] = [x, y];
+  }
+
+  // Links alternate: an open oval facing us, then one seen edge-on as a short bar.
+  const shape = (k: number): void => {
     ctx.beginPath();
-    ctx.ellipse(0, 0, s * 0.11, s * 0.065, 0, 0, Math.PI * 2);
-    ctx.stroke();
+    if (k % 2 === 0) ctx.ellipse(0, 0, s * 0.072, s * 0.046, 0, 0, Math.PI * 2);
+    else {
+      ctx.moveTo(-s * 0.07, 0);
+      ctx.lineTo(s * 0.07, 0);
+    }
+  };
+  const pass = (width: number, style: string, shadow: boolean): void => {
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineWidth = width;
+    ctx.strokeStyle = style;
+    if (shadow) {
+      ctx.shadowColor = 'rgba(0,0,0,0.5)';
+      ctx.shadowBlur = s * 0.03;
+      ctx.shadowOffsetY = s * 0.02;
+    }
+    links.forEach((l, k) => {
+      ctx.save();
+      ctx.translate(l.x, l.y);
+      ctx.rotate(l.angle);
+      shape(k);
+      ctx.stroke();
+      ctx.restore();
+    });
     ctx.restore();
   };
-  const lines: [number, number, number][] = [
-    [1, 1, Math.PI / 4],
-    [1, -1, -Math.PI / 4],
-  ];
-  if (layers > 1) lines.push([1, 0, 0]);
-  for (const pass of [0, 1]) {
-    ctx.lineWidth = pass === 0 ? s * 0.06 : s * 0.035;
-    ctx.strokeStyle = pass === 0 ? '#2d313b' : '#d7dde8';
-    for (const [dx, dy, angle] of lines) {
-      for (let k = -2; k <= 2; k++) {
-        const t = k * 0.17;
-        link(s / 2 + t * s * dx, s / 2 + t * s * dy, angle);
-      }
-    }
+  pass(s * 0.05, '#1f232b', true);
+  pass(s * 0.03, '#a9b3c3', false);
+  pass(s * 0.011, 'rgba(255,255,255,0.75)', false);
+
+  // Bolts the chain hangs from.
+  for (const [bx, by] of [
+    [x0, y0],
+    [x2, y2],
+  ]) {
+    const g = ctx.createRadialGradient(bx - s * 0.015, by - s * 0.015, 0, bx, by, s * 0.05);
+    g.addColorStop(0, '#f2f5fa');
+    g.addColorStop(1, '#5d6676');
+    ctx.beginPath();
+    ctx.arc(bx, by, s * 0.042, 0, Math.PI * 2);
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.lineWidth = s * 0.014;
+    ctx.strokeStyle = '#1f232b';
+    ctx.stroke();
   }
 }
 
