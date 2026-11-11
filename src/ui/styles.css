@@ -505,11 +505,6 @@ body {
   color: var(--text);
 }
 
-.card .tip {
-  margin-top: 10px;
-  font-size: 13px;
-}
-
 .stars {
   display: flex;
   justify-content: center;

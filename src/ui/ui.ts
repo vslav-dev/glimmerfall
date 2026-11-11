@@ -106,9 +106,7 @@ export class Ui {
         ${intro}
         ${goals}
         ${blockers}
-        <p class="hint">${S.starsHelp}</p>
         <button class="btn primary big" data-action="${Action.Resume}">${S.gotIt}</button>
-        <p class="tip">${S.goalsTip}</p>
       </div>`,
     );
   }
@@ -206,7 +204,7 @@ export class Ui {
       <div class="hud-goals" data-action="${Action.Goals}" role="button" aria-label="${S.goals}">${def.objectives.map((o) => this.goalHtml(o, o.target)).join('')}</div>
       <button class="btn icon" data-action="${Action.Pause}" aria-label="${S.paused}">❚❚</button>
       <div class="hud-score">
-        <div class="bar"><div class="track"><div class="fill"></div>${this.markHtml(0, S.starForWin)}${this.markHtml(
+        <div class="bar"><div class="track"><div class="fill"></div>${this.markHtml(0, '')}${this.markHtml(
           (def.stars[1] / def.stars[2]) * 100,
           def.stars[1].toLocaleString('ru-RU'),
         )}${this.markHtml(100, def.stars[2].toLocaleString('ru-RU'))}</div></div>
@@ -270,7 +268,7 @@ export class Ui {
   // ---------- helpers ----------
 
   private markHtml(left: number, label: string): string {
-    return `<i class="mark" style="left:${left}%">${starSvg('')}<span>${label}</span></i>`;
+    return `<i class="mark" style="left:${left}%">${starSvg('')}${label ? `<span>${label}</span>` : ''}</i>`;
   }
 
   private goalHtml(o: Objective, value: number): string {
