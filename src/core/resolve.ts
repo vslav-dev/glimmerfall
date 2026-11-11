@@ -182,12 +182,7 @@ function clearGroups(ctx: Ctx, groups: MatchGroup[]): void {
       } else if (cell.piece) {
         points += removePiece(ctx, i, 0, special ? special.id : -1, true);
       }
-      for (const j of neighbors4(ctx.b, i)) {
-        if (ctx.b.cells[j].crate > 0 && !ctx.crateHits.has(j)) {
-          ctx.crateHits.add(j);
-          points += hit(ctx, j, 0);
-        }
-      }
+      points += hitCratesAround(ctx, i, 0);
     }
     if (special) {
       ctx.pending.push({ i: g.at, piece: special });
@@ -196,6 +191,18 @@ function clearGroups(ctx: Ctx, groups: MatchGroup[]): void {
     const center = centroid(ctx.b, g.cells);
     ctx.popups.push({ ...center, value: points, order: 0 });
   }
+}
+
+/** A piece cleared like a match damages the crates next to it; each crate once per step. Returns points. */
+function hitCratesAround(ctx: Ctx, i: number, order: number): number {
+  let points = 0;
+  for (const j of neighbors4(ctx.b, i)) {
+    if (ctx.b.cells[j].crate > 0 && !ctx.crateHits.has(j)) {
+      ctx.crateHits.add(j);
+      points += hit(ctx, j, order);
+    }
+  }
+  return points;
 }
 
 /** Damages whatever is in the cell: chain first, then the piece (and its ice), or a crate. Returns points. */
@@ -275,7 +282,8 @@ function activate(ctx: Ctx, a: Activation): void {
   ACTIVATORS[a.piece.special](ctx, a);
 }
 
-function blast(ctx: Ctx, kind: BlastKind, origin: number, cells: number[], order: number, color = NO_COLOR): void {
+/** `splash`: every hit cell also damages neighboring crates, as if its piece were matched. */
+function blast(ctx: Ctx, kind: BlastKind, origin: number, cells: number[], order: number, color = NO_COLOR, splash = false): void {
   ctx.blasts.push({
     kind,
     origin: posOf(ctx.b, origin),
@@ -285,7 +293,10 @@ function blast(ctx: Ctx, kind: BlastKind, origin: number, cells: number[], order
     color,
   });
   let points = 0;
-  for (const i of cells) points += hit(ctx, i, order);
+  for (const i of cells) {
+    points += hit(ctx, i, order);
+    if (splash) points += hitCratesAround(ctx, i, order);
+  }
   const o = posOf(ctx.b, origin);
   if (points > 0) ctx.popups.push({ r: o.r, c: o.c, value: points, order });
 }
@@ -328,7 +339,8 @@ function pickTarget(ctx: Ctx, exclude: Set<number>): number {
 function wipeColor(ctx: Ctx, origin: number, color: number, order: number): void {
   if (color === NO_COLOR) return;
   const cells = ctx.b.cells.flatMap((cell, i) => (cell.piece?.color === color ? [i] : []));
-  blast(ctx, BlastKind.Prism, origin, cells, order, color);
+  // Wiped pieces count as matched: crates next to them crack, like next to any match.
+  blast(ctx, BlastKind.Prism, origin, cells, order, color, true);
 }
 
 function mostCommonColor(b: Board): number {

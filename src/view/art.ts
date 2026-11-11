@@ -166,12 +166,13 @@ function drawGem(ctx: CanvasRenderingContext2D, s: number, color: number, specia
   ctx.beginPath();
   ctx.ellipse(-r * 0.25, -r * 0.45, r * 0.55, r * 0.32, -0.5, 0, Math.PI * 2);
   ctx.fill();
-  ctx.restore();
 
+  // Sparkle: inside the clip and close enough to the center to sit within every shape (the star's notches included).
   ctx.fillStyle = 'rgba(255,255,255,0.9)';
   ctx.beginPath();
-  ctx.arc(-r * 0.38, -r * 0.42, r * 0.08, 0, Math.PI * 2);
+  ctx.arc(-r * 0.3, -r * 0.32, r * 0.08, 0, Math.PI * 2);
   ctx.fill();
+  ctx.restore();
   ctx.restore();
 }
 

@@ -120,6 +120,18 @@ describe('resolveStep', () => {
   });
 });
 
+describe('prism wipe', () => {
+  it('damages crates next to the wiped pieces, each crate once', () => {
+    // Prism at (0,0) swaps with the 1 at (0,1); the 1s at (1,1) and (1,3) both touch the crate at (1,2).
+    const b = boardFrom(['0123', '21#1', '3012']);
+    b.cells[0].piece = { id: 99, color: -1, special: Special.Prism };
+    const crate = indexOf(b, 1, 2);
+    b.cells[crate].crate = 2;
+    resolveMove(b, 0, 1);
+    expect(b.cells[crate].crate).toBe(1);
+  });
+});
+
 describe('settle', () => {
   it('pieces fall through holes and spawn at the top', () => {
     const b = boardFrom(['1', '.', '_', '_']);
