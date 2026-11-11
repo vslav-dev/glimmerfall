@@ -1,0 +1,79 @@
+export type EaseFn = (t: number) => number;
+
+export const Ease = {
+  linear: (t: number): number => t,
+  inQuad: (t: number): number => t * t,
+  outQuad: (t: number): number => t * (2 - t),
+  outCubic: (t: number): number => 1 - (1 - t) ** 3,
+  inOutCubic: (t: number): number => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2),
+  outBack: (t: number): number => {
+    const c = 1.70158;
+    return 1 + (c + 1) * (t - 1) ** 3 + c * (t - 1) ** 2;
+  },
+} as const;
+
+interface Tween {
+  /** negative while waiting for the delay */
+  elapsed: number;
+  duration: number;
+  ease: EaseFn;
+  update: (k: number) => void;
+  resolve: () => void;
+}
+
+export interface TweenOptions {
+  delay?: number;
+  ease?: EaseFn;
+}
+
+/** Minimal tween runner: every tween is a progress callback, so any property or path can be animated. */
+export class Tweens {
+  /** global time scale; raised to fast-forward the finale */
+  public speed = 1;
+  private list: Tween[] = [];
+
+  public get active(): boolean {
+    return this.list.length > 0;
+  }
+
+  public run(duration: number, update: (k: number) => void, options: TweenOptions = {}): Promise<void> {
+    return new Promise((resolve) => {
+      this.list.push({
+        elapsed: -(options.delay ?? 0),
+        duration: Math.max(1, duration),
+        ease: options.ease ?? Ease.outQuad,
+        update,
+        resolve,
+      });
+    });
+  }
+
+  public wait(ms: number): Promise<void> {
+    return this.run(ms, () => undefined, { ease: Ease.linear });
+  }
+
+  public update(dt: number): void {
+    const step = dt * this.speed;
+    const done: Tween[] = [];
+    for (const t of this.list) {
+      t.elapsed += step;
+      if (t.elapsed < 0) continue;
+      const k = Math.min(1, t.elapsed / t.duration);
+      t.update(t.ease(k));
+      if (k >= 1) done.push(t);
+    }
+    if (done.length === 0) return;
+    this.list = this.list.filter((t) => !done.includes(t));
+    for (const t of done) t.resolve();
+  }
+
+  /** Jumps every running tween to its end. */
+  public finishAll(): void {
+    const all = this.list;
+    this.list = [];
+    for (const t of all) {
+      t.update(t.ease(1));
+      t.resolve();
+    }
+  }
+}

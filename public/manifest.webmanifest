@@ -1,0 +1,11 @@
+{
+  "name": "Glimmerfall",
+  "short_name": "Glimmerfall",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "portrait",
+  "background_color": "#0f0828",
+  "theme_color": "#0f0828",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}
