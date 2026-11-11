@@ -18,7 +18,7 @@ type Updater = (dt: number) => boolean;
  */
 export class Scene {
   public readonly root = new Container();
-  public readonly tweens = new Tweens();
+  public readonly tweens = new Tweens(() => this.request());
   /** called after a quality downgrade, so textures can be rebuilt for the new resolution */
   public onQualityChange: (() => void) | null = null;
   private readonly updaters: Updater[] = [];

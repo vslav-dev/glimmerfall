@@ -80,7 +80,7 @@ export class BoardView {
   ) {
     this.boardRoot.addChild(this.tiles, this.iceLayer, this.pieceLayer, this.crateLayer, this.chainLayer, this.fxLayer, this.textLayer);
     scene.root.addChild(this.boardRoot);
-    this.particles = new Particles(this.fxLayer);
+    this.particles = new Particles(this.fxLayer, () => scene.request());
     scene.addUpdater((dt) => this.particles.update(dt));
     scene.onQualityChange = () => this.layout(this.width, this.height);
 
@@ -176,7 +176,6 @@ export class BoardView {
 
   public async play(events: GameEvent[]): Promise<void> {
     for (const ev of events) {
-      this.scene.request();
       switch (ev.type) {
         case 'swap':
           await this.playSwap(ev);
@@ -215,7 +214,6 @@ export class BoardView {
           .then(() => this.land(sprite)),
       );
     });
-    this.scene.request();
     await Promise.all(jobs);
   }
 
@@ -232,7 +230,6 @@ export class BoardView {
         { delay, ease: Ease.inQuad },
       );
     });
-    this.scene.request();
     await Promise.all(jobs);
   }
 
@@ -586,7 +583,6 @@ export class BoardView {
     const token = ++this.hintToken;
     this.hinted = sprites;
     while (token === this.hintToken) {
-      this.scene.request();
       await this.scene.tweens.run(700, (k) => {
         if (token !== this.hintToken) return;
         for (const s of sprites) if (!s.destroyed) s.scale.set(1 + Math.sin(k * Math.PI) * 0.14);
@@ -643,7 +639,6 @@ export class BoardView {
     this.selected = pos;
     const sprite = this.spriteAt(this.indexOf(pos));
     if (!sprite) return;
-    this.scene.request();
     void this.scene.tweens.run(
       110,
       (k) => {

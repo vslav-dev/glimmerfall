@@ -26,11 +26,16 @@ export interface TweenOptions {
   ease?: EaseFn;
 }
 
-/** Minimal tween runner: every tween is a progress callback, so any property or path can be animated. */
+/**
+ * Minimal tween runner: every tween is a progress callback, so any property or path can be animated.
+ * Starting a tween wakes the render loop, so tweens chained with `await` never stall an idle loop.
+ */
 export class Tweens {
   /** global time scale; raised to fast-forward the finale */
   public speed = 1;
   private list: Tween[] = [];
+
+  public constructor(private readonly onStart: () => void) {}
 
   public get active(): boolean {
     return this.list.length > 0;
@@ -45,6 +50,7 @@ export class Tweens {
         update,
         resolve,
       });
+      this.onStart();
     });
   }
 

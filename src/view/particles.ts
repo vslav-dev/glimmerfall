@@ -22,13 +22,16 @@ export interface BurstOptions {
 
 const MAX_PARTICLES = 260;
 
-/** Pooled sprite particles. No allocation per frame; the pool only grows up to the cap. */
+/** Pooled sprite particles. No allocation per frame; the pool only grows up to the cap. Bursts wake the render loop. */
 export class Particles {
   public density = 1;
   private readonly pool: Sprite[] = [];
   private live: Particle[] = [];
 
-  public constructor(private readonly layer: Container) {}
+  public constructor(
+    private readonly layer: Container,
+    private readonly onStart: () => void,
+  ) {}
 
   public burst(x: number, y: number, texture: Texture, tint: number, o: BurstOptions): void {
     const count = Math.round(o.count * this.density);
@@ -57,6 +60,7 @@ export class Particles {
         gravity: o.gravity ?? 600,
       });
     }
+    if (count > 0) this.onStart();
   }
 
   /** Returns whether particles are still alive. */
