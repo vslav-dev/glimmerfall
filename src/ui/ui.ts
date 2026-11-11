@@ -24,6 +24,9 @@ export const Action = {
 export type Action = (typeof Action)[keyof typeof Action];
 
 const THEMES = 5;
+/** One star shape for the HUD and the result card: an SVG centers exactly, a text glyph does not. */
+const STAR_PATH = 'M12 2.4l2.95 6.07 6.65.95-4.8 4.7 1.13 6.63L12 17.6l-5.93 3.15 1.13-6.63-4.8-4.7 6.65-.95z';
+const starSvg = (cls: string): string => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="${STAR_PATH}"/></svg>`;
 const ICON_SIZE = 72;
 
 /**
@@ -103,6 +106,7 @@ export class Ui {
         ${intro}
         ${goals}
         ${blockers}
+        <p class="hint">${S.starsHelp}</p>
         <button class="btn primary big" data-action="${Action.Resume}">${S.gotIt}</button>
         <p class="tip">${S.goalsTip}</p>
       </div>`,
@@ -122,7 +126,10 @@ export class Ui {
   }
 
   public showWin(stars: number, score: number): void {
-    const starEls = [1, 2, 3].map((k) => `<span class="star ${k <= stars ? 'earned' : ''}" style="--i:${k}">★</span>`).join('');
+    // Every slot shows a dashed outline at once; earned stars fly in over it.
+    const starEls = [1, 2, 3]
+      .map((k) => `<span class="star-slot" style="--i:${k}">${starSvg('outline')}${k <= stars ? starSvg('earned') : ''}</span>`)
+      .join('');
     this.show(
       `<div class="card win">
         <h2>${S.win}</h2>
@@ -199,9 +206,10 @@ export class Ui {
       <div class="hud-goals" data-action="${Action.Goals}" role="button" aria-label="${S.goals}">${def.objectives.map((o) => this.goalHtml(o, o.target)).join('')}</div>
       <button class="btn icon" data-action="${Action.Pause}" aria-label="${S.paused}">❚❚</button>
       <div class="hud-score">
-        <div class="bar"><div class="fill"></div>
-          <i class="mark" style="left:${(def.stars[1] / def.stars[2]) * 100}%">★</i><i class="mark" style="left:100%">★</i>
-        </div>
+        <div class="bar"><div class="track"><div class="fill"></div>${this.markHtml(0, S.starForWin)}${this.markHtml(
+          (def.stars[1] / def.stars[2]) * 100,
+          def.stars[1].toLocaleString('ru-RU'),
+        )}${this.markHtml(100, def.stars[2].toLocaleString('ru-RU'))}</div></div>
         <b class="value">0</b>
       </div>`;
     this.hudMoves = this.hud.querySelector('.hud-moves .value');
@@ -222,8 +230,11 @@ export class Ui {
       this.hudMoves.parentElement!.classList.toggle('low', state.movesLeft <= 5);
     }
     if (this.hudScore) this.hudScore.textContent = state.score.toLocaleString('ru-RU');
-    if (this.hudFill) this.hudFill.style.transform = `scaleX(${Math.min(1, state.score / def.stars[2])})`;
-    this.hudStars.forEach((el, k) => el.classList.toggle('earned', state.score >= def.stars[k + 1]));
+    // clip-path keeps the rounded ends and, unlike width, costs no layout.
+    if (this.hudFill) this.hudFill.style.clipPath = `inset(0 ${(1 - Math.min(1, state.score / def.stars[2])) * 100}% 0 0 round 99px)`;
+    // First star: the level is won; the other two: their score thresholds.
+    const earned = [state.status === 'won', state.score >= def.stars[1], state.score >= def.stars[2]];
+    this.hudStars.forEach((el, k) => el.classList.toggle('earned', earned[k]));
     def.objectives.forEach((o, k) => {
       const el = this.hudGoals[k];
       if (!el) return;
@@ -257,6 +268,10 @@ export class Ui {
   }
 
   // ---------- helpers ----------
+
+  private markHtml(left: number, label: string): string {
+    return `<i class="mark" style="left:${left}%">${starSvg('')}<span>${label}</span></i>`;
+  }
 
   private goalHtml(o: Objective, value: number): string {
     return `<div class="goal">${this.goalIcon(o)}<b>${value.toLocaleString('ru-RU')}</b></div>`;
