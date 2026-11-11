@@ -44,7 +44,7 @@ export interface Tally {
 /** How attractive a cell is as a spark target. The game derives it from its objectives. */
 export type TargetScorer = (b: Board, i: number) => number;
 
-/** What a step (or the finale) did: the playback script and its gains. */
+/** What a step did: the playback script and its gains. */
 export interface Step {
   events: GameEvent[];
   tally: Tally;
@@ -88,36 +88,31 @@ export function resolveStep(b: Board, swap: PendingSwap | null, cascadeLevel: nu
   return stepInto(b, swap, cascadeLevel, scorer, step) ? step : null;
 }
 
-/**
- * End-of-level celebration: remaining moves turn random pieces into line specials,
- * then every special on the board fires until the board is calm.
- */
-export function resolveFinale(b: Board, movesLeft: number, scorer: TargetScorer): Step {
-  const step: Step = { events: [], tally: newTally() };
+/** Finale opening: up to `count` random plain pieces turn into line specials. */
+export function convertForFinale(b: Board, count: number): CreatedPiece[] {
   const plain = shuffleInPlace(
     b,
     b.cells.flatMap((cell, i) => (cell.piece && cell.chain === 0 && cell.piece.special === Special.None ? [i] : [])),
   );
-  const converted = plain.slice(0, Math.min(movesLeft, FINALE_CONVERSIONS)).map((i) => {
+  return plain.slice(0, Math.min(count, FINALE_CONVERSIONS)).map((i) => {
     const piece = b.cells[i].piece!;
     piece.special = random(b) < 0.5 ? Special.LineH : Special.LineV;
     return { pos: posOf(b, i), piece };
   });
-  if (converted.length > 0) step.events.push({ type: 'transform', pieces: converted });
+}
 
-  for (let round = 0; round < 20; round++) {
-    const specials = b.cells.flatMap((cell, i) => (cell.piece && cell.piece.special !== Special.None ? [i] : []));
-    if (specials.length === 0) break;
-    const ctx = newCtx(b, step, scorer, round);
-    specials.forEach((i, k) => {
-      unchain(ctx, i, k % 6);
-      removePiece(ctx, i, k % 6, -1, true);
-    });
-    finishStep(ctx);
-    step.events.push({ type: 'fall', moves: settle(b) });
-    let level = round + 1;
-    while (stepInto(b, null, level, scorer, step)) level++;
-  }
+/** Finale step on a calm board: every special fires at once, pieces fall. Null when none is left. */
+export function resolveDetonation(b: Board, cascadeLevel: number, scorer: TargetScorer): Step | null {
+  const specials = b.cells.flatMap((cell, i) => (cell.piece && cell.piece.special !== Special.None ? [i] : []));
+  if (specials.length === 0) return null;
+  const step: Step = { events: [], tally: newTally() };
+  const ctx = newCtx(b, step, scorer, cascadeLevel);
+  specials.forEach((i, k) => {
+    unchain(ctx, i, k % 6);
+    removePiece(ctx, i, k % 6, -1, true);
+  });
+  finishStep(ctx);
+  step.events.push({ type: 'fall', moves: settle(b) });
   return step;
 }
 

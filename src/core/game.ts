@@ -1,6 +1,6 @@
 import { cellAt, indexOf, isAdjacent, isMovable, newPiece, randomFreeColor, swapPieces } from '@/core/board';
 import { hasMove, isValidSwap, shuffleBoard } from '@/core/moves';
-import { resolveFinale, resolveStep, type Tally, type TargetScorer } from '@/core/resolve';
+import { convertForFinale, resolveDetonation, resolveStep, type Tally, type TargetScorer } from '@/core/resolve';
 import {
   type Board,
   type Cell,
@@ -14,6 +14,8 @@ import {
 } from '@/core/types';
 
 export const EXTRA_MOVES = 5;
+/** cap on finale detonations: cascades can keep creating specials */
+const FINALE_ROUNDS = 20;
 
 export function createBoard(level: LevelDef, seed: number): Board {
   const cells: Cell[] = level.mask.map((m, i) => ({
@@ -62,6 +64,7 @@ export function createGame(level: LevelDef, seed = level.seed): GameState {
     status: 'playing',
     pending: null,
     cascade: 0,
+    finale: 0,
   };
 }
 
@@ -111,6 +114,17 @@ export function advance(state: GameState): GameEvent[] | null {
     if (state.status === 'playing' && isComplete(state)) state.status = 'won';
     return step.events;
   }
+  if (state.finale > 0) {
+    const round = FINALE_ROUNDS - state.finale;
+    state.finale--;
+    const blast = resolveDetonation(board, round, scorerFor(state));
+    if (blast) {
+      state.cascade = round + 1;
+      applyTally(state, blast.tally);
+      return blast.events;
+    }
+    state.finale = 0;
+  }
   state.cascade = 0;
   if (state.status !== 'playing') return null;
   if (state.movesLeft <= 0) {
@@ -127,12 +141,15 @@ export function playMove(state: GameState, a: Pos, b: Pos): boolean {
   return valid;
 }
 
-/** Remaining moves become fireworks. Call once after a win, at rest. */
-export function runFinale(state: GameState): GameEvent[] {
-  const { events, tally } = resolveFinale(state.board, state.movesLeft, scorerFor(state));
+/**
+ * Remaining moves become line specials; the following steps fire them round by round,
+ * so the score grows live like in any cascade. Call once after a win, at rest.
+ */
+export function startFinale(state: GameState): GameEvent[] {
+  const pieces = convertForFinale(state.board, state.movesLeft);
   state.movesLeft = 0;
-  applyTally(state, tally);
-  return events;
+  state.finale = FINALE_ROUNDS;
+  return pieces.length > 0 ? [{ type: 'transform', pieces }] : [];
 }
 
 export function addExtraMoves(state: GameState): void {

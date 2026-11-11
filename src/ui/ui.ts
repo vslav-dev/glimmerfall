@@ -1,11 +1,11 @@
-import { type GameState, LevelKind, type LevelDef, type Objective, ObjectiveKind, Special } from '@/core/types';
+import { type GameState, type LevelDef, type Objective, ObjectiveKind, Special } from '@/core/types';
 import type { Settings } from '@/app/save';
 import { FrameName, frameDataUrl } from '@/view/art';
 import { S } from '@/ui/strings';
 
 export const Action = {
   Play: 'play',
-  Start: 'start',
+  Goals: 'goals',
   Pause: 'pause',
   Resume: 'resume',
   Restart: 'restart',
@@ -74,31 +74,37 @@ export class Ui {
         <p class="tagline">${S.tagline}</p>
         <button class="btn primary big" data-action="${Action.Play}">${resumable ? S.continue : S.play}</button>
         <p class="sub">${S.level(level)}</p>
+        <p class="version">${S.version(__APP_VERSION__)}</p>
         <button class="btn icon corner" data-action="${Action.Settings}" aria-label="${S.settings}">⚙</button>
       </div>`,
       'title',
     );
   }
 
-  public showLevelCard(def: LevelDef, fails: number, resumable: boolean): void {
-    const badge =
-      def.intro !== null
-        ? `<div class="badge intro">${S.intro[def.intro].title}</div><p class="hint">${S.intro[def.intro].text}</p>`
-        : def.kind === LevelKind.Hard
-          ? `<div class="badge hard">${S.hard}</div>`
-          : def.kind === LevelKind.Relief && def.number > 3
-            ? `<div class="badge relief">${S.relief}</div>`
-            : '';
-    const goals = def.objectives.map((o) => this.goalHtml(o, o.target)).join('');
+  /** What each goal means, in plain words; opens from the HUD goals at any time and on a mechanic's first level. */
+  public showGoals(state: GameState): void {
+    const def = state.level;
+    const intro = def.intro !== null ? `<div class="badge intro">${S.intro[def.intro].title}</div>` : '';
+    const goals = def.objectives
+      .map((o, k) => {
+        const left = Math.max(0, o.target - state.progress[k]);
+        const text = left === 0 ? S.goalDone : S.goalHelp[o.kind](left);
+        return `<div class="goal-help">${this.goalIcon(o)}<p>${text}</p></div>`;
+      })
+      .join('');
+    const kinds = new Set<string>(def.objectives.map((o) => o.kind));
+    const blockers = (['ice', 'crate', 'chain'] as const)
+      .filter((b) => !kinds.has(b) && state.board.cells.some((cell) => cell[b] > 0))
+      .map((b) => `<p class="hint">${S.blockerHelp[b]}</p>`)
+      .join('');
     this.show(
-      `<div class="card">
-        <h2>${S.level(def.number)}</h2>
-        ${badge}
-        <div class="goals">${goals}</div>
-        <p class="moves-line">${S.movesCount(def.moves)}</p>
-        ${fails >= 3 ? `<p class="hint">${S.assist}</p>` : ''}
-        <button class="btn primary big" data-action="${Action.Start}">${resumable ? S.continue : S.start}</button>
-        <button class="btn ghost" data-action="${Action.Menu}">${S.menu}</button>
+      `<div class="card goals-help">
+        <h2>${S.goals}</h2>
+        ${intro}
+        ${goals}
+        ${blockers}
+        <button class="btn primary big" data-action="${Action.Resume}">${S.gotIt}</button>
+        <p class="tip">${S.goalsTip}</p>
       </div>`,
     );
   }
@@ -190,7 +196,7 @@ export class Ui {
     this.hud.classList.remove('off');
     this.hud.innerHTML = `
       <div class="hud-moves"><span class="label">${S.moves}</span><b class="value"></b></div>
-      <div class="hud-goals">${def.objectives.map((o) => this.goalHtml(o, o.target)).join('')}</div>
+      <div class="hud-goals" data-action="${Action.Goals}" role="button" aria-label="${S.goals}">${def.objectives.map((o) => this.goalHtml(o, o.target)).join('')}</div>
       <button class="btn icon" data-action="${Action.Pause}" aria-label="${S.paused}">❚❚</button>
       <div class="hud-score">
         <div class="bar"><div class="fill"></div>
@@ -222,7 +228,8 @@ export class Ui {
       const el = this.hudGoals[k];
       if (!el) return;
       const left = Math.max(0, o.target - state.progress[k]);
-      el.querySelector('b')!.textContent = o.kind === ObjectiveKind.Score ? state.score.toLocaleString('ru-RU') : String(left);
+      // Every goal counts down, points included: the number is always "how much is left".
+      el.querySelector('b')!.textContent = left.toLocaleString('ru-RU');
       el.classList.toggle('done', left === 0);
     });
   }
@@ -252,8 +259,7 @@ export class Ui {
   // ---------- helpers ----------
 
   private goalHtml(o: Objective, value: number): string {
-    const label = o.kind === ObjectiveKind.Score ? value.toLocaleString('ru-RU') : String(value);
-    return `<div class="goal">${this.goalIcon(o)}<b>${label}</b></div>`;
+    return `<div class="goal">${this.goalIcon(o)}<b>${value.toLocaleString('ru-RU')}</b></div>`;
   }
 
   private goalIcon(o: Objective): string {

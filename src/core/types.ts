@@ -203,4 +203,6 @@ export interface GameState {
   pending: PendingSwap | null;
   /** cascade depth of the next step: drives the score multiplier and praise */
   cascade: number;
+  /** finale detonation rounds left; 0 outside the finale */
+  finale: number;
 }

@@ -1,8 +1,8 @@
-import { type SaveData, defaultSave, loadSave, persist } from '@/app/save';
+import { type CurrentLevel, type SaveData, defaultSave, loadSave, persist } from '@/app/save';
 import { AudioBus } from '@/audio/audio';
 import { Sfx } from '@/audio/synth';
-import { addExtraMoves, advance, canAct, createGame, EXTRA_MOVES, makeMove, runFinale, starsFor } from '@/core/game';
-import { BlastKind, type GameEvent, type GameState, type LevelDef, type Pos } from '@/core/types';
+import { addExtraMoves, advance, canAct, createGame, EXTRA_MOVES, makeMove, startFinale, starsFor } from '@/core/game';
+import { BlastKind, type GameEvent, type GameState, type LevelDef, LevelKind, type Pos } from '@/core/types';
 import { recordAttempt, targetWinRate } from '@/difficulty/director';
 import { LevelDrafts } from '@/gen/drafts';
 import { finalizeLevel } from '@/gen/generator';
@@ -15,7 +15,6 @@ import type { Scene } from '@/view/scene';
 
 const Mode = {
   Title: 'title',
-  Card: 'card',
   Play: 'play',
   Pause: 'pause',
   Settings: 'settings',
@@ -92,19 +91,16 @@ export class GameApp {
     this.ui.showTitle(this.save.level, this.save.current?.game != null);
   }
 
-  private async openLevel(): Promise<void> {
+  /** The level to play now; a new one is generated when the saved one is already won. */
+  private async currentLevel(): Promise<CurrentLevel> {
     const n = this.save.level;
     let current = this.save.current;
     if (!current || current.def.number !== n) {
       current = { def: await this.makeLevel(n, 0), fails: 0, game: null };
       this.save.current = current;
-      this.persist();
     }
-    this.ui.setTheme(n);
-    this.mode = Mode.Card;
-    this.ui.showLevelCard(current.def, current.fails, current.game !== null);
-    this.showDebug();
     void this.drafts.get({ number: n + 1, assist: 0 });
+    return current;
   }
 
   private async makeLevel(n: number, fails: number): Promise<LevelDef> {
@@ -112,23 +108,49 @@ export class GameApp {
     return finalizeLevel(draft, targetWinRate(this.save.director, planLevel(n).baseWinRate, fails));
   }
 
-  private async startLevel(): Promise<void> {
-    const current = this.save.current!;
-    const game = current.game ?? createGame(current.def);
-    current.game = game;
-    this.game = game;
-    this.view.inputEnabled = false;
-    this.persist();
-    await this.ui.curtain(() => {
+  /** Straight into play: no level card in between, the HUD shows the goals and explains them on tap. */
+  private async playLevel(): Promise<void> {
+    await this.ui.curtain(async () => {
+      const current = await this.currentLevel();
+      const game = current.game ?? createGame(current.def);
+      current.game = game;
+      this.game = game;
+      this.view.inputEnabled = false;
+      this.persist();
+      this.ui.setTheme(game.level.number);
       this.ui.hideOverlay();
       this.ui.showHud(game.level);
       this.ui.updateHud(game);
       this.view.setBoard(game.board);
+      this.showDebug();
     });
+    const game = this.game;
+    const current = this.save.current;
+    if (!game || !current) return;
     this.mode = Mode.Play;
     await this.view.entrance();
+    if (this.game !== game) return;
+    this.announce(game, current.fails);
     // A save made mid-cascade or right after the last move resumes from there.
     void this.run(game);
+  }
+
+  /** A new mechanic explains itself once; otherwise a short flash names the level. */
+  private announce(game: GameState, fails: number): void {
+    const def = game.level;
+    if (def.intro !== null && game.movesMade === 0) {
+      this.showGoals();
+      return;
+    }
+    this.ui.flashText(fails >= 3 ? S.assist : def.kind === LevelKind.Hard ? S.hard : S.level(def.number));
+  }
+
+  private showGoals(): void {
+    if (!this.game) return;
+    this.mode = Mode.Pause;
+    this.view.inputEnabled = false;
+    this.view.cancelHint();
+    this.ui.showGoals(this.game);
   }
 
   /** Swaps are accepted while a cascade plays on, as long as both cells are calm (the view checks that). */
@@ -187,7 +209,9 @@ export class GameApp {
     this.ui.flashText(S.win);
     if (game.movesLeft > 0) {
       this.ui.showSkipLayer();
-      await this.view.play(runFinale(game), (ev) => this.feedback(ev));
+      await this.view.play(startFinale(game), (ev) => this.feedback(ev));
+      this.ui.updateHud(game);
+      await this.run(game);
       this.scene.tweens.speed = 1;
       this.ui.hideOverlay();
       this.ui.updateHud(game);
@@ -280,10 +304,10 @@ export class GameApp {
     switch (action) {
       case Action.Play:
       case Action.Next:
-        await this.ui.curtain(() => this.openLevel());
+        await this.playLevel();
         break;
-      case Action.Start:
-        await this.startLevel();
+      case Action.Goals:
+        if (this.mode === Mode.Play) this.showGoals();
         break;
       case Action.Pause:
         if (this.mode === Mode.Play) this.pause();
@@ -294,11 +318,11 @@ export class GameApp {
       case Action.Restart:
         if ((this.game?.movesMade ?? 0) > 0) await this.failLevel();
         else if (this.save.current) this.save.current.game = null;
-        await this.ui.curtain(() => this.openLevel());
+        await this.playLevel();
         break;
       case Action.Retry:
         await this.failLevel();
-        await this.ui.curtain(() => this.openLevel());
+        await this.playLevel();
         break;
       case Action.ExtraMoves:
         if (this.game && this.mode === Mode.Lost) {
@@ -364,7 +388,6 @@ export class GameApp {
       case Mode.Settings:
         await this.onAction(Action.Back);
         break;
-      case Mode.Card:
       case Mode.Won:
       case Mode.Lost:
         await this.onAction(Action.Menu);

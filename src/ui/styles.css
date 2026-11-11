@@ -146,6 +146,8 @@ body {
 
 .hud-goals {
   grid-area: goals;
+  position: relative;
+  cursor: pointer;
   display: flex;
   justify-content: center;
   gap: 14px;
@@ -163,6 +165,21 @@ body {
 .goal img {
   width: 36px;
   height: 36px;
+}
+
+/* the goals open their explanation: a small "?" says so */
+.hud-goals::after {
+  content: '?';
+  align-self: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.16);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 18px;
+  text-align: center;
+  color: var(--muted);
 }
 
 .goal .score-icon {
@@ -405,6 +422,43 @@ body {
   font-size: 15px;
 }
 
+.goal-help {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0;
+  text-align: left;
+}
+
+.goal-help img {
+  flex: none;
+  width: 44px;
+  height: 44px;
+}
+
+.goal-help .score-icon {
+  flex: none;
+  width: 44px;
+  font-size: 38px;
+  text-align: center;
+  color: var(--gold);
+}
+
+.card.goals-help p {
+  font-size: 16px;
+  line-height: 1.35;
+}
+
+.card.goals-help .goal-help p {
+  margin: 0;
+  color: var(--text);
+}
+
+.card .tip {
+  margin-top: 10px;
+  font-size: 13px;
+}
+
 .stars {
   display: flex;
   justify-content: center;
@@ -479,6 +533,18 @@ body {
 .sub {
   color: var(--muted);
   margin: 10px 0 0;
+}
+
+.version {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(10px + env(safe-area-inset-bottom));
+  margin: 0;
+  font-size: 11px;
+  text-align: center;
+  color: var(--muted);
+  opacity: 0.7;
 }
 
 .gems {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { indexOf, posOf, swapPieces } from '@/core/board';
 import { settle } from '@/core/fall';
-import { advance, canSwap, createGame, makeMove, playMove } from '@/core/game';
+import { advance, canSwap, createGame, makeMove, playMove, startFinale } from '@/core/game';
 import { findGroups } from '@/core/matches';
 import { findMoves, hasAnyMatch, hasMove, isValidSwap } from '@/core/moves';
 import { resolveStep } from '@/core/resolve';
@@ -184,5 +184,25 @@ describe('game', () => {
     while (advance(game)) continue;
     expect(game.status).toBe('lost');
     expect(hasAnyMatch(game.board)).toBe(false);
+  });
+
+  it('the finale fires step by step, scoring as it goes, until no special is left', () => {
+    const game = createGame(level({ moves: 6 }));
+    game.status = 'won';
+    const opening = startFinale(game);
+    expect(opening[0]?.type).toBe('transform');
+    expect(game.movesLeft).toBe(0);
+
+    let steps = 0;
+    let score = game.score;
+    while (advance(game)) {
+      steps++;
+      expect(game.score).toBeGreaterThanOrEqual(score);
+      score = game.score;
+    }
+    expect(steps).toBeGreaterThan(1);
+    expect(game.score).toBeGreaterThan(0);
+    expect(game.finale).toBe(0);
+    expect(game.board.cells.some((c) => c.piece !== null && c.piece.special !== Special.None)).toBe(false);
   });
 });
