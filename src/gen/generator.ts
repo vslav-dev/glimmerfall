@@ -82,7 +82,6 @@ export function draftLevel(req: DraftRequest): LevelDraft {
 
   const level: LevelDef = {
     number: n,
-    seed: hashSeed(n, 44),
     rows,
     cols,
     mask,

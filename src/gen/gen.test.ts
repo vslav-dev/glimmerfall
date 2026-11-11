@@ -30,7 +30,7 @@ describe('generator', () => {
       expect(level.objectives.length).toBeGreaterThan(0);
       for (const o of level.objectives) expect(o.target).toBeGreaterThan(0);
       if (level.objectives.some((o) => o.kind === ObjectiveKind.Score)) expect(level.objectives).toHaveLength(1);
-      const game = createGame(level);
+      const game = createGame(level, 7);
       expect(hasAnyMatch(game.board)).toBe(false);
       expect(hasMove(game.board)).toBe(true);
     }

@@ -32,7 +32,6 @@ function level(overrides: Partial<LevelDef> = {}): LevelDef {
   const n = rows * cols;
   return {
     number: 1,
-    seed: 7,
     rows,
     cols,
     mask: new Array<number>(n).fill(1),
@@ -152,8 +151,8 @@ describe('settle', () => {
 
 describe('game', () => {
   it('creates the same calm, playable board for the same seed', () => {
-    const a = createGame(level());
-    const b = createGame(level());
+    const a = createGame(level(), 7);
+    const b = createGame(level(), 7);
     expect(a.board.cells.map((c) => c.piece?.color)).toEqual(b.board.cells.map((c) => c.piece?.color));
     expect(hasAnyMatch(a.board)).toBe(false);
     expect(hasMove(a.board)).toBe(true);
@@ -164,7 +163,7 @@ describe('game', () => {
     lv.ice[20] = 2;
     lv.chain[30] = 1;
     lv.crate[44] = 2;
-    const game = createGame(lv);
+    const game = createGame(lv, 7);
     for (let step = 0; step < 300 && game.status === 'playing'; step++) {
       const moves = findMoves(game.board);
       expect(moves.length).toBeGreaterThan(0);
@@ -178,7 +177,7 @@ describe('game', () => {
   });
 
   it('a swap made during a cascade joins its next step, and goals count per step', () => {
-    const game = createGame(level({ moves: 1 }));
+    const game = createGame(level({ moves: 1 }), 7);
     // Row 0 is a ready cascade match; swapping (2,2) down completes 333 at the bottom.
     game.board = boardFrom(['00012', '12340', '12312', '33401']);
     const swap = makeMove(game, { r: 2, c: 2 }, { r: 3, c: 2 });
@@ -199,7 +198,7 @@ describe('game', () => {
   });
 
   it('the finale fires step by step, scoring as it goes, until no special is left', () => {
-    const game = createGame(level({ moves: 6 }));
+    const game = createGame(level({ moves: 6 }), 7);
     game.status = 'won';
     const opening = startFinale(game);
     expect(opening[0]?.type).toBe('transform');

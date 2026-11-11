@@ -112,7 +112,8 @@ export class GameApp {
   private async playLevel(): Promise<void> {
     await this.ui.curtain(async () => {
       const current = await this.currentLevel();
-      const game = current.game ?? createGame(current.def);
+      // A fresh random board every attempt; difficulty is calibrated over many boards, not this one.
+      const game = current.game ?? createGame(current.def, (Math.random() * 2 ** 32) >>> 0);
       current.game = game;
       this.game = game;
       this.view.inputEnabled = false;

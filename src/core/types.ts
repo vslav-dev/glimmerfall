@@ -84,7 +84,6 @@ export type Mechanic = (typeof Mechanic)[keyof typeof Mechanic];
 
 export interface LevelDef {
   number: number;
-  seed: number;
   rows: number;
   cols: number;
   /** per cell, row-major: 1 = cell exists */

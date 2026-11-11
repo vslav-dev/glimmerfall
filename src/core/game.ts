@@ -52,7 +52,8 @@ function fillBoard(b: Board): void {
   }
 }
 
-export function createGame(level: LevelDef, seed = level.seed): GameState {
+/** `seed` picks the starting board: the level's layout and goals stay, the gems differ per attempt. */
+export function createGame(level: LevelDef, seed: number): GameState {
   return {
     level,
     board: createBoard(level, seed),
