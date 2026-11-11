@@ -34,7 +34,8 @@ describe('generator', () => {
       expect(hasAnyMatch(game.board)).toBe(false);
       expect(hasMove(game.board)).toBe(true);
     }
-  });
+    // Twenty full bot calibrations: seconds on a laptop, several times slower on CI runners.
+  }, 60_000);
 
   it('gives more moves for a higher target win rate', () => {
     const draft = draftLevel({ number: 13, assist: 0 });
