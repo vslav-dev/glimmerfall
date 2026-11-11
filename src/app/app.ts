@@ -25,6 +25,8 @@ const Mode = {
 type Mode = (typeof Mode)[keyof typeof Mode];
 
 const FINALE_FAST_FORWARD = 4;
+/** Off until there is something to pay for extra moves with (ads, coins): out of moves means a plain loss. */
+const OFFER_EXTRA_MOVES = false;
 
 const LAYER_SFX: Record<Layer, Sfx> = { ice: Sfx.Ice, crate: Sfx.Crate, chain: Sfx.Chain };
 
@@ -244,7 +246,7 @@ export class GameApp {
   private showLose(game: GameState): void {
     this.mode = Mode.Lost;
     this.audio.play(Sfx.Lose);
-    this.ui.showLose(game, !game.extraMovesUsed, EXTRA_MOVES);
+    this.ui.showLose(game, OFFER_EXTRA_MOVES && !game.extraMovesUsed, EXTRA_MOVES);
   }
 
   /** Ends the attempt as a failure: the director learns, the next attempt gets recalibrated. */
