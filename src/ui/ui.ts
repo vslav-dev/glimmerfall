@@ -279,8 +279,13 @@ export class Ui {
     return `<i class="mark" style="left:${left}%">${starSvg('')}${label ? `<span>${label}</span>` : ''}</i>`;
   }
 
+  /**
+   * The number keeps the width of its starting value: goals only count down, so the HUD row
+   * never rewraps mid-level and never resizes the board under the player.
+   */
   private goalHtml(o: Objective, value: number): string {
-    return `<div class="goal">${this.goalIcon(o)}<b>${value.toLocaleString('ru-RU')}</b></div>`;
+    const text = value.toLocaleString('ru-RU');
+    return `<div class="goal">${this.goalIcon(o)}<b style="min-width:${text.length}ch">${text}</b></div>`;
   }
 
   private goalIcon(o: Objective): string {
