@@ -290,7 +290,7 @@ export class Ui {
       case ObjectiveKind.Ice:
         return `<img src="${this.icon(FrameName.ice(1))}" alt="">`;
       case ObjectiveKind.Crate:
-        return `<img src="${this.icon(FrameName.crate(1))}" alt="">`;
+        return `<img src="${this.icon(FrameName.crate(3))}" alt="">`;
       case ObjectiveKind.Score:
         return `<span class="score-icon">★</span>`;
     }

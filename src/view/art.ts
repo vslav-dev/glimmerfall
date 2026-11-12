@@ -280,52 +280,270 @@ function drawIce(ctx: CanvasRenderingContext2D, s: number, layers: number): void
   ctx.stroke();
 }
 
+/** One palette for every strength: only the damage changes, so all crates read as the same object. */
+const CRATE_WOOD = {
+  frameLight: '#e4ad6a',
+  frameDark: '#b9783b',
+  plankLight: '#bf8043',
+  plankDark: '#965b29',
+  raw: '#f3d39f',
+  line: '#5a3114',
+  hollow: '#2c170a',
+};
+
+/** Unit-square geometry: frame board width and the height of each of the three planks inside it. */
+const CRATE_FRAME = 0.15;
+const CRATE_PLANK = (1 - CRATE_FRAME * 2) / 3;
+
+type Pt = [number, number];
+
+/** Grain per plank: plank index, line height within it, and bend. */
+const CRATE_GRAIN: [number, number, number][] = [
+  [0, 0.35, 0.04],
+  [0, 0.72, -0.03],
+  [1, 0.3, -0.04],
+  [1, 0.7, 0.03],
+  [2, 0.38, 0.035],
+  [2, 0.74, -0.025],
+];
+
+/**
+ * The same crate at every strength: a frame of four boards around three planks, crossed by a brace.
+ * Each lost point of strength adds damage on top of the previous one: first cracks and a chipped edge,
+ * then a snapped brace, a hole and a popped nail.
+ */
 function drawCrate(ctx: CanvasRenderingContext2D, s: number, strength: number): void {
-  const x = s * 0.06;
-  const w = s * 0.88;
-  const tones = [
-    ['#d8a066', '#a8682f', '#6b3e17'],
-    ['#b98a5a', '#87582b', '#4f2e12'],
-    ['#9a8f8a', '#6b625e', '#3a3331'],
-  ][strength - 1];
+  const damage = 3 - strength;
+  const inset = s * 0.06;
+  const body = (): void => roundRect(ctx, 0, 0, 1, 1, 0.12);
+  ctx.save();
+  ctx.translate(inset, inset);
+  ctx.scale(s - inset * 2, s - inset * 2);
+
+  // Shadow offsets are in pixels: the transform does not scale them.
   ctx.save();
   ctx.shadowColor = 'rgba(0,0,0,0.35)';
   ctx.shadowBlur = s * 0.05;
   ctx.shadowOffsetY = s * 0.03;
-  roundRect(ctx, x, x, w, w, s * 0.12);
-  const g = ctx.createLinearGradient(0, x, 0, x + w);
-  g.addColorStop(0, tones[0]);
-  g.addColorStop(1, tones[1]);
-  ctx.fillStyle = g;
+  body();
+  ctx.fillStyle = CRATE_WOOD.line;
   ctx.fill();
   ctx.restore();
-  ctx.lineWidth = s * 0.035;
-  ctx.strokeStyle = tones[2];
+
+  ctx.save();
+  body();
+  ctx.clip();
+  drawCratePlanks(ctx, damage);
+  drawCrateBrace(ctx, s, damage);
+  drawCrateFrame(ctx, s, damage);
+  ctx.restore();
+
+  body();
+  ctx.lineWidth = 0.04;
+  ctx.strokeStyle = CRATE_WOOD.line;
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawCratePlanks(ctx: CanvasRenderingContext2D, damage: number): void {
+  const F = CRATE_FRAME;
+  const h = CRATE_PLANK;
+  for (let k = 0; k < 3; k++) {
+    const y = F + k * h;
+    const g = ctx.createLinearGradient(0, y, 0, y + h);
+    g.addColorStop(0, CRATE_WOOD.plankLight);
+    g.addColorStop(1, CRATE_WOOD.plankDark);
+    ctx.fillStyle = g;
+    ctx.fillRect(0, y, 1, h);
+  }
+
+  ctx.beginPath();
+  for (const [k, at, bend] of CRATE_GRAIN) {
+    const y = F + (k + at) * h;
+    ctx.moveTo(F, y);
+    ctx.quadraticCurveTo(0.5, y + bend, 1 - F, y - bend * 0.4);
+  }
+  ctx.lineWidth = 0.012;
+  ctx.strokeStyle = 'rgba(70,35,10,0.3)';
+  ctx.stroke();
+
+  // Seams between planks: a dark gap with a lit top edge on the plank below.
+  for (const k of [1, 2]) {
+    const y = F + k * h;
+    ctx.fillStyle = CRATE_WOOD.line;
+    ctx.fillRect(0, y - 0.013, 1, 0.026);
+    ctx.fillStyle = 'rgba(255,225,180,0.3)';
+    ctx.fillRect(0, y + 0.013, 1, 0.012);
+  }
+
+  if (damage >= 1) {
+    crateCrack(ctx, [[0.15, 0.27], [0.23, 0.245], [0.3, 0.285], [0.38, 0.26], [0.46, 0.3]]);
+  }
+  if (damage >= 2) {
+    crateCrack(ctx, [[0.62, 0.53], [0.7, 0.49], [0.77, 0.535], [0.86, 0.5]]);
+    const hole: Pt[] = [[0.49, 0.7], [0.55, 0.65], [0.6, 0.685], [0.66, 0.64], [0.74, 0.69], [0.71, 0.76], [0.63, 0.795], [0.55, 0.77]];
+    path(ctx, hole, true);
+    ctx.fillStyle = CRATE_WOOD.hollow;
+    ctx.fill();
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 0.022;
+    ctx.strokeStyle = CRATE_WOOD.raw;
+    ctx.stroke();
+    crateCrack(ctx, [[0.74, 0.69], [0.8, 0.66], [0.86, 0.685]]);
+  }
+}
+
+/** Diagonal brace from the bottom-left corner to the top-right one; at the last strength it is snapped in two. */
+function drawCrateBrace(ctx: CanvasRenderingContext2D, s: number, damage: number): void {
+  const L = 0.62;
+  const t = 0.075;
+  const pieces: Pt[][] =
+    damage >= 2
+      ? [
+          [[-L, -t], [0.02, -t], [0.05, -t / 2], [0, 0], [0.04, t / 2], [-0.01, t], [-L, t]],
+          [[0.1, -t], [L, -t], [L, t], [0.07, t], [0.1, t / 2], [0.06, 0], [0.11, -t / 2]],
+        ]
+      : [[[-L, -t], [L, -t], [L, t], [-L, t]]];
+  ctx.save();
+  ctx.translate(0.5, 0.5);
+  ctx.rotate(-Math.PI / 4);
+  const g = ctx.createLinearGradient(0, -t, 0, t);
+  g.addColorStop(0, CRATE_WOOD.frameLight);
+  g.addColorStop(1, CRATE_WOOD.frameDark);
+  for (const piece of pieces) {
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,0.35)';
+    ctx.shadowBlur = s * 0.03;
+    ctx.shadowOffsetY = s * 0.02;
+    path(ctx, piece, true);
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.restore();
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 0.022;
+    ctx.strokeStyle = CRATE_WOOD.line;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawCrateFrame(ctx: CanvasRenderingContext2D, s: number, damage: number): void {
+  const F = CRATE_FRAME;
+  const G = 1 - F;
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,0.3)';
+  ctx.shadowBlur = s * 0.03;
+  ctx.shadowOffsetY = s * 0.015;
+  ctx.beginPath();
+  ctx.rect(0, 0, 1, 1);
+  ctx.rect(F, F, 1 - F * 2, 1 - F * 2);
+  const g = ctx.createLinearGradient(0, 0, 0, 1);
+  g.addColorStop(0, CRATE_WOOD.frameLight);
+  g.addColorStop(1, CRATE_WOOD.frameDark);
+  ctx.fillStyle = g;
+  ctx.fill('evenodd');
+  ctx.restore();
+
+  // Grain along each board, then the lit outer edges.
+  ctx.beginPath();
+  ctx.moveTo(0.08, F * 0.55);
+  ctx.quadraticCurveTo(0.5, F * 0.3, 0.92, F * 0.6);
+  ctx.moveTo(0.08, G + F * 0.5);
+  ctx.quadraticCurveTo(0.5, G + F * 0.7, 0.92, G + F * 0.45);
+  ctx.moveTo(F * 0.5, F + 0.05);
+  ctx.quadraticCurveTo(F * 0.7, 0.5, F * 0.45, G - 0.05);
+  ctx.moveTo(G + F * 0.5, F + 0.05);
+  ctx.quadraticCurveTo(G + F * 0.3, 0.5, G + F * 0.55, G - 0.05);
+  ctx.lineWidth = 0.012;
+  ctx.strokeStyle = 'rgba(90,45,15,0.3)';
   ctx.stroke();
   ctx.beginPath();
-  for (const k of [1, 2]) {
-    ctx.moveTo(x + s * 0.06, x + (w * k) / 3);
-    ctx.lineTo(x + w - s * 0.06, x + (w * k) / 3);
-  }
-  ctx.lineWidth = s * 0.025;
+  ctx.moveTo(0.06, 0.035);
+  ctx.lineTo(0.94, 0.035);
+  ctx.moveTo(0.035, F + 0.02);
+  ctx.lineTo(0.035, G - 0.02);
+  ctx.moveTo(F + 0.02, G + 0.03);
+  ctx.lineTo(G - 0.02, G + 0.03);
+  ctx.lineWidth = 0.014;
+  ctx.strokeStyle = 'rgba(255,238,205,0.5)';
   ctx.stroke();
-  if (strength >= 2) {
-    ctx.fillStyle = 'rgba(40,30,30,0.55)';
-    for (const bx of [0.22, 0.7]) ctx.fillRect(x + w * bx, x, w * 0.08, w);
+
+  // Inner edge and the joints: top and bottom boards run the full width, the side boards sit between them.
+  ctx.beginPath();
+  ctx.rect(F, F, 1 - F * 2, 1 - F * 2);
+  for (const y of [F, G]) {
+    ctx.moveTo(0, y);
+    ctx.lineTo(F, y);
+    ctx.moveTo(G, y);
+    ctx.lineTo(1, y);
   }
-  if (strength >= 3) {
-    ctx.fillStyle = '#d9d4cf';
-    for (const [px, py] of [
-      [0.16, 0.16],
-      [0.84, 0.16],
-      [0.16, 0.84],
-      [0.84, 0.84],
-    ]) {
-      ctx.beginPath();
-      ctx.arc(s * px, s * py, s * 0.04, 0, Math.PI * 2);
+  ctx.lineWidth = 0.022;
+  ctx.strokeStyle = CRATE_WOOD.line;
+  ctx.stroke();
+
+  if (damage >= 1) {
+    crateChip(ctx, [[0.5, -0.01], [0.55, 0.075], [0.63, 0.05], [0.69, -0.01]]);
+    crateCrack(ctx, [[0.69, 0.02], [0.75, 0.06], [0.8, 0.045], [0.86, 0.09]]);
+  }
+  if (damage >= 2) {
+    crateChip(ctx, [[1.01, 0.72], [0.92, 0.79], [0.95, 0.87], [1.01, 0.9]]);
+    crateCrack(ctx, [[0.075, 0.36], [0.095, 0.45], [0.06, 0.53], [0.085, 0.62]]);
+  }
+
+  const nails: Pt[] = [[F / 2, F / 2], [G + F / 2, F / 2], [F / 2, G + F / 2], [G + F / 2, G + F / 2]];
+  nails.forEach(([x, y], k) => {
+    ctx.beginPath();
+    // The top-right nail pops out on the last strength, leaving its hole.
+    if (damage >= 2 && k === 1) {
+      ctx.arc(x, y, 0.017, 0, Math.PI * 2);
+      ctx.fillStyle = CRATE_WOOD.hollow;
       ctx.fill();
+      return;
     }
-  }
+    ctx.arc(x, y, 0.03, 0, Math.PI * 2);
+    ctx.fillStyle = '#4a2a12';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(x - 0.009, y - 0.009, 0.012, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,232,195,0.65)';
+    ctx.fill();
+  });
+}
+
+function path(ctx: CanvasRenderingContext2D, points: Pt[], close: boolean): void {
+  ctx.beginPath();
+  points.forEach(([x, y], k) => (k === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
+  if (close) ctx.closePath();
+}
+
+/** A dark split with a lit lower lip, so it reads as cut into the wood. */
+function crateCrack(ctx: CanvasRenderingContext2D, points: Pt[]): void {
+  ctx.save();
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.translate(0, 0.014);
+  path(ctx, points, false);
+  ctx.lineWidth = 0.014;
+  ctx.strokeStyle = 'rgba(255,225,180,0.4)';
+  ctx.stroke();
+  ctx.translate(0, -0.014);
+  path(ctx, points, false);
+  ctx.lineWidth = 0.026;
+  ctx.strokeStyle = CRATE_WOOD.hollow;
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** A splinter knocked off an edge: bare light wood with a dark broken rim. */
+function crateChip(ctx: CanvasRenderingContext2D, points: Pt[]): void {
+  path(ctx, points, true);
+  ctx.fillStyle = CRATE_WOOD.raw;
+  ctx.fill();
+  path(ctx, points.slice(1, -1), false);
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = 0.018;
+  ctx.strokeStyle = CRATE_WOOD.line;
+  ctx.stroke();
 }
 
 /** One sagging chain per layer, each laid over the previous; breaking a layer removes the top chain. */
