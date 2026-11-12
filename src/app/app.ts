@@ -291,6 +291,7 @@ export class GameApp {
   private async onAction(action: Action): Promise<void> {
     if (action === Action.Skip) {
       this.scene.tweens.speed = FINALE_FAST_FORWARD;
+      this.ui.showSpedUp(FINALE_FAST_FORWARD);
       return;
     }
     if (this.actionRunning) return;
