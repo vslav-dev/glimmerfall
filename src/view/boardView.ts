@@ -72,7 +72,8 @@ export class BoardView {
   private drag: { pos: Pos; x: number; y: number } | null = null;
   private hintTimer = 0;
   private hintToken = 0;
-  private hinted: Sprite[] = [];
+  /** cells of the pulsing move; cells, not sprites, so a rebuild of the board keeps the hint */
+  private hinted: number[] = [];
   /** cells being animated; the player can grab only the rest, so moves are possible during a cascade */
   private readonly locked = new Set<number>();
   /** bumped when the board is replaced or removed: playback still in flight stops */
@@ -123,6 +124,7 @@ export class BoardView {
   }
 
   public setBoard(board: Board): void {
+    this.cancelHint();
     this.epoch++;
     this.locked.clear();
     this.board = board;
@@ -133,6 +135,7 @@ export class BoardView {
 
   /** Removes the board from the screen (menus show the bare background). */
   public clear(): void {
+    this.cancelHint();
     this.epoch++;
     this.locked.clear();
     this.wipe();
@@ -141,10 +144,9 @@ export class BoardView {
     this.scene.request();
   }
 
-  /** Destroys every sprite; running animations jump to their end first. */
+  /** Destroys every sprite; running animations jump to their end first. A hint survives: it names cells. */
   private wipe(): void {
     this.scene.tweens.finishAll();
-    this.cancelHint();
     this.particles.clear();
     for (const layer of [this.tiles, this.iceLayer, this.pieceLayer, this.crateLayer, this.chainLayer, this.fxLayer]) {
       for (const child of layer.removeChildren()) child.destroy();
@@ -616,16 +618,21 @@ export class BoardView {
 
   // ---------- hints ----------
 
-  /** Starts the idle timer; a possible move pulses when the player hesitates. */
+  /**
+   * Starts the idle timer: a possible move pulses when the player hesitates.
+   * A hint already pulsing stays: only a made move (`cancelHint`) stops it.
+   */
   public armHint(): void {
-    this.cancelHint();
+    if (this.hinted.length > 0) return;
+    window.clearTimeout(this.hintTimer);
     this.hintTimer = window.setTimeout(() => void this.showHint(), HINT_DELAY);
   }
 
+  /** Call before the board changes under the hinted cells: their sprites return to rest. */
   public cancelHint(): void {
     window.clearTimeout(this.hintTimer);
     this.hintToken++;
-    for (const sprite of this.hinted) if (!sprite.destroyed) sprite.scale.set(1);
+    for (const s of this.hintSprites()) s.scale.set(1);
     this.hinted = [];
   }
 
@@ -633,17 +640,24 @@ export class BoardView {
     if (!this.board || !this.inputEnabled) return;
     const moves = findMoves(this.board);
     if (moves.length === 0) return;
-    const [i, j] = moves[Math.floor(Math.random() * moves.length)];
-    const sprites = [this.spriteAt(i), this.spriteAt(j)].filter((s): s is Sprite => s !== undefined);
     const token = ++this.hintToken;
-    this.hinted = sprites;
+    this.hinted = moves[Math.floor(Math.random() * moves.length)];
     while (token === this.hintToken) {
       await this.scene.tweens.run(700, (k) => {
         if (token !== this.hintToken) return;
-        for (const s of sprites) if (!s.destroyed) s.scale.set(1 + Math.sin(k * Math.PI) * 0.14);
+        for (const s of this.hintSprites()) s.scale.set(1 + Math.sin(k * Math.PI) * 0.14);
       }, { ease: Ease.linear });
       await this.scene.tweens.wait(500);
     }
+  }
+
+  /** Sprites on the hinted cells, minus the selected one: the selection owns its scale. */
+  private hintSprites(): Sprite[] {
+    const selected = this.selected ? this.indexOf(this.selected) : -1;
+    return this.hinted.flatMap((i) => {
+      const s = i === selected ? undefined : this.spriteAt(i);
+      return s ? [s] : [];
+    });
   }
 
   // ---------- input ----------
@@ -655,7 +669,6 @@ export class BoardView {
       this.deselect();
       return;
     }
-    this.cancelHint();
     if (this.selected && isAdjacent(this.selected, pos)) {
       const from = this.selected;
       this.deselect();

@@ -162,7 +162,8 @@ export class GameApp {
     if (this.mode !== Mode.Play || !game) return;
     const swap = makeMove(game, a, b);
     if (!swap) return;
-    this.view.cancelHint();
+    // Only a real move ends the hint; a rejected swap leaves it pulsing.
+    if (swap.valid) this.view.cancelHint();
     const anim = this.view.play([swap], (ev) => this.feedback(ev));
     this.swaps.add(anim);
     void anim.then(() => this.swaps.delete(anim));
