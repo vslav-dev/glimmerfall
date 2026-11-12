@@ -244,9 +244,9 @@ function drawPrism(ctx: CanvasRenderingContext2D, s: number): void {
   ctx.restore();
 }
 
+/** Built on `arcTo`: `ctx.roundRect` is missing in older browsers (Safari < 16, Chrome < 99). */
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
-  ctx.beginPath();
-  ctx.roundRect(x, y, w, h, r);
+  polygon(ctx, [[x, y], [x + w, y], [x + w, y + h], [x, y + h]], r);
 }
 
 function drawTile(ctx: CanvasRenderingContext2D, s: number, alpha: number): void {

@@ -1,7 +1,10 @@
 import '@/ui/styles.css';
 import { GameApp } from '@/app/app';
 import { isNative } from '@/platform/platform';
+import { startTelemetry } from '@/telemetry/telemetry';
 import { Scene } from '@/view/scene';
+
+startTelemetry();
 
 const root = document.getElementById('app')!;
 const canvas = root.querySelector<HTMLCanvasElement>('#board')!;

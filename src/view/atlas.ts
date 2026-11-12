@@ -1,4 +1,5 @@
 import { CanvasSource, Rectangle, Texture } from 'pixi.js';
+import { debug } from '@/telemetry/telemetry';
 import { PAINTERS } from '@/view/art';
 
 const PAD = 2;
@@ -16,8 +17,8 @@ export class Atlas {
   public build(cell: number, resolution: number): boolean {
     const key = `${cell}@${resolution}`;
     if (key === this.key) return false;
-    this.key = key;
 
+    const started = performance.now();
     const px = Math.ceil(cell * resolution);
     const slot = px + PAD * 2;
     const names = [...PAINTERS.keys()];
@@ -37,6 +38,10 @@ export class Atlas {
       return { name, x, y };
     });
 
+    // The first frame is a gem: its center must come out opaque, or 2D painting itself failed.
+    const centerAlpha = ctx.getImageData(places[0].x + (px >> 1), places[0].y + (px >> 1), 1, 1).data[3];
+    debug('atlas', { key, size: [canvas.width, canvas.height], centerAlpha, ms: Math.round(performance.now() - started) });
+
     for (const texture of this.frames.values()) texture.destroy(false);
     this.frames.clear();
     this.source?.destroy();
@@ -45,6 +50,8 @@ export class Atlas {
       const frame = new Rectangle(x / resolution, y / resolution, px / resolution, px / resolution);
       this.frames.set(name, new Texture({ source: this.source, frame }));
     }
+    // Set last: a failed paint must be retried next time, not leave the board with empty frames.
+    this.key = key;
     return true;
   }
 

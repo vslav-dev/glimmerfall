@@ -177,6 +177,9 @@ export class BoardView {
     this.grid.forEach((piece, i) => {
       if (piece) this.addPiece(piece, this.posOf(i));
     });
+    // Diagnostics: a tile center must come out non-transparent on screen.
+    const first = this.posOf(b.cells.findIndex((cell) => cell.exists));
+    this.scene.probeNextFrame('tile', this.originX + this.x(first.c), this.originY + this.y(first.r));
   }
 
   // ---------- playback ----------

@@ -1,4 +1,5 @@
 import { autoDetectRenderer, Container, type Renderer } from 'pixi.js';
+import { debug, track } from '@/telemetry/telemetry';
 import { Tweens } from '@/view/tween';
 
 /** Quality steps the scene falls back through when frames get slow. */
@@ -28,6 +29,7 @@ export class Scene {
   private last = 0;
   private width = 1;
   private height = 1;
+  private probe: { label: string; x: number; y: number } | null = null;
 
   private constructor(private readonly renderer: Renderer) {}
 
@@ -45,6 +47,9 @@ export class Scene {
       // Interaction is plain DOM pointer events; Pixi's event and accessibility systems are not needed.
       skipExtensionImports: true,
     });
+    track('gl', glInfo(renderer));
+    canvas.addEventListener('webglcontextlost', () => track('gl', { event: 'contextlost' }));
+    canvas.addEventListener('webglcontextrestored', () => track('gl', { event: 'contextrestored' }));
     return new Scene(renderer);
   }
 
@@ -60,6 +65,12 @@ export class Scene {
     this.width = width;
     this.height = height;
     this.renderer.resize(width, height, this.resolution);
+    this.request();
+  }
+
+  /** Reports what the next frame really drew at (x, y) in CSS pixels, plus any pending GL error. */
+  public probeNextFrame(label: string, x: number, y: number): void {
+    this.probe = { label, x, y };
     this.request();
   }
 
@@ -82,6 +93,7 @@ export class Scene {
     let active = this.tweens.active;
     for (const update of this.updaters) active = update(dt) || active;
     this.renderer.render(this.root);
+    if (this.probe) this.readProbe(this.probe);
 
     if (active) {
       this.trackSpeed(dt);
@@ -91,6 +103,18 @@ export class Scene {
     }
   };
 
+  private readProbe(probe: { label: string; x: number; y: number }): void {
+    this.probe = null;
+    const renderer = this.renderer;
+    if (!('gl' in renderer)) return;
+    const gl = renderer.gl;
+    const glError = gl.getError();
+    const pixel = new Uint8Array(4);
+    const res = this.resolution;
+    gl.readPixels(Math.floor(probe.x * res), Math.floor((this.height - probe.y) * res), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+    debug('frame-probe', { label: probe.label, glError, rgba: [...pixel], buffer: [gl.drawingBufferWidth, gl.drawingBufferHeight] });
+  }
+
   private trackSpeed(dt: number): void {
     this.slowFrames = dt > SLOW_FRAME_MS ? this.slowFrames + 1 : Math.max(0, this.slowFrames - 2);
     if (this.slowFrames < SLOW_FRAMES_TO_DOWNGRADE || this.quality === QUALITY.length - 1) return;
@@ -99,4 +123,17 @@ export class Scene {
     this.renderer.resize(this.width, this.height, this.resolution);
     this.onQualityChange?.();
   }
+}
+
+function glInfo(renderer: Renderer): Record<string, unknown> {
+  if (!('gl' in renderer)) return { renderer: renderer.name };
+  const gl = renderer.gl;
+  const ext = gl.getExtension('WEBGL_debug_renderer_info');
+  return {
+    renderer: renderer.name,
+    webgl: renderer.context.webGLVersion,
+    gpu: ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) as string : null,
+    maxTexture: gl.getParameter(gl.MAX_TEXTURE_SIZE) as number,
+    textureUnits: gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS) as number,
+  };
 }
