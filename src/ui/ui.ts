@@ -63,6 +63,11 @@ export class Ui {
       const target = (e.target as HTMLElement).closest<HTMLElement>('[data-action]');
       if (target) this.onAction(target.dataset.action as Action);
     });
+    // `data-press` fires on touch-down, not on release: holding counts at once.
+    root.addEventListener('pointerdown', (e) => {
+      const target = (e.target as HTMLElement).closest<HTMLElement>('[data-press]');
+      if (target) this.onAction(target.dataset.press as Action);
+    });
   }
 
   public setTheme(level: number): void {
@@ -194,7 +199,7 @@ export class Ui {
   /** Full-screen catcher that lets a tap anywhere fast-forward the finale; the button at the bottom says so. */
   public showSkipLayer(): void {
     this.show(
-      `<div class="skip" data-action="${Action.Skip}">
+      `<div class="skip" data-press="${Action.Skip}">
         <button class="btn ff">${FF_SVG}<span>${S.speedUp}</span></button>
       </div>`,
       'clear',
