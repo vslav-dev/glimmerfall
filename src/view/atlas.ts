@@ -23,9 +23,16 @@ export class Atlas {
     const slot = px + PAD * 2;
     const names = [...PAINTERS.keys()];
     const perRow = Math.ceil(Math.sqrt(names.length));
-    const canvas = document.createElement('canvas');
-    canvas.width = perRow * slot;
-    canvas.height = Math.ceil(names.length / perRow) * slot;
+    const width = perRow * slot;
+    const height = Math.ceil(names.length / perRow) * slot;
+
+    // Pixi sizes the canvas itself, so painting comes after: a canvas handed over already painted gets
+    // resized (and wiped) when width / resolution * resolution misses the integer, as with dpr 1.33.
+    for (const texture of this.frames.values()) texture.destroy(false);
+    this.frames.clear();
+    this.source?.destroy();
+    this.source = new CanvasSource({ width: width / resolution, height: height / resolution, resolution });
+    const canvas = this.source.resource as HTMLCanvasElement;
     const ctx = canvas.getContext('2d')!;
 
     const places = names.map((name, k) => {
@@ -42,10 +49,6 @@ export class Atlas {
     const centerAlpha = ctx.getImageData(places[0].x + (px >> 1), places[0].y + (px >> 1), 1, 1).data[3];
     debug('atlas', { key, size: [canvas.width, canvas.height], centerAlpha, ms: Math.round(performance.now() - started) });
 
-    for (const texture of this.frames.values()) texture.destroy(false);
-    this.frames.clear();
-    this.source?.destroy();
-    this.source = new CanvasSource({ resource: canvas, resolution });
     for (const { name, x, y } of places) {
       const frame = new Rectangle(x / resolution, y / resolution, px / resolution, px / resolution);
       this.frames.set(name, new Texture({ source: this.source, frame }));
