@@ -1,5 +1,5 @@
 import { type GameState, type LevelDef, type Objective, ObjectiveKind, Special } from '@/core/types';
-import type { Settings } from '@/app/save';
+import { BoardSize, type Settings } from '@/app/save';
 import { FrameName, frameDataUrl } from '@/view/art';
 import { S } from '@/ui/strings';
 
@@ -18,6 +18,8 @@ export const Action = {
   ToggleSound: 'toggle-sound',
   ToggleHaptics: 'toggle-haptics',
   ToggleMotion: 'toggle-motion',
+  BoardSmaller: 'board-smaller',
+  BoardBigger: 'board-bigger',
   Reset: 'reset',
   Skip: 'skip',
 } as const;
@@ -165,6 +167,12 @@ export class Ui {
         ${toggle(Action.ToggleSound, S.sound, settings.sound)}
         ${toggle(Action.ToggleHaptics, S.haptics, settings.haptics)}
         ${toggle(Action.ToggleMotion, S.reducedMotion, settings.reducedMotion)}
+        <div class="toggle stepper">
+          <span>${S.boardSize}</span>
+          <button data-action="${Action.BoardSmaller}" aria-label="${S.smaller}" ${settings.boardSize <= BoardSize.Min ? 'disabled' : ''}>−</button>
+          <i>${S.percent(settings.boardSize)}</i>
+          <button data-action="${Action.BoardBigger}" aria-label="${S.bigger}" ${settings.boardSize >= BoardSize.Max ? 'disabled' : ''}>+</button>
+        </div>
         <button class="btn danger" data-action="${Action.Reset}">${S.reset}</button>
         <button class="btn primary" data-action="${Action.Back}">${S.back}</button>
       </div>`,

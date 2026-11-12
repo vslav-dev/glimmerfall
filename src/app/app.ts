@@ -1,4 +1,4 @@
-import { type CurrentLevel, type SaveData, defaultSave, loadSave, persist } from '@/app/save';
+import { BoardSize, type CurrentLevel, type SaveData, defaultSave, loadSave, persist } from '@/app/save';
 import { AudioBus } from '@/audio/audio';
 import { Sfx } from '@/audio/synth';
 import { addExtraMoves, advance, canAct, createGame, EXTRA_MOVES, makeMove, startFinale, starsFor } from '@/core/game';
@@ -357,6 +357,10 @@ export class GameApp {
       case Action.ToggleMotion:
         this.toggleSetting(action);
         break;
+      case Action.BoardSmaller:
+      case Action.BoardBigger:
+        this.resizeBoard(action === Action.BoardBigger ? BoardSize.Step : -BoardSize.Step);
+        break;
       case Action.Reset:
         if (this.ui.confirmReset()) {
           this.save = defaultSave();
@@ -375,6 +379,15 @@ export class GameApp {
     if (action === Action.ToggleSound) s.sound = !s.sound;
     if (action === Action.ToggleHaptics) s.haptics = !s.haptics;
     if (action === Action.ToggleMotion) s.reducedMotion = !s.reducedMotion;
+    this.applySettings();
+    this.persist();
+    this.ui.showSettings(s);
+  }
+
+  /** Applies at once: opened from pause, the board behind the card shows the new size. */
+  private resizeBoard(delta: number): void {
+    const s = this.save.settings;
+    s.boardSize = Math.min(BoardSize.Max, Math.max(BoardSize.Min, s.boardSize + delta));
     this.applySettings();
     this.persist();
     this.ui.showSettings(s);
@@ -443,6 +456,7 @@ export class GameApp {
     this.audio.enabled = s.sound;
     setHapticsEnabled(s.haptics);
     this.view.setReducedMotion(s.reducedMotion);
+    this.view.setScale(s.boardSize / 100);
     document.documentElement.classList.toggle('reduced-motion', s.reducedMotion);
   }
 

@@ -9,7 +9,12 @@ export interface Settings {
   sound: boolean;
   haptics: boolean;
   reducedMotion: boolean;
+  /** board size, percent of the space it may take */
+  boardSize: number;
 }
+
+/** Board size steps: a big tablet screen otherwise fills edge to edge with huge pieces. */
+export const BoardSize = { Min: 60, Max: 100, Step: 10 } as const;
 
 /** The level being played: its definition, failures so far, and the unfinished game, if any. */
 export interface CurrentLevel {
@@ -39,6 +44,7 @@ export function defaultSave(): SaveData {
       sound: true,
       haptics: true,
       reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+      boardSize: BoardSize.Max,
     },
     current: null,
   };
@@ -51,7 +57,9 @@ export async function loadSave(): Promise<SaveData> {
   if (data.version === 1 && data.current) data.current.game = null;
   if (data.version === 1) data.version = VERSION;
   if (data.version !== VERSION) return defaultSave();
-  return { ...defaultSave(), ...data };
+  const defaults = defaultSave();
+  // Settings merge one level deeper: a setting added later gets its default in an older save.
+  return { ...defaults, ...data, settings: { ...defaults.settings, ...data.settings } };
 }
 
 /** Writes are serialized so a slow write never lands after a newer one. */

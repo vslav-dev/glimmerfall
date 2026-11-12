@@ -43,6 +43,8 @@ interface LayerSprite {
 export class BoardView {
   public inputEnabled = false;
   private reducedMotion = false;
+  /** player's board size setting, applied to the cell that fits */
+  private scale = 1;
   private readonly atlas = new Atlas();
   private readonly boardRoot = new Container();
   private readonly tiles = new Container();
@@ -113,6 +115,13 @@ export class BoardView {
     this.particles.density = this.scene.particleDensity * (on ? 0.5 : 1);
   }
 
+  /** The atlas is repainted for the new cell size, so a smaller board stays sharp. */
+  public setScale(scale: number): void {
+    if (scale === this.scale) return;
+    this.scale = scale;
+    this.layout(this.width, this.height);
+  }
+
   public setBoard(board: Board): void {
     this.epoch++;
     this.locked.clear();
@@ -153,7 +162,7 @@ export class BoardView {
     this.height = height;
     const b = this.board;
     if (!b) return;
-    const cell = Math.max(16, Math.floor(Math.min(width / b.cols, height / b.rows, MAX_CELL)));
+    const cell = Math.max(16, Math.floor(Math.min(width / b.cols, height / b.rows, MAX_CELL) * this.scale));
     this.cell = cell;
     this.originX = Math.round((width - cell * b.cols) / 2);
     this.originY = Math.round((height - cell * b.rows) / 2);
@@ -177,9 +186,6 @@ export class BoardView {
     this.grid.forEach((piece, i) => {
       if (piece) this.addPiece(piece, this.posOf(i));
     });
-    // Diagnostics: a tile center must come out non-transparent on screen.
-    const first = this.posOf(b.cells.findIndex((cell) => cell.exists));
-    this.scene.probeNextFrame('tile', this.originX + this.x(first.c), this.originY + this.y(first.r));
   }
 
   // ---------- playback ----------

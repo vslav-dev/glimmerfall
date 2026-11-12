@@ -1,5 +1,4 @@
 import { CanvasSource, Rectangle, Texture } from 'pixi.js';
-import { debug } from '@/telemetry/telemetry';
 import { PAINTERS } from '@/view/art';
 
 const PAD = 2;
@@ -18,7 +17,6 @@ export class Atlas {
     const key = `${cell}@${resolution}`;
     if (key === this.key) return false;
 
-    const started = performance.now();
     const px = Math.ceil(cell * resolution);
     const slot = px + PAD * 2;
     const names = [...PAINTERS.keys()];
@@ -44,10 +42,6 @@ export class Atlas {
       ctx.restore();
       return { name, x, y };
     });
-
-    // The first frame is a gem: its center must come out opaque, or 2D painting itself failed.
-    const centerAlpha = ctx.getImageData(places[0].x + (px >> 1), places[0].y + (px >> 1), 1, 1).data[3];
-    debug('atlas', { key, size: [canvas.width, canvas.height], centerAlpha, ms: Math.round(performance.now() - started) });
 
     for (const { name, x, y } of places) {
       const frame = new Rectangle(x / resolution, y / resolution, px / resolution, px / resolution);
