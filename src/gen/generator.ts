@@ -54,7 +54,7 @@ export function draftLevel(req: DraftRequest): LevelDraft {
   const crate = new Array<number>(size).fill(0);
   const ice = new Array<number>(size).fill(0);
   const chain = new Array<number>(size).fill(0);
-  const grid = { rows, cols, mask };
+  const grid: Grid = { rows, cols, mask, blocked: (i) => crate[i] > 0 || chain[i] > 0 };
   if (goals.includes(ObjectiveKind.Crate) || (plan.mechanics.has(Mechanic.Crate) && n >= 25 && random(blockRng) < 0.3)) {
     placeCrates(grid, crate, n, blockRng);
   }
@@ -231,10 +231,12 @@ function weighted<T>(h: RngHolder, items: [T, number][]): T {
 
 // ---------- layout ----------
 
-interface Grid {
+export interface Grid {
   rows: number;
   cols: number;
   mask: number[];
+  /** crate or chain: pieces neither fall into nor through it */
+  blocked: (i: number) => boolean;
 }
 
 type ShapeRule = (r: number, c: number, rows: number, cols: number) => boolean;
@@ -291,12 +293,34 @@ function isConnected(mask: number[], rows: number, cols: number): boolean {
   return seen.size === mask.filter(Boolean).length;
 }
 
-/** Sets a cell and its mirror twin. */
-function setMirrored(grid: Grid, layer: number[], r: number, c: number, value: number): void {
-  for (const x of [c, grid.cols - 1 - c]) {
-    const i = r * grid.cols + x;
-    if (grid.mask[i] === 1) layer[i] = value;
+/** Sets a blocker on a cell and its mirror twin, unless that would cut some free cell off from the refill. */
+function setBlocker(grid: Grid, layer: number[], r: number, c: number, value: number): void {
+  const cells = [c, grid.cols - 1 - c].map((x) => r * grid.cols + x).filter((i) => grid.mask[i] === 1);
+  const before = cells.map((i) => layer[i]);
+  for (const i of cells) layer[i] = value;
+  if (!refillReachesAll(grid)) cells.forEach((i, k) => (layer[i] = before[k]));
+}
+
+/**
+ * Follows the fall rules: a free cell is fed straight from above (holes are skipped) or diagonally
+ * from a fed cell one row up. A cell nothing can feed empties for good and can leave the board without a move.
+ */
+export function refillReachesAll(grid: Grid): boolean {
+  const { rows, cols, mask } = grid;
+  const fed = new Array<boolean>(rows * cols).fill(false);
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const i = r * cols + c;
+      if (mask[i] !== 1 || grid.blocked(i)) continue;
+      let above = r - 1;
+      while (above >= 0 && mask[above * cols + c] !== 1) above--;
+      const straight = above < 0 || fed[above * cols + c];
+      const diagonal = r > 0 && [c - 1, c + 1].some((x) => x >= 0 && x < cols && fed[(r - 1) * cols + x]);
+      if (!straight && !diagonal) return false;
+      fed[i] = true;
+    }
   }
+  return true;
 }
 
 function placeCrates(grid: Grid, crate: number[], n: number, h: RngHolder): void {
@@ -307,12 +331,12 @@ function placeCrates(grid: Grid, crate: number[], n: number, h: RngHolder): void
     const r = 3 + randInt(h, Math.max(1, grid.rows - 5));
     const width = 1 + randInt(h, Math.max(1, half - 2));
     const s = strength();
-    for (let c = 0; c < width; c++) setMirrored(grid, crate, r, c, s);
+    for (let c = 0; c < width; c++) setBlocker(grid, crate, r, c, s);
   }
   const target = 6 + Math.min(12, Math.floor(n / 5));
   for (let guard = 0; guard < 100 && crate.filter(Boolean).length < target; guard++) {
     const r = 2 + randInt(h, Math.max(1, grid.rows - 3));
-    setMirrored(grid, crate, r, randInt(h, half), strength());
+    setBlocker(grid, crate, r, randInt(h, half), strength());
   }
 }
 
@@ -349,7 +373,7 @@ function placeChains(grid: Grid, chain: number[], crate: number[], n: number, h:
     const r = 1 + randInt(h, grid.rows - 1);
     const c = randInt(h, half);
     if (crate[r * grid.cols + c] > 0) continue;
-    setMirrored(grid, chain, r, c, n >= 50 && random(h) < 0.3 ? 2 : 1);
+    setBlocker(grid, chain, r, c, n >= 50 && random(h) < 0.3 ? 2 : 1);
   }
 }
 

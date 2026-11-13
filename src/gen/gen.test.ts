@@ -3,7 +3,7 @@ import { createGame } from '@/core/game';
 import { hasAnyMatch, hasMove } from '@/core/moves';
 import { LevelKind, ObjectiveKind } from '@/core/types';
 import { newDirector, recordAttempt, targetWinRate } from '@/difficulty/director';
-import { draftLevel, finalizeLevel } from '@/gen/generator';
+import { draftLevel, finalizeLevel, refillReachesAll } from '@/gen/generator';
 import { planLevel } from '@/gen/plan';
 
 describe('generator', () => {
@@ -35,6 +35,15 @@ describe('generator', () => {
       expect(hasMove(game.board)).toBe(true);
     }
     // Twenty full bot calibrations: seconds on a laptop, several times slower on CI runners.
+  }, 60_000);
+
+  it('never walls a free cell off from the refill with crates and chains', () => {
+    // 171 once got a full-width crate wall: the cells below emptied and the board ran out of moves.
+    for (const n of [10, 16, 25, 48, 77, 103, 139, 171, 188]) {
+      const { level } = draftLevel({ number: n, assist: 0 });
+      const blocked = (i: number): boolean => level.crate[i] > 0 || level.chain[i] > 0;
+      expect(refillReachesAll({ rows: level.rows, cols: level.cols, mask: level.mask, blocked }), `level ${n}`).toBe(true);
+    }
   }, 60_000);
 
   it('gives more moves for a higher target win rate', () => {

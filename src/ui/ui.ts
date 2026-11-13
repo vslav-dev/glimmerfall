@@ -290,8 +290,12 @@ export class Ui {
   public async curtain(change: () => void | Promise<void>): Promise<void> {
     this.curtainEl.classList.add('on');
     await wait(220);
-    await change();
-    this.curtainEl.classList.remove('on');
+    // A failed change still lifts the curtain: the screen behind stays usable, the error reaches telemetry.
+    try {
+      await change();
+    } finally {
+      this.curtainEl.classList.remove('on');
+    }
   }
 
   // ---------- helpers ----------
