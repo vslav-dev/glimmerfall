@@ -12,6 +12,7 @@ import { Ease } from '@/view/tween';
 type ClearEvent = Extract<GameEvent, { type: 'clear' }>;
 type FallEvent = Extract<GameEvent, { type: 'fall' }>;
 type PiecesEvent = Extract<GameEvent, { type: 'transform' | 'shuffle' }>;
+type LightEvent = Extract<GameEvent, { type: 'light' }>;
 
 /** Delay between playback "waves" inside one clear step (special chains fire one after another). */
 const ORDER_STEP = 70;
@@ -21,6 +22,10 @@ const GLIDE_TAU = 90;
 const HINT_DELAY = 5000;
 /** beat between the "last chance" call-out and the specials going off */
 const LAST_CHANCE_PAUSE = 650;
+/** beat between the finale lighting its specials and the first one going off */
+const LIGHT_PAUSE = 220;
+/** period of the pulse of a lit special waiting its turn, ms per radian */
+const LIT_PULSE = 70;
 const SCORE_FONT = 'gf-score';
 const WHITE = 0xffffff;
 const ICE_TINT = 0xbfe8ff;
@@ -55,6 +60,8 @@ export class BoardView {
   private readonly boardRoot = new Container();
   private readonly tiles = new Container();
   private readonly iceLayer = new Container();
+  /** halos behind lit specials */
+  private readonly litLayer = new Container();
   private readonly pieceLayer = new Container();
   private readonly crateLayer = new Container();
   private readonly chainLayer = new Container();
@@ -66,6 +73,9 @@ export class BoardView {
   private readonly crates = new Map<number, LayerSprite>();
   private readonly chains = new Map<number, LayerSprite>();
   private readonly popupPool: BitmapText[] = [];
+  /** lit specials waiting to go off, by piece id, with their halo (null until drawn) */
+  private readonly lit = new Map<number, Sprite | null>();
+  private litClock = 0;
   /** piece per cell as the player currently sees it (lags the core board during playback) */
   private grid: (Piece | null)[] = [];
   private board: Board | null = null;
@@ -90,12 +100,13 @@ export class BoardView {
     private readonly canvas: HTMLCanvasElement,
     private readonly input: BoardListener,
   ) {
-    this.boardRoot.addChild(this.tiles, this.iceLayer, this.pieceLayer, this.crateLayer, this.chainLayer, this.fxLayer, this.textLayer);
+    this.boardRoot.addChild(this.tiles, this.iceLayer, this.litLayer, this.pieceLayer, this.crateLayer, this.chainLayer, this.fxLayer, this.textLayer);
     this.glide.addChild(this.boardRoot);
     scene.root.addChild(this.glide);
     this.particles = new Particles(this.fxLayer, () => scene.request());
     scene.addUpdater((dt) => this.particles.update(dt));
     scene.addUpdater((dt) => this.settleGlide(dt));
+    scene.addUpdater((dt) => this.pulseLit(dt));
     scene.onQualityChange = () => this.layout(this.width, this.height);
 
     BitmapFont.install({
@@ -136,6 +147,7 @@ export class BoardView {
     this.epoch++;
     this.locked.clear();
     this.board = board;
+    this.lit.clear();
     this.grid = board.cells.map((c) => c.piece);
     this.deselect();
     this.layout(this.width, this.height, true);
@@ -146,6 +158,7 @@ export class BoardView {
     this.cancelHint();
     this.epoch++;
     this.locked.clear();
+    this.lit.clear();
     this.wipe();
     this.board = null;
     this.grid = [];
@@ -156,10 +169,12 @@ export class BoardView {
   private wipe(): void {
     this.scene.tweens.finishAll();
     this.particles.clear();
-    for (const layer of [this.tiles, this.iceLayer, this.pieceLayer, this.crateLayer, this.chainLayer, this.fxLayer]) {
+    for (const layer of [this.tiles, this.iceLayer, this.litLayer, this.pieceLayer, this.crateLayer, this.chainLayer, this.fxLayer]) {
       for (const child of layer.removeChildren()) child.destroy();
     }
     this.sprites.clear();
+    // Lit ids survive a rebuild; their halos come back on the next frame.
+    for (const id of this.lit.keys()) this.lit.set(id, null);
     this.ice.clear();
     this.crates.clear();
     this.chains.clear();
@@ -244,6 +259,9 @@ export class BoardView {
           break;
         case 'shuffle':
           await this.playShuffle(ev);
+          break;
+        case 'light':
+          await this.playLight(ev);
           break;
         case 'lastChance':
           // The announcement gets a beat before the specials go off.
@@ -394,6 +412,8 @@ export class BoardView {
     }
 
     for (const p of ev.popups) this.after(p.order * ORDER_STEP, () => this.popup(p.r, p.c, p.value));
+    // A special lights up as the blast reaches it.
+    for (const l of ev.lit) this.after(l.order * ORDER_STEP, () => this.light(l.id));
 
     await this.scene.tweens.wait(end);
   }
@@ -434,6 +454,49 @@ export class BoardView {
       end = Math.max(end, duration);
     }
     await this.scene.tweens.wait(end + 40);
+  }
+
+  private async playLight(ev: LightEvent): Promise<void> {
+    for (const p of ev.pieces) this.light(p.id);
+    await this.scene.tweens.wait(LIGHT_PAUSE);
+  }
+
+  /** A lit special pulses with a halo until it goes off. */
+  private light(id: number): void {
+    const sprite = this.sprites.get(id);
+    if (!sprite || this.lit.has(id)) return;
+    this.lit.set(id, null);
+    this.flash(sprite.x, sprite.y, 1.5);
+    this.scene.request();
+  }
+
+  /** Halos follow their pieces as they fall; a piece that went off takes its halo along. */
+  private pulseLit(dt: number): boolean {
+    if (this.lit.size === 0) return false;
+    this.litClock += dt;
+    const pulse = this.reducedMotion ? 0 : Math.sin(this.litClock / LIT_PULSE);
+    for (const [id, halo] of this.lit) {
+      const piece = this.sprites.get(id);
+      if (!piece) {
+        halo?.destroy();
+        this.lit.delete(id);
+        continue;
+      }
+      const h = halo ?? this.addHalo(id);
+      h.position.copyFrom(piece.position);
+      h.scale.set(1.3 + 0.15 * pulse);
+      h.alpha = 0.75 + 0.25 * pulse;
+    }
+    return this.lit.size > 0;
+  }
+
+  private addHalo(id: number): Sprite {
+    const halo = new Sprite(this.atlas.get(FrameName.Glow));
+    halo.anchor.set(0.5);
+    halo.blendMode = 'add';
+    this.litLayer.addChild(halo);
+    this.lit.set(id, halo);
+    return halo;
   }
 
   private async playTransform(ev: PiecesEvent): Promise<void> {

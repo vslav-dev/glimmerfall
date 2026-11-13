@@ -24,8 +24,11 @@ const Mode = {
 } as const;
 type Mode = (typeof Mode)[keyof typeof Mode];
 
-/** every finale step plays this much faster than the one before, without a cap: long chains rush to the end */
-const FINALE_RAMP = 1.12;
+/**
+ * Every step of a chain plays this much faster than the one before, without a cap: long chains,
+ * lit specials going off one by one and the finale rush to the end. A board at rest plays at normal speed.
+ */
+const CHAIN_RAMP = 1.12;
 /** Off until there is something to pay for extra moves with (ads, coins): out of moves means a plain loss. */
 const OFFER_EXTRA_MOVES = false;
 
@@ -190,9 +193,10 @@ export class GameApp {
       if (!events) break;
       this.ui.updateHud(game);
       this.updateInput();
-      if (this.mode === Mode.Finale) this.scene.tweens.speed *= FINALE_RAMP;
+      this.scene.tweens.speed = CHAIN_RAMP ** Math.max(0, game.cascade - 1);
       await this.view.play(events, (ev) => this.feedback(ev));
     }
+    this.scene.tweens.speed = 1;
     if (this.running === game) this.running = null;
     if (this.game !== game) return;
     this.ui.updateHud(game);
@@ -216,11 +220,9 @@ export class GameApp {
     haptic(Haptic.Success);
     this.ui.flashText(S.win);
     if (game.movesLeft > 0) {
-      this.scene.tweens.speed = 1;
       await this.view.play(startFinale(game), (ev) => this.feedback(ev));
       this.ui.updateHud(game);
       await this.run(game);
-      this.scene.tweens.speed = 1;
       this.ui.updateHud(game);
     }
 
@@ -446,6 +448,9 @@ export class GameApp {
       case 'shuffle':
         this.audio.play(Sfx.Shuffle);
         this.ui.flashText(S.shuffle);
+        break;
+      case 'light':
+        this.audio.play(Sfx.Select);
         break;
       case 'lastChance':
         this.audio.play(Sfx.Create);

@@ -10,6 +10,7 @@ import {
   type CreatedPiece,
   type GameEvent,
   type LayerChange,
+  type LitPiece,
   MAX_COLORS,
   NO_COLOR,
   type PendingSwap,
@@ -71,9 +72,13 @@ interface Ctx {
   blasts: Blast[];
   layers: Map<number, LayerChange>;
   popups: ScorePopup[];
+  /** specials matched this step: they go off within it */
   queue: Activation[];
   pending: { i: number; piece: Piece }[];
   crateHits: Set<number>;
+  /** ids of lit specials waiting their turn, shared across steps */
+  fuse: number[];
+  lit: LitPiece[];
 }
 
 export function newTally(): Tally {
@@ -82,11 +87,14 @@ export function newTally(): Tally {
 
 /**
  * One board step: the pending player swap (combo or match) and every ready match clear together,
- * specials fire, pieces fall. Null when nothing matches: the board is calm.
+ * matched specials fire, the next lit special in `fuse` goes off, pieces fall.
+ * A special hit by a blast is not fired at once: it is lit, stays on the board (falling with it)
+ * and goes off in a later step, one per step, so chain reactions play out one by one while the board refills.
+ * Null when nothing matches and nothing is lit: the board is calm.
  */
-export function resolveStep(b: Board, swap: PendingSwap | null, cascadeLevel: number, scorer: TargetScorer): Step | null {
+export function resolveStep(b: Board, swap: PendingSwap | null, cascadeLevel: number, scorer: TargetScorer, fuse: number[]): Step | null {
   const step: Step = { events: [], tally: newTally() };
-  return stepInto(b, swap, cascadeLevel, scorer, step) ? step : null;
+  return stepInto(b, swap, cascadeLevel, scorer, fuse, step) ? step : null;
 }
 
 /** Finale opening: up to `count` random plain pieces turn into line specials. */
@@ -102,34 +110,49 @@ export function convertForFinale(b: Board, count: number): CreatedPiece[] {
   });
 }
 
-/** Finale step on a calm board: every special fires at once, pieces fall. Null when none is left. */
-export function resolveDetonation(b: Board, cascadeLevel: number, scorer: TargetScorer): Step | null {
-  const specials = b.cells.flatMap((cell, i) => (cell.piece && cell.piece.special !== Special.None ? [i] : []));
-  if (specials.length === 0) return null;
-  const step: Step = { events: [], tally: newTally() };
-  const ctx = newCtx(b, step, scorer, cascadeLevel);
-  specials.forEach((i, k) => {
-    unchain(ctx, i, k % 6);
-    removePiece(ctx, i, k % 6, -1, true);
+/** Finale and last chance on a calm board: every special not lit yet is lit, in random order. */
+export function lightAll(b: Board, fuse: number[]): LitPiece[] {
+  const specials = shuffleInPlace(
+    b,
+    b.cells.flatMap((cell, i) => (cell.piece && cell.piece.special !== Special.None && !fuse.includes(cell.piece.id) ? [i] : [])),
+  );
+  return specials.map((i) => {
+    const id = b.cells[i].piece!.id;
+    fuse.push(id);
+    return { id, pos: posOf(b, i), order: 0 };
   });
-  finishStep(ctx);
-  step.events.push({ type: 'fall', moves: settle(b) });
-  return step;
 }
 
 /** Appends one step to `step`; false when there is nothing to clear. */
-function stepInto(b: Board, swap: PendingSwap | null, cascadeLevel: number, scorer: TargetScorer, step: Step): boolean {
-  const ctx = newCtx(b, step, scorer, cascadeLevel);
+function stepInto(b: Board, swap: PendingSwap | null, cascadeLevel: number, scorer: TargetScorer, fuse: number[], step: Step): boolean {
+  // Only specials lit in earlier steps are due: whatever this step lights waits for the next one.
+  const due = fuse.length;
+  const ctx = newCtx(b, step, scorer, cascadeLevel, fuse);
   if (swap && isComboPair(b.cells[swap.to].piece!, b.cells[swap.from].piece!)) runCombo(ctx, swap.to, swap.from);
+  // The player's match is found before the fuse goes off, so a blast never steals it.
   const groups = findGroups(b, swap ? [swap.to, swap.from] : []);
-  if (ctx.removed.length === 0 && groups.length === 0) return false;
   clearGroups(ctx, groups);
+  const fired = fireNext(ctx, due);
+  if (ctx.removed.length === 0 && groups.length === 0 && !fired) return false;
   finishStep(ctx);
   step.events.push({ type: 'fall', moves: settle(b) });
   return true;
 }
 
-function newCtx(b: Board, step: Step, scorer: TargetScorer, cascadeLevel: number): Ctx {
+/** The oldest lit special still on the board goes off; lit ones that were matched meanwhile are gone already. */
+function fireNext(ctx: Ctx, due: number): boolean {
+  for (let k = 0; k < due; k++) {
+    const id = ctx.fuse.shift()!;
+    const i = ctx.b.cells.findIndex((cell) => cell.piece?.id === id);
+    if (i === -1) continue;
+    unchain(ctx, i, 0);
+    removePiece(ctx, i, 0, -1, true);
+    return true;
+  }
+  return false;
+}
+
+function newCtx(b: Board, step: Step, scorer: TargetScorer, cascadeLevel: number, fuse: number[]): Ctx {
   return {
     b,
     tally: step.tally,
@@ -144,6 +167,8 @@ function newCtx(b: Board, step: Step, scorer: TargetScorer, cascadeLevel: number
     queue: [],
     pending: [],
     crateHits: new Set(),
+    fuse,
+    lit: [],
   };
 }
 
@@ -167,6 +192,7 @@ function finishStep(ctx: Ctx): void {
     blasts: ctx.blasts,
     layers: [...ctx.layers.values()],
     popups: ctx.popups,
+    lit: ctx.lit,
   });
 }
 
@@ -206,7 +232,10 @@ function hitCratesAround(ctx: Ctx, i: number, order: number): number {
   return points;
 }
 
-/** Damages whatever is in the cell: chain first, then the piece (and its ice), or a crate. Returns points. */
+/**
+ * Damages whatever is in the cell: chain first, then the piece (and its ice), or a crate. Returns points.
+ * A special is lit instead of removed: it goes off in a later step.
+ */
 function hit(ctx: Ctx, i: number, order: number): number {
   const cell = ctx.b.cells[i];
   if (!cell.exists) return 0;
@@ -215,6 +244,10 @@ function hit(ctx: Ctx, i: number, order: number): number {
       cell.chain--;
       markLayer(ctx, i, order);
       return LAYER_POINTS;
+    }
+    if (cell.piece.special !== Special.None) {
+      light(ctx, i, order);
+      return 0;
     }
     return removePiece(ctx, i, order, -1, true);
   }
@@ -246,7 +279,15 @@ function removePiece(ctx: Ctx, i: number, order: number, mergeInto: number, acti
   return points;
 }
 
-/** Forced removal (finale, prism spread) breaks every chain layer at once. */
+/** Queues the special in the cell to go off in a later step; lit once, further hits change nothing. */
+function light(ctx: Ctx, i: number, order: number): void {
+  const id = ctx.b.cells[i].piece!.id;
+  if (ctx.fuse.includes(id)) return;
+  ctx.fuse.push(id);
+  ctx.lit.push({ id, pos: posOf(ctx.b, i), order });
+}
+
+/** Forced removal (a lit special going off) breaks every chain layer at once. */
 function unchain(ctx: Ctx, i: number, order: number): void {
   if (ctx.b.cells[i].chain === 0) return;
   ctx.b.cells[i].chain = 0;
@@ -330,6 +371,8 @@ function pickTarget(ctx: Ctx, exclude: Set<number>): number {
   let bestScore = -Infinity;
   ctx.b.cells.forEach((cell, i) => {
     if (!cell.exists || exclude.has(i) || (!cell.piece && cell.crate === 0)) return;
+    // A lit special goes off anyway: a spark spent on it would be wasted.
+    if (cell.piece && ctx.fuse.includes(cell.piece.id)) return;
     const score = ctx.scorer(ctx.b, i, ctx.tally) + random(ctx.b) * 0.5;
     if (score > bestScore) {
       bestScore = score;
@@ -427,8 +470,16 @@ function runCombo(ctx: Ctx, center: number, otherCell: number): void {
   COMBOS[key]?.(ctx, center, p, q);
 }
 
+/** The partner's color turns into copies of it, all lit: they go off one by one, nearest to the prism first. */
 function spreadSpecial(ctx: Ctx, origin: number, partner: Piece): void {
-  const targets = ctx.b.cells.flatMap((cell, i) => (cell.piece?.color === partner.color ? [i] : []));
+  const o = posOf(ctx.b, origin);
+  const distance = (i: number): number => {
+    const p = posOf(ctx.b, i);
+    return Math.hypot(p.r - o.r, p.c - o.c);
+  };
+  const targets = ctx.b.cells
+    .flatMap((cell, i) => (cell.piece?.color === partner.color ? [i] : []))
+    .sort((x, y) => distance(x) - distance(y));
   const isLine = kindOf(partner.special) === Kind.Line;
   const pieces = targets.map((i) => {
     const piece = ctx.b.cells[i].piece!;
@@ -440,16 +491,13 @@ function spreadSpecial(ctx: Ctx, origin: number, partner: Piece): void {
   ctx.events.push({ type: 'transform', pieces });
   ctx.blasts.push({
     kind: BlastKind.Prism,
-    origin: posOf(ctx.b, origin),
+    origin: o,
     cells: targets.map((i) => posOf(ctx.b, i)),
     order: 0,
     target: null,
     color: partner.color,
   });
-  targets.forEach((i, k) => {
-    unchain(ctx, i, 1 + (k % 4));
-    removePiece(ctx, i, 1 + (k % 4), -1, true);
-  });
+  for (const i of targets) light(ctx, i, 1);
 }
 
 // ---------- areas ----------

@@ -56,7 +56,7 @@ export function simulate(level: LevelDef, seed: number, maxMoves: number, noise 
 function winsByLastChance(game: GameState): boolean {
   const near = game.level.objectives.every((o, k) => game.progress[k] >= o.target * LAST_CHANCE_REACH);
   if (!near || !game.board.cells.some((c) => c.piece && c.piece.special !== Special.None)) return false;
-  const trial: GameState = { ...game, board: structuredClone(game.board), progress: [...game.progress], movesLeft: 0 };
+  const trial: GameState = { ...game, board: structuredClone(game.board), progress: [...game.progress], fuse: [...(game.fuse ?? [])], movesLeft: 0 };
   while (advance(trial)) continue;
   return trial.status === 'won';
 }

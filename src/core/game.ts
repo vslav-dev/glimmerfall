@@ -1,6 +1,6 @@
 import { cellAt, indexOf, isAdjacent, isMovable, newPiece, randomFreeColor, swapPieces } from '@/core/board';
 import { hasMove, isValidSwap, shuffleBoard } from '@/core/moves';
-import { convertForFinale, resolveDetonation, resolveStep, type Tally, type TargetScorer } from '@/core/resolve';
+import { convertForFinale, lightAll, resolveStep, type Tally, type TargetScorer } from '@/core/resolve';
 import {
   type Board,
   type Cell,
@@ -15,7 +15,7 @@ import {
 } from '@/core/types';
 
 export const EXTRA_MOVES = 5;
-/** cap on finale and last-chance detonation rounds: cascades can keep creating specials */
+/** cap on finale and last-chance lighting rounds: cascades can keep creating specials */
 const FINALE_ROUNDS = 20;
 
 export function createBoard(level: LevelDef, seed: number): Board {
@@ -67,6 +67,7 @@ export function createGame(level: LevelDef, seed: number): GameState {
     pending: null,
     cascade: 0,
     finale: 0,
+    fuse: [],
     lastChance: false,
   };
 }
@@ -105,30 +106,34 @@ export function makeMove(state: GameState, a: Pos, b: Pos): SwapEvent | null {
 /**
  * Advances the board by one step and applies its gains right away, so goals count up during a cascade.
  * Null once the board rests; that is when a level without moves is lost.
+ * `cascade` counts the steps of one chain, finale included: it drives the score multiplier, praise and playback speed.
  */
 export function advance(state: GameState): GameEvent[] | null {
   const { board, pending } = state;
+  const fuse = (state.fuse ??= []);
   const level = pending ? 0 : state.cascade;
   state.pending = null;
-  const step = resolveStep(board, pending, level, scorerFor(state));
+  const scorer = scorerFor(state);
+  let step = resolveStep(board, pending, level, scorer, fuse);
+  const events: GameEvent[] = [];
+  if (!step && state.finale > 0) {
+    // Finale and last chance: every special left on the calm board is lit; they go off one per step.
+    state.finale--;
+    const pieces = lightAll(board, fuse);
+    if (pieces.length > 0) {
+      events.push({ type: 'light', pieces });
+      step = resolveStep(board, null, level, scorer, fuse);
+    } else {
+      state.finale = 0;
+    }
+  }
   if (step) {
     state.cascade = level + 1;
     applyTally(state, step.tally);
+    // The last chance runs on the finale rounds too: its specials can complete the level.
     if (state.status === 'playing' && isComplete(state)) state.status = 'won';
-    return step.events;
-  }
-  if (state.finale > 0) {
-    const round = FINALE_ROUNDS - state.finale;
-    state.finale--;
-    const blast = resolveDetonation(board, round, scorerFor(state));
-    if (blast) {
-      state.cascade = round + 1;
-      applyTally(state, blast.tally);
-      // The last chance runs on these rounds too: its detonations can complete the level.
-      if (state.status === 'playing' && isComplete(state)) state.status = 'won';
-      return blast.events;
-    }
-    state.finale = 0;
+    events.push(...step.events);
+    return events;
   }
   state.cascade = 0;
   if (state.status !== 'playing') return null;
@@ -146,8 +151,8 @@ export function advance(state: GameState): GameEvent[] | null {
 }
 
 /**
- * Out of moves with goals left: the specials on the board fire round by round, like the finale,
- * until none is left, so specials born in their cascades fire too. Once per level.
+ * Out of moves with goals left: the specials on the board are lit and go off one by one, like the finale,
+ * until none is left, so specials born in their cascades go off too. Once per level.
  * The bot plays by the same rule, so calibration already prices it into the move count.
  */
 function lastChance(state: GameState): GameEvent[] | null {
@@ -166,7 +171,7 @@ export function playMove(state: GameState, a: Pos, b: Pos): boolean {
 }
 
 /**
- * Remaining moves become line specials; the following steps fire them round by round,
+ * Remaining moves become line specials; the following steps light them and set them off one by one,
  * so the score grows live like in any cascade. Call once after a win, at rest.
  */
 export function startFinale(state: GameState): GameEvent[] {

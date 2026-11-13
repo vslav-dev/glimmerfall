@@ -139,6 +139,13 @@ export interface CreatedPiece {
   piece: Piece;
 }
 
+/** A special that was hit and now waits its turn to go off. */
+export interface LitPiece {
+  id: number;
+  pos: Pos;
+  order: number;
+}
+
 export interface LayerChange {
   pos: Pos;
   ice: number;
@@ -172,10 +179,14 @@ export type GameEvent =
       blasts: Blast[];
       layers: LayerChange[];
       popups: ScorePopup[];
+      /** specials this step lit: they stay on the board and go off one per step from the next one on */
+      lit: LitPiece[];
     }
   | { type: 'transform'; pieces: CreatedPiece[] }
   | { type: 'fall'; moves: FallMove[] }
   | { type: 'shuffle'; pieces: CreatedPiece[] }
+  /** finale and last chance: every special left on the calm board is lit */
+  | { type: 'light'; pieces: LitPiece[] }
   /** out of moves with goals left: the specials still on the board are about to fire once */
   | { type: 'lastChance' };
 
@@ -204,8 +215,13 @@ export interface GameState {
   pending: PendingSwap | null;
   /** cascade depth of the next step: drives the score multiplier and praise */
   cascade: number;
-  /** finale detonation rounds left; 0 outside the finale */
+  /** finale lighting rounds left; 0 outside the finale and the last chance */
   finale: number;
+  /**
+   * Ids of lit specials, in firing order: a hit special does not go off at once but one per step,
+   * with the board refilling in between (absent in saves made before it existed).
+   */
+  fuse?: number[];
   /** the one last-chance detonation is spent (absent in saves made before it existed) */
   lastChance?: boolean;
 }

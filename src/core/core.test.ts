@@ -4,7 +4,7 @@ import { settle } from '@/core/fall';
 import { advance, canSwap, createGame, makeMove, playMove, scorerFor, startFinale } from '@/core/game';
 import { findGroups } from '@/core/matches';
 import { findMoves, hasAnyMatch, hasMove, isValidSwap } from '@/core/moves';
-import { resolveDetonation, resolveStep } from '@/core/resolve';
+import { resolveStep } from '@/core/resolve';
 import { BlastKind, type Board, type GameEvent, type LevelDef, LevelKind, ObjectiveKind, type PendingSwap, Special } from '@/core/types';
 
 /** Digits are colors, '.' is a hole, '#' a crate, '_' an empty cell. */
@@ -79,8 +79,9 @@ function resolveMove(b: Board, from: number, to: number): { events: GameEvent[];
   const events: GameEvent[] = [];
   let score = 0;
   let swap: PendingSwap | null = { from, to };
+  const fuse: number[] = [];
   for (let level = 0; ; level++) {
-    const step = resolveStep(b, swap, level, noTarget);
+    const step = resolveStep(b, swap, level, noTarget, fuse);
     if (!step) break;
     events.push(...step.events);
     score += step.tally.score;
@@ -119,6 +120,50 @@ describe('resolveStep', () => {
   });
 });
 
+describe('fuse', () => {
+  const lineBlasts = (events: GameEvent[]) =>
+    events.flatMap((e) => (e.type === 'clear' ? e.blasts.filter((x) => x.kind === BlastKind.Row || x.kind === BlastKind.Col) : []));
+
+  it('a special hit by a blast is lit, stays on the board and goes off in the next step', () => {
+    const b = boardFrom(['01234', '12340', '23401', '34012', '40123']);
+    const row = b.cells[indexOf(b, 2, 0)].piece!;
+    const col = b.cells[indexOf(b, 2, 3)].piece!;
+    row.special = Special.LineH;
+    col.special = Special.LineV;
+    const fuse = [row.id];
+
+    const first = resolveStep(b, null, 0, noTarget, fuse)!;
+    expect(lineBlasts(first.events).map((x) => x.kind)).toEqual([BlastKind.Row]);
+    const clear = first.events.find((e) => e.type === 'clear');
+    expect(clear?.type === 'clear' && clear.lit.map((x) => x.id)).toEqual([col.id]);
+    expect(fuse).toEqual([col.id]);
+    expect(b.cells.some((cell) => cell.piece?.id === col.id)).toBe(true);
+
+    const second = resolveStep(b, null, 1, noTarget, fuse)!;
+    expect(lineBlasts(second.events).map((x) => x.kind)).toEqual([BlastKind.Col]);
+    expect(b.cells.some((cell) => cell.piece?.id === col.id)).toBe(false);
+  });
+
+  it('prism + line lights the whole color; the lines go off one per step', () => {
+    const game = createGame(level({ rows: 5, cols: 5 }), 7);
+    game.board = boardFrom(['01234', '12340', '23401', '34012', '40123']);
+    game.board.cells[0].piece = { id: 99, color: -1, special: Special.Prism };
+    game.board.cells[1].piece!.special = Special.LineH;
+    expect(makeMove(game, { r: 0, c: 0 }, { r: 0, c: 1 })?.valid).toBe(true);
+
+    const first = advance(game)!;
+    expect(first.map((e) => e.type)).toContain('transform');
+    expect(lineBlasts(first)).toHaveLength(0);
+    const lit = game.fuse!.length;
+    expect(lit).toBe(5);
+
+    let steps = 0;
+    while (advance(game)) steps++;
+    expect(steps).toBeGreaterThanOrEqual(lit);
+    expect(game.fuse).toEqual([]);
+  });
+});
+
 describe('prism wipe', () => {
   it('damages crates next to the wiped pieces, each crate once', () => {
     // Prism at (0,0) swaps with the 1 at (0,1); the 1s at (1,1) and (1,3) both touch the crate at (1,2).
@@ -141,7 +186,7 @@ describe('spark', () => {
     game.board = boardFrom(['02020', '20202', '02010', '20202', '02020']);
     game.board.cells.forEach((cell, i) => (cell.ice = i === 13 ? 0 : 2));
     game.board.cells[0].piece!.special = Special.Spark;
-    const step = resolveDetonation(game.board, 0, scorerFor(game))!;
+    const step = resolveStep(game.board, null, 0, scorerFor(game), [game.board.cells[0].piece!.id])!;
     expect(sparkBlasts(step.events)[0].target).toEqual({ r: 2, c: 3 });
     expect(step.tally.collected[1]).toBe(1);
   });
