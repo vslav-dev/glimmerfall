@@ -21,6 +21,7 @@ export const Action = {
   ToggleSound: 'toggle-sound',
   ToggleHaptics: 'toggle-haptics',
   ToggleMotion: 'toggle-motion',
+  ToggleFullscreen: 'toggle-fullscreen',
   BoardSmaller: 'board-smaller',
   BoardBigger: 'board-bigger',
   Reset: 'reset',
@@ -187,6 +188,7 @@ export class Ui {
         ${toggle(Action.ToggleSound, S.sound, settings.sound)}
         ${toggle(Action.ToggleHaptics, S.haptics, settings.haptics)}
         ${toggle(Action.ToggleMotion, S.reducedMotion, settings.reducedMotion)}
+        ${toggle(Action.ToggleFullscreen, S.fullscreen, settings.fullscreen)}
         <div class="toggle stepper">
           <span>${S.boardSize}</span>
           <button data-action="${Action.BoardSmaller}" aria-label="${S.smaller}" ${settings.boardSize <= BoardSize.Min ? 'disabled' : ''}>−</button>

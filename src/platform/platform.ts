@@ -23,6 +23,28 @@ export function setHapticsEnabled(enabled: boolean): void {
   hapticsEnabled = enabled;
 }
 
+let fullscreenWanted = false;
+
+/**
+ * Hides or shows the phone's system bars. Browsers enter fullscreen only from a tap,
+ * so a launch with the setting on enters at the first tap, as does a return after the bars were swiped away.
+ */
+export function setFullscreen(on: boolean): void {
+  fullscreenWanted = on;
+  syncFullscreen();
+}
+
+function syncFullscreen(): void {
+  // Unsupported (iOS Safari, some WebViews) or refused without a tap: rejections are ignored.
+  if (fullscreenWanted && !document.fullscreenElement && document.fullscreenEnabled) {
+    document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => undefined);
+  }
+  if (!fullscreenWanted && document.fullscreenElement) document.exitFullscreen().catch(() => undefined);
+}
+
+// pointerup, not pointerdown: a touch grants the tap permission only on release.
+document.addEventListener('pointerup', syncFullscreen, { capture: true });
+
 export function haptic(kind: Haptic): void {
   if (!hapticsEnabled) return;
   // Unsupported browsers (iOS Safari) reject; vibration is a nicety, so failures are ignored.

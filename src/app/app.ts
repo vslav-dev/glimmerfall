@@ -7,7 +7,7 @@ import { recordAttempt, targetWinRate } from '@/difficulty/director';
 import { LevelDrafts } from '@/gen/drafts';
 import { finalizeLevel } from '@/gen/generator';
 import { planLevel } from '@/gen/plan';
-import { exitApp, Haptic, haptic, onBackButton, onHidden, onVisible, setHapticsEnabled } from '@/platform/platform';
+import { exitApp, Haptic, haptic, onBackButton, onHidden, onVisible, setFullscreen, setHapticsEnabled } from '@/platform/platform';
 import { Action, Ui } from '@/ui/ui';
 import { S } from '@/ui/strings';
 import { BoardView, type Layer } from '@/view/boardView';
@@ -373,6 +373,7 @@ export class GameApp {
       case Action.ToggleSound:
       case Action.ToggleHaptics:
       case Action.ToggleMotion:
+      case Action.ToggleFullscreen:
         this.toggleSetting(action);
         break;
       case Action.BoardSmaller:
@@ -397,6 +398,7 @@ export class GameApp {
     if (action === Action.ToggleSound) s.sound = !s.sound;
     if (action === Action.ToggleHaptics) s.haptics = !s.haptics;
     if (action === Action.ToggleMotion) s.reducedMotion = !s.reducedMotion;
+    if (action === Action.ToggleFullscreen) s.fullscreen = !s.fullscreen;
     this.applySettings();
     this.persist();
     this.ui.showSettings(s);
@@ -478,6 +480,7 @@ export class GameApp {
     const s = this.save.settings;
     this.audio.enabled = s.sound;
     setHapticsEnabled(s.haptics);
+    setFullscreen(s.fullscreen);
     this.view.setReducedMotion(s.reducedMotion);
     this.view.setScale(s.boardSize / 100);
     document.documentElement.classList.toggle('reduced-motion', s.reducedMotion);

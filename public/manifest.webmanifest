@@ -3,7 +3,7 @@
   "short_name": "Glimmerfall",
   "start_url": "./",
   "scope": "./",
-  "display": "fullscreen",
+  "display": "standalone",
   "orientation": "portrait",
   "background_color": "#0f0828",
   "theme_color": "#0f0828",

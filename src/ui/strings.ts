@@ -40,6 +40,7 @@ export const S = {
   sound: 'Звук',
   haptics: 'Вибрация',
   reducedMotion: 'Меньше движения',
+  fullscreen: 'Во весь экран',
   boardSize: 'Размер поля',
   smaller: 'Меньше',
   bigger: 'Больше',

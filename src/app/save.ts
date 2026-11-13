@@ -9,6 +9,8 @@ export interface Settings {
   sound: boolean;
   haptics: boolean;
   reducedMotion: boolean;
+  /** hide the phone's status and navigation bars */
+  fullscreen: boolean;
   /** board size, percent of the space it may take */
   boardSize: number;
 }
@@ -44,6 +46,7 @@ export function defaultSave(): SaveData {
       sound: true,
       haptics: true,
       reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+      fullscreen: false,
       boardSize: BoardSize.Max,
     },
     current: null,
