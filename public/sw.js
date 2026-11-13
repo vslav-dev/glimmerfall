@@ -1,5 +1,6 @@
-// Offline cache: pages go network-first (fresh deploys win), hashed assets go cache-first.
-const CACHE = 'glimmerfall-v1';
+// Offline cache: hashed build assets go cache-first; everything else (pages, manifest, icon) goes
+// network-first, so a deploy wins, and the installed app picks up a changed manifest.
+const CACHE = 'glimmerfall-v2';
 
 self.addEventListener('install', () => self.skipWaiting());
 
@@ -14,17 +15,20 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const request = event.request;
-  if (request.method !== 'GET' || new URL(request.url).origin !== location.origin) return;
+  const url = new URL(request.url);
+  if (request.method !== 'GET' || url.origin !== location.origin) return;
 
-  if (request.mode === 'navigate') {
+  if (!url.pathname.includes('/assets/')) {
     event.respondWith(
       fetch(request)
         .then((response) => {
-          const copy = response.clone();
-          void caches.open(CACHE).then((cache) => cache.put(request, copy));
+          if (response.ok) {
+            const copy = response.clone();
+            void caches.open(CACHE).then((cache) => cache.put(request, copy));
+          }
           return response;
         })
-        .catch(() => caches.match(request).then((hit) => hit ?? caches.match('./'))),
+        .catch(() => caches.match(request).then((hit) => hit ?? (request.mode === 'navigate' ? caches.match('./') : Response.error()))),
     );
     return;
   }
