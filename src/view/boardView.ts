@@ -8,7 +8,7 @@ import { FrameName, GEM_TINTS } from '@/view/art';
 import { Atlas } from '@/view/atlas';
 import { Particles } from '@/view/particles';
 import type { Scene } from '@/view/scene';
-import { Ease } from '@/view/tween';
+import { Ease, type EaseFn } from '@/view/tween';
 
 type ClearEvent = Extract<GameEvent, { type: 'clear' }>;
 type FallEvent = Extract<GameEvent, { type: 'fall' }>;
@@ -27,6 +27,11 @@ const LAST_CHANCE_PAUSE = 650;
 const LIGHT_PAUSE = 220;
 /** period of the pulse of a lit special waiting its turn, ms per radian */
 const LIT_PULSE = 70;
+/** pieces above start falling this much before the cleared ones finish popping */
+const FALL_OVERLAP = 50;
+/** falling pieces start at this fraction of the average speed instead of from rest, then accelerate */
+const FALL_START_SPEED = 0.35;
+const FALL_EASE: EaseFn = (t) => t * (FALL_START_SPEED + (1 - FALL_START_SPEED) * t);
 const SCORE_FONT = 'gf-score';
 const WHITE = 0xffffff;
 const ICE_TINT = 0xbfe8ff;
@@ -417,7 +422,7 @@ export class BoardView {
     // A special lights up as the blast reaches it.
     for (const l of ev.lit) this.after(l.order * ORDER_STEP, () => this.light(l.id));
 
-    await this.scene.tweens.wait(end);
+    await this.scene.tweens.wait(Math.max(0, end - FALL_OVERLAP));
   }
 
   private async playFall(ev: FallEvent): Promise<void> {
@@ -450,7 +455,7 @@ export class BoardView {
             // Spawned pieces fade in as they cross the top edge instead of using a mask.
             if (fadeIn) sprite.alpha = Math.max(0, Math.min(1, sprite.y / this.cell + 0.5));
           },
-          { ease: Ease.inQuad },
+          { ease: FALL_EASE },
         )
         .then(() => this.land(sprite));
       end = Math.max(end, duration);
