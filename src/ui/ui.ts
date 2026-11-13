@@ -1,6 +1,7 @@
 import { type GameState, type LevelDef, type Objective, ObjectiveKind, Special } from '@/core/types';
 import { BoardSize, type Settings } from '@/app/save';
 import { FrameName, frameDataUrl } from '@/view/art';
+import { Counter } from '@/ui/counter';
 import { PraisePicker } from '@/ui/praise';
 import { S } from '@/ui/strings';
 
@@ -46,8 +47,9 @@ export class Ui {
   private readonly praiseEl: HTMLElement;
   private readonly praiseWords = new PraisePicker();
   private readonly icons = new Map<string, string>();
-  private hudMoves: HTMLElement | null = null;
-  private hudScore: HTMLElement | null = null;
+  private hudMoves: Counter | null = null;
+  private hudScore: Counter | null = null;
+  private hudGoalCounters: Counter[] = [];
   private hudFill: HTMLElement | null = null;
   private hudStars: HTMLElement[] = [];
   private hudGoals: HTMLElement[] = [];
@@ -241,11 +243,12 @@ export class Ui {
         )}${this.markHtml(100, def.stars[2].toLocaleString('ru-RU'))}</div></div>
         <b class="value">0</b>
       </div>`;
-    this.hudMoves = this.hud.querySelector('.hud-moves .value');
-    this.hudScore = this.hud.querySelector('.hud-score .value');
+    this.hudMoves = new Counter(this.hud.querySelector('.hud-moves .value')!);
+    this.hudScore = new Counter(this.hud.querySelector('.hud-score .value')!);
     this.hudFill = this.hud.querySelector('.fill');
     this.hudStars = [...this.hud.querySelectorAll<HTMLElement>('.mark')];
     this.hudGoals = [...this.hud.querySelectorAll<HTMLElement>('.hud-goals .goal')];
+    this.hudGoalCounters = this.hudGoals.map((el) => new Counter(el.querySelector('b')!));
   }
 
   public hideHud(): void {
@@ -254,11 +257,9 @@ export class Ui {
 
   public updateHud(state: GameState): void {
     const def = state.level;
-    if (this.hudMoves) {
-      this.hudMoves.textContent = String(state.movesLeft);
-      this.hudMoves.parentElement!.classList.toggle('low', state.movesLeft <= 5);
-    }
-    if (this.hudScore) this.hudScore.textContent = state.score.toLocaleString('ru-RU');
+    this.hudMoves?.set(state.movesLeft);
+    this.hud.querySelector('.hud-moves')?.classList.toggle('low', state.movesLeft <= 5);
+    this.hudScore?.set(state.score);
     // clip-path keeps the rounded ends and, unlike width, costs no layout.
     if (this.hudFill) this.hudFill.style.clipPath = `inset(0 ${(1 - Math.min(1, state.score / def.stars[2])) * 100}% 0 0 round 99px)`;
     // First star: the level is won; the other two: their score thresholds.
@@ -269,7 +270,7 @@ export class Ui {
       if (!el) return;
       const left = Math.max(0, o.target - state.progress[k]);
       // Every goal counts down, points included: the number is always "how much is left".
-      el.querySelector('b')!.textContent = left.toLocaleString('ru-RU');
+      this.hudGoalCounters[k].set(left);
       el.classList.toggle('done', left === 0);
     });
   }

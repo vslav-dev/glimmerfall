@@ -759,6 +759,23 @@ body {
 
 /* ---------- motion ---------- */
 
+/* a HUD number pops as it changes; the id outranks the low-moves pulse while the pop runs */
+#hud .bump {
+  animation: num-bump 0.42s cubic-bezier(0.2, 1.8, 0.4, 1);
+}
+
+.hud-moves .value { --bump: 1.3; }
+.goal b { --bump: 1.45; }
+/* right-aligned, so it grows from its right edge and keeps clear of the bar */
+.hud-score .value { --bump: 1.35; --bump-glow: var(--gold); transform-origin: right center; }
+
+@keyframes num-bump {
+  35% {
+    transform: scale(var(--bump, 1.3));
+    text-shadow: 0 0 14px var(--bump-glow, var(--accent)), 0 0 4px #fff;
+  }
+}
+
 @keyframes pulse {
   50% { transform: scale(1.15); }
 }
