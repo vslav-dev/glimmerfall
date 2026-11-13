@@ -4,7 +4,7 @@ import { loadJson, saveText } from '@/platform/platform';
 import { timed } from '@/telemetry/perf';
 
 const KEY = 'glimmerfall-save';
-const VERSION = 2;
+const VERSION = 3;
 
 export interface Settings {
   sound: boolean;
@@ -47,7 +47,7 @@ export function defaultSave(): SaveData {
       sound: true,
       haptics: true,
       reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
-      fullscreen: false,
+      fullscreen: true,
       boardSize: BoardSize.Max,
     },
     current: null,
@@ -59,7 +59,12 @@ export async function loadSave(): Promise<SaveData> {
   if (!data) return defaultSave();
   // v1 games predate step-by-step resolution; progress stays, the unfinished attempt restarts.
   if (data.version === 1 && data.current) data.current.game = null;
-  if (data.version === 1) data.version = VERSION;
+  if (data.version === 1) data.version = 2;
+  // v2 stored the old default (bars visible) for everyone; v3 turns fullscreen on by default.
+  if (data.version === 2) {
+    data.settings.fullscreen = true;
+    data.version = VERSION;
+  }
   if (data.version !== VERSION) return defaultSave();
   const defaults = defaultSave();
   // Settings merge one level deeper: a setting added later gets its default in an older save.
