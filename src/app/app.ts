@@ -460,6 +460,11 @@ export class GameApp {
         this.audio.play(Sfx.Shuffle);
         this.ui.flashText(S.shuffle);
         break;
+      case 'lastChance':
+        this.audio.play(Sfx.Create);
+        haptic(Haptic.Heavy);
+        this.ui.flashText(S.lastChance);
+        break;
       case 'fall':
         break;
     }

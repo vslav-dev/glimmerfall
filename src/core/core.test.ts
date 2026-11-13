@@ -197,6 +197,33 @@ describe('game', () => {
     expect(hasAnyMatch(game.board)).toBe(false);
   });
 
+  it('out of moves, the last chance fires every special once and can still win', () => {
+    const run = (target: number) => {
+      const game = createGame(level({ moves: 1, objectives: [{ kind: ObjectiveKind.Collect, target, color: 1 }] }), 7);
+      game.board = boardFrom(['01201', '12012', '20120']);
+      game.board.cells[7].piece!.special = Special.LineH;
+      game.movesLeft = 0;
+      const first = advance(game);
+      expect(first?.[0]).toEqual({ type: 'lastChance' });
+      expect(game.lastChance).toBe(true);
+      const types: string[] = [];
+      for (let step = advance(game); step; step = advance(game)) types.push(...step.map((e) => e.type));
+      expect(types).not.toContain('lastChance');
+      return game.status;
+    };
+    // The line clears row 1: two pieces of color 1.
+    expect(run(2)).toBe('won');
+    expect(run(50)).toBe('lost');
+  });
+
+  it('without specials on the board, running out of moves is a plain loss', () => {
+    const game = createGame(level({ moves: 1, objectives: [{ kind: ObjectiveKind.Collect, target: 50, color: 1 }] }), 7);
+    game.board = boardFrom(['01201', '12012', '20120']);
+    game.movesLeft = 0;
+    expect(advance(game)).toBeNull();
+    expect(game.status).toBe('lost');
+  });
+
   it('a board no shuffle can unlock is lost, not shuffled forever', () => {
     const game = createGame(level({ moves: 10 }), 7);
     game.board = boardFrom(['#0#1#', '#####']);

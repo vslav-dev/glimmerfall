@@ -175,7 +175,9 @@ export type GameEvent =
     }
   | { type: 'transform'; pieces: CreatedPiece[] }
   | { type: 'fall'; moves: FallMove[] }
-  | { type: 'shuffle'; pieces: CreatedPiece[] };
+  | { type: 'shuffle'; pieces: CreatedPiece[] }
+  /** out of moves with goals left: the specials still on the board are about to fire once */
+  | { type: 'lastChance' };
 
 export type SwapEvent = Extract<GameEvent, { type: 'swap' }>;
 
@@ -204,4 +206,6 @@ export interface GameState {
   cascade: number;
   /** finale detonation rounds left; 0 outside the finale */
   finale: number;
+  /** the one last-chance detonation is spent (absent in saves made before it existed) */
+  lastChance?: boolean;
 }

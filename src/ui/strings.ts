@@ -58,6 +58,7 @@ export const S = {
   speedUp: 'Ускорить',
   spedUp: (k: number): string => `Ускорено ×${k}`,
   shuffle: 'Перемешиваем!',
+  lastChance: 'Последний шанс!',
   on: 'Вкл',
   off: 'Выкл',
 } as const;

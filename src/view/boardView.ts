@@ -17,6 +17,8 @@ type PiecesEvent = Extract<GameEvent, { type: 'transform' | 'shuffle' }>;
 const ORDER_STEP = 70;
 const MAX_CELL = 84;
 const HINT_DELAY = 5000;
+/** beat between the "last chance" call-out and the specials going off */
+const LAST_CHANCE_PAUSE = 650;
 const SCORE_FONT = 'gf-score';
 const WHITE = 0xffffff;
 const ICE_TINT = 0xbfe8ff;
@@ -220,6 +222,10 @@ export class BoardView {
           break;
         case 'shuffle':
           await this.playShuffle(ev);
+          break;
+        case 'lastChance':
+          // The announcement gets a beat before the specials go off.
+          await this.scene.tweens.wait(LAST_CHANCE_PAUSE);
           break;
       }
     }

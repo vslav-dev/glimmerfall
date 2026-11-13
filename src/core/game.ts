@@ -66,6 +66,7 @@ export function createGame(level: LevelDef, seed: number): GameState {
     pending: null,
     cascade: 0,
     finale: 0,
+    lastChance: false,
   };
 }
 
@@ -129,6 +130,8 @@ export function advance(state: GameState): GameEvent[] | null {
   state.cascade = 0;
   if (state.status !== 'playing') return null;
   if (state.movesLeft <= 0) {
+    const chance = lastChance(state);
+    if (chance) return chance;
     state.status = 'lost';
     return null;
   }
@@ -137,6 +140,21 @@ export function advance(state: GameState): GameEvent[] | null {
   // Crates and chains can wall off the refill; when no arrangement of what is left has a move, the level is lost.
   if (!hasMove(board)) state.status = 'lost';
   return [{ type: 'shuffle', pieces }];
+}
+
+/**
+ * Out of moves with goals left: every special still on the board fires once, cascades included.
+ * Once per level. The bot plays by the same rule, so calibration already prices it into the move count.
+ */
+function lastChance(state: GameState): GameEvent[] | null {
+  if (state.lastChance) return null;
+  state.lastChance = true;
+  const blast = resolveDetonation(state.board, 0, scorerFor(state));
+  if (!blast) return null;
+  state.cascade = 1;
+  applyTally(state, blast.tally);
+  if (isComplete(state)) state.status = 'won';
+  return [{ type: 'lastChance' }, ...blast.events];
 }
 
 /** Makes a move and runs the board to rest at once, without playback (bot, tests). */
