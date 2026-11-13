@@ -212,16 +212,26 @@ function objectiveGain(o: Objective, tally: Tally): number {
   }
 }
 
-/** Sparks fly to what the objectives need: crates, ice, wanted colors. */
+/** Spark target value of one unit of work an open goal still needs. */
+const GOAL_HIT = 10;
+
+/**
+ * Sparks fly to what the goals still need right now, counting what this step already gained.
+ * Every hit on a goal layer is one unit of required work, so all goal hits weigh the same; among them
+ * deeper stacks come first, as matches rarely reach those. Layers that are no goal are worth only
+ * a little (they still open the board), so a wanted piece always beats them.
+ */
 export function scorerFor(state: GameState): TargetScorer {
-  const wanted = new Set(state.level.objectives.filter((o) => o.kind === ObjectiveKind.Collect).map((o) => o.color));
-  return (b, i) => {
+  const { objectives } = state.level;
+  return (b, i, tally) => {
     const cell = b.cells[i];
-    let score = 0;
-    if (cell.crate > 0) score += 3;
-    if (cell.ice > 0) score += 2 + cell.ice;
-    if (cell.chain > 0) score += 1;
-    if (cell.piece && wanted.has(cell.piece.color)) score += 2;
-    return score;
+    let value = cell.chain > 0 || cell.crate > 0 || cell.ice > 0 ? 1 : 0;
+    objectives.forEach((o, k) => {
+      if (state.progress[k] + objectiveGain(o, tally) >= o.target) return;
+      if (o.kind === ObjectiveKind.Collect && cell.piece?.color === o.color && cell.chain === 0) value += GOAL_HIT;
+      if (o.kind === ObjectiveKind.Ice && cell.piece && cell.ice > 0) value += GOAL_HIT + cell.ice + cell.chain;
+      if (o.kind === ObjectiveKind.Crate && cell.crate > 0) value += GOAL_HIT + cell.crate;
+    });
+    return value;
   };
 }

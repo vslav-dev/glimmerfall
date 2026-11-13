@@ -23,6 +23,7 @@ const PIECE_POINTS = 10;
 const LAYER_POINTS = 20;
 const MAX_MULTIPLIER = 5;
 const FINALE_CONVERSIONS = 12;
+const SPARK_PAIR_TARGETS = 4;
 
 const SPECIAL_BONUS: Record<Special, number> = {
   [Special.None]: 0,
@@ -41,8 +42,8 @@ export interface Tally {
   crate: number;
 }
 
-/** How attractive a cell is as a spark target. The game derives it from its objectives. */
-export type TargetScorer = (b: Board, i: number) => number;
+/** How attractive a cell is as a spark target, given what the current step has gained so far. The game derives it from its objectives. */
+export type TargetScorer = (b: Board, i: number, tally: Tally) => number;
 
 /** What a step did: the playback script and its gains. */
 export interface Step {
@@ -301,9 +302,11 @@ function blast(ctx: Ctx, kind: BlastKind, origin: number, cells: number[], order
   if (points > 0) ctx.popups.push({ r: o.r, c: o.c, value: points, order });
 }
 
-function spark(ctx: Ctx, origin: number, order: number, carry: Special): void {
-  const near = neighbors4(ctx.b, origin);
-  const target = pickTarget(ctx, new Set([origin, ...near]));
+/** `splash`: the spark also hits the four cells around its origin; a pair of sparks splashes once, not per spark. */
+function spark(ctx: Ctx, origin: number, order: number, carry: Special, splash = true): void {
+  const around = neighbors4(ctx.b, origin);
+  const near = splash ? around : [];
+  const target = pickTarget(ctx, new Set([origin, ...around]));
   ctx.blasts.push({
     kind: BlastKind.Spark,
     origin: posOf(ctx.b, origin),
@@ -327,7 +330,7 @@ function pickTarget(ctx: Ctx, exclude: Set<number>): number {
   let bestScore = -Infinity;
   ctx.b.cells.forEach((cell, i) => {
     if (!cell.exists || exclude.has(i) || (!cell.piece && cell.crate === 0)) return;
-    const score = ctx.scorer(ctx.b, i) + random(ctx.b) * 0.5;
+    const score = ctx.scorer(ctx.b, i, ctx.tally) + random(ctx.b) * 0.5;
     if (score > bestScore) {
       bestScore = score;
       best = i;
@@ -388,8 +391,9 @@ const COMBOS: Partial<Record<string, ComboFn>> = {
     }
   },
   'bomb+bomb': (ctx, center) => blast(ctx, BlastKind.Bomb, center, squareCells(ctx.b, center, 2), 0),
+  // Two sparks make a rare combo: twice what two separate sparks would hit.
   'spark+spark': (ctx, center) => {
-    for (let k = 0; k < 3; k++) spark(ctx, center, k, Special.None);
+    for (let k = 0; k < SPARK_PAIR_TARGETS; k++) spark(ctx, center, k, Special.None, k === 0);
   },
   'line+spark': (ctx, center, p, q) => spark(ctx, center, 0, p.special === Special.Spark ? q.special : p.special),
   'bomb+spark': (ctx, center) => spark(ctx, center, 0, Special.Bomb),

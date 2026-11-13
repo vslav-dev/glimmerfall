@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { indexOf, posOf, swapPieces } from '@/core/board';
 import { settle } from '@/core/fall';
-import { advance, canSwap, createGame, makeMove, playMove, startFinale } from '@/core/game';
+import { advance, canSwap, createGame, makeMove, playMove, scorerFor, startFinale } from '@/core/game';
 import { findGroups } from '@/core/matches';
 import { findMoves, hasAnyMatch, hasMove, isValidSwap } from '@/core/moves';
-import { resolveStep } from '@/core/resolve';
-import { type Board, type GameEvent, type LevelDef, LevelKind, ObjectiveKind, type PendingSwap, Special } from '@/core/types';
+import { resolveDetonation, resolveStep } from '@/core/resolve';
+import { BlastKind, type Board, type GameEvent, type LevelDef, LevelKind, ObjectiveKind, type PendingSwap, Special } from '@/core/types';
 
 /** Digits are colors, '.' is a hole, '#' a crate, '_' an empty cell. */
 function boardFrom(rows: string[], colors = 6): Board {
@@ -128,6 +128,34 @@ describe('prism wipe', () => {
     b.cells[crate].crate = 2;
     resolveMove(b, 0, 1);
     expect(b.cells[crate].crate).toBe(1);
+  });
+});
+
+describe('spark', () => {
+  const collectRed = level({ rows: 5, cols: 5, objectives: [{ kind: ObjectiveKind.Collect, target: 10, color: 1 }] });
+  const sparkBlasts = (events: GameEvent[]) =>
+    events.flatMap((e) => (e.type === 'clear' ? e.blasts.filter((x) => x.kind === BlastKind.Spark) : []));
+
+  it('flies to a wanted piece before ice that is no goal', () => {
+    const game = createGame(collectRed, 7);
+    game.board = boardFrom(['02020', '20202', '02010', '20202', '02020']);
+    game.board.cells.forEach((cell, i) => (cell.ice = i === 13 ? 0 : 2));
+    game.board.cells[0].piece!.special = Special.Spark;
+    const step = resolveDetonation(game.board, 0, scorerFor(game))!;
+    expect(sparkBlasts(step.events)[0].target).toEqual({ r: 2, c: 3 });
+    expect(step.tally.collected[1]).toBe(1);
+  });
+
+  it('a pair of sparks sends out four, splashing around the swap only once', () => {
+    const game = createGame(collectRed, 7);
+    game.board = boardFrom(['02020', '20202', '02020', '20202', '02020']);
+    game.board.cells[11].piece!.special = Special.Spark;
+    game.board.cells[12].piece!.special = Special.Spark;
+    game.board.cells[7] = { ...game.board.cells[7], piece: null, crate: 3 };
+    expect(makeMove(game, { r: 2, c: 1 }, { r: 2, c: 2 })?.valid).toBe(true);
+    const step = advance(game)!;
+    expect(sparkBlasts(step)).toHaveLength(4);
+    expect(game.board.cells[7].crate).toBe(2);
   });
 });
 
