@@ -51,6 +51,7 @@ export const S = {
   score: 'Очки',
   next: 'Дальше',
   lose: 'Ходы закончились',
+  stuck: 'Ходов на поле нет',
   almost: 'Осталось совсем немного:',
   extraMoves: (n: number): string => `+${n} ходов`,
   retry: 'Ещё раз',

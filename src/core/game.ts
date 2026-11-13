@@ -132,7 +132,11 @@ export function advance(state: GameState): GameEvent[] | null {
     state.status = 'lost';
     return null;
   }
-  return hasMove(board) ? null : [{ type: 'shuffle', pieces: shuffleBoard(board) }];
+  if (hasMove(board)) return null;
+  const pieces = shuffleBoard(board);
+  // Crates and chains can wall off the refill; when no arrangement of what is left has a move, the level is lost.
+  if (!hasMove(board)) state.status = 'lost';
+  return [{ type: 'shuffle', pieces }];
 }
 
 /** Makes a move and runs the board to rest at once, without playback (bot, tests). */

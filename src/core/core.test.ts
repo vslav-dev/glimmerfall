@@ -197,6 +197,14 @@ describe('game', () => {
     expect(hasAnyMatch(game.board)).toBe(false);
   });
 
+  it('a board no shuffle can unlock is lost, not shuffled forever', () => {
+    const game = createGame(level({ moves: 10 }), 7);
+    game.board = boardFrom(['#0#1#', '#####']);
+    expect(advance(game)?.map((e) => e.type)).toEqual(['shuffle']);
+    expect(game.status).toBe('lost');
+    expect(advance(game)).toBeNull();
+  });
+
   it('the finale fires step by step, scoring as it goes, until no special is left', () => {
     const game = createGame(level({ moves: 6 }), 7);
     game.status = 'won';

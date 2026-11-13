@@ -277,7 +277,8 @@ export class GameApp {
   private showLose(game: GameState): void {
     this.mode = Mode.Lost;
     this.audio.play(Sfx.Lose);
-    this.ui.showLose(game, OFFER_EXTRA_MOVES && !game.extraMovesUsed, EXTRA_MOVES);
+    // Extra moves cannot help a board that is stuck with moves still left.
+    this.ui.showLose(game, OFFER_EXTRA_MOVES && !game.extraMovesUsed && game.movesLeft === 0, EXTRA_MOVES);
   }
 
   /** Ends the attempt as a failure: the director learns, the next attempt gets recalibrated. */

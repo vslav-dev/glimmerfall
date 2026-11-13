@@ -155,7 +155,7 @@ export class Ui {
       .join('');
     this.show(
       `<div class="card lose">
-        <h2>${S.lose}</h2>
+        <h2>${state.movesLeft > 0 ? S.stuck : S.lose}</h2>
         <p>${S.almost}</p>
         <div class="goals">${left}</div>
         ${canExtra ? `<button class="btn primary big" data-action="${Action.ExtraMoves}">${S.extraMoves(extra)}</button>` : ''}
