@@ -1,6 +1,7 @@
 import { type GameState, type LevelDef, type Objective, ObjectiveKind, Special } from '@/core/types';
 import { BoardSize, type Settings } from '@/app/save';
 import { FrameName, frameDataUrl } from '@/view/art';
+import { PraisePicker } from '@/ui/praise';
 import { S } from '@/ui/strings';
 
 export const Action = {
@@ -43,6 +44,7 @@ export class Ui {
   private readonly overlay: HTMLElement;
   private readonly curtainEl: HTMLElement;
   private readonly praiseEl: HTMLElement;
+  private readonly praiseWords = new PraisePicker();
   private readonly icons = new Map<string, string>();
   private hudMoves: HTMLElement | null = null;
   private hudScore: HTMLElement | null = null;
@@ -274,13 +276,15 @@ export class Ui {
 
   // ---------- feedback ----------
 
-  public praise(level: number): void {
-    const words = S.praise;
-    this.flashText(words[Math.min(words.length - 1, level)]);
+  /** `step` 0 is the first praised step of a cascade; later steps draw more excited words. */
+  public praise(step: number): void {
+    this.flashText(this.praiseWords.next(step));
   }
 
   public flashText(text: string): void {
     this.praiseEl.textContent = text;
+    // Long phrases shrink to fit the screen width.
+    this.praiseEl.style.setProperty('--chars', String(text.length));
     this.praiseEl.classList.remove('show');
     void this.praiseEl.offsetWidth;
     this.praiseEl.classList.add('show');
