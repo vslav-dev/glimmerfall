@@ -64,6 +64,8 @@ export class Scene {
     this.width = width;
     this.height = height;
     this.renderer.resize(width, height, this.resolution);
+    // Resizing wipes the canvas; drawing now keeps a blank frame off the screen.
+    this.renderer.render(this.root);
     this.request();
   }
 

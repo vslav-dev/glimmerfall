@@ -50,6 +50,8 @@ export class GameApp {
   /** finale playback speed: the self-accelerating ramp times the player's fast-forward */
   private finaleRamp = 1;
   private finaleBoost = 1;
+  /** where the stage sat at the last resize, so the board knows how far its canvas moved */
+  private stageAt = { x: 0, y: 0 };
   /** `?debug` in the URL shows level and director numbers for tuning */
   private readonly debugEl = new URLSearchParams(location.search).has('debug') ? createDebugEl() : null;
 
@@ -481,11 +483,15 @@ export class GameApp {
     document.documentElement.classList.toggle('reduced-motion', s.reducedMotion);
   }
 
+  /** Viewport changes (system bars sliding in, rotation) glide instead of jumping. */
   private resize(stage: HTMLElement): void {
     const { width, height } = stage.getBoundingClientRect();
     if (width === 0 || height === 0) return;
+    const { offsetLeft, offsetTop } = stage;
+    this.view.resize(width, height, this.stageAt.x - offsetLeft, this.stageAt.y - offsetTop);
+    this.stageAt = { x: offsetLeft, y: offsetTop };
     this.scene.resize(width, height);
-    this.view.layout(width, height);
+    this.ui.relayout();
   }
 
   private persist(): void {

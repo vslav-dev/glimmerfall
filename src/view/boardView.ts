@@ -16,6 +16,8 @@ type PiecesEvent = Extract<GameEvent, { type: 'transform' | 'shuffle' }>;
 /** Delay between playback "waves" inside one clear step (special chains fire one after another). */
 const ORDER_STEP = 70;
 const MAX_CELL = 84;
+/** Time constant of the drift after a viewport change: ~95% of the way in three of these. */
+const GLIDE_TAU = 90;
 const HINT_DELAY = 5000;
 /** beat between the "last chance" call-out and the specials going off */
 const LAST_CHANCE_PAUSE = 650;
@@ -48,6 +50,8 @@ export class BoardView {
   /** player's board size setting, applied to the cell that fits */
   private scale = 1;
   private readonly atlas = new Atlas();
+  /** Eases viewport changes: maps the board from where it was seen to where it now sits. */
+  private readonly glide = new Container();
   private readonly boardRoot = new Container();
   private readonly tiles = new Container();
   private readonly iceLayer = new Container();
@@ -87,9 +91,11 @@ export class BoardView {
     private readonly input: BoardListener,
   ) {
     this.boardRoot.addChild(this.tiles, this.iceLayer, this.pieceLayer, this.crateLayer, this.chainLayer, this.fxLayer, this.textLayer);
-    scene.root.addChild(this.boardRoot);
+    this.glide.addChild(this.boardRoot);
+    scene.root.addChild(this.glide);
     this.particles = new Particles(this.fxLayer, () => scene.request());
     scene.addUpdater((dt) => this.particles.update(dt));
+    scene.addUpdater((dt) => this.settleGlide(dt));
     scene.onQualityChange = () => this.layout(this.width, this.height);
 
     BitmapFont.install({
@@ -158,6 +164,22 @@ export class BoardView {
     this.crates.clear();
     this.chains.clear();
     this.selected = null;
+  }
+
+  /**
+   * The canvas area changed size and moved by `dx, dy` (CSS pixels):
+   * the board is refitted but drifts there from where it was seen instead of jumping.
+   */
+  public resize(width: number, height: number, dx: number, dy: number): void {
+    const { originX, originY, cell } = this;
+    const shown = this.board !== null;
+    this.layout(width, height);
+    if (!shown || !this.board || this.reducedMotion) return;
+    // screen = glide.position + glide.scale · local; keep the old picture, then let it decay to identity
+    const g = this.glide;
+    const scale = (g.scale.x * cell) / this.cell;
+    g.position.set(g.x + dx + g.scale.x * originX - scale * this.originX, g.y + dy + g.scale.y * originY - scale * this.originY);
+    g.scale.set(scale);
   }
 
   /** Fits the board into the canvas area (CSS pixels). */
@@ -568,6 +590,22 @@ export class BoardView {
         this.textLayer.removeChild(text);
         this.popupPool.push(text);
       });
+  }
+
+  /** Decays the glide; position and scale shrink by one factor, so every point moves in a straight line. */
+  private settleGlide(dt: number): boolean {
+    const g = this.glide;
+    if (g.scale.x === 1 && g.x === 0 && g.y === 0) return false;
+    const k = Math.exp(-dt / GLIDE_TAU);
+    const scale = 1 + (g.scale.x - 1) * k;
+    if (Math.abs(scale - 1) * this.cell < 0.05 && Math.abs(g.x * k) < 0.5 && Math.abs(g.y * k) < 0.5) {
+      g.position.set(0, 0);
+      g.scale.set(1);
+    } else {
+      g.position.set(g.x * k, g.y * k);
+      g.scale.set(scale);
+    }
+    return true;
   }
 
   private shake(power: number): void {

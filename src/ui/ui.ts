@@ -2,6 +2,7 @@ import { type GameState, type LevelDef, type Objective, ObjectiveKind, Special }
 import { BoardSize, type Settings } from '@/app/save';
 import { FrameName, frameDataUrl } from '@/view/art';
 import { Counter } from '@/ui/counter';
+import { Glide } from '@/ui/glide';
 import { PraisePicker } from '@/ui/praise';
 import { S } from '@/ui/strings';
 
@@ -42,6 +43,7 @@ const FF_SVG =
  */
 export class Ui {
   private readonly hud: HTMLElement;
+  private readonly hudGlide: Glide;
   private readonly overlay: HTMLElement;
   private readonly curtainEl: HTMLElement;
   private readonly praiseEl: HTMLElement;
@@ -60,6 +62,7 @@ export class Ui {
     private readonly onAction: (action: Action) => void,
   ) {
     this.hud = root.querySelector('#hud')!;
+    this.hudGlide = new Glide(this.hud);
     this.overlay = root.querySelector('#overlay')!;
     this.curtainEl = root.querySelector('#curtain')!;
     this.praiseEl = root.querySelector('#praise')!;
@@ -72,6 +75,11 @@ export class Ui {
       const target = (e.target as HTMLElement).closest<HTMLElement>('[data-press]');
       if (target) this.onAction(target.dataset.press as Action);
     });
+  }
+
+  /** The viewport changed: the HUD drifts to its new spot. */
+  public relayout(): void {
+    this.hudGlide.follow();
   }
 
   public setTheme(level: number): void {
