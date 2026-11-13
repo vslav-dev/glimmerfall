@@ -7,6 +7,7 @@ import { recordAttempt, targetWinRate } from '@/difficulty/director';
 import { LevelDrafts } from '@/gen/drafts';
 import { finalizeLevel } from '@/gen/generator';
 import { planLevel } from '@/gen/plan';
+import { debug } from '@/telemetry/telemetry';
 import { exitApp, Haptic, haptic, onBackButton, onHidden, onVisible, setHapticsEnabled } from '@/platform/platform';
 import { Action, Ui } from '@/ui/ui';
 import { S } from '@/ui/strings';
@@ -81,6 +82,7 @@ export class GameApp {
 
   public async init(): Promise<void> {
     this.save = await loadSave();
+    debug('init', { save: this.saveInfo() });
     this.applySettings();
     this.ui.setTheme(this.save.level);
     this.showTitle();
@@ -102,6 +104,7 @@ export class GameApp {
   private async currentLevel(): Promise<CurrentLevel> {
     const n = this.save.level;
     let current = this.save.current;
+    debug('current-level', { n, def: current?.def.number, fails: current?.fails, game: current?.game != null });
     if (!current || current.def.number !== n) {
       current = { def: await this.makeLevel(n, 0), fails: 0, game: null };
       this.save.current = current;
@@ -111,14 +114,20 @@ export class GameApp {
   }
 
   private async makeLevel(n: number, fails: number): Promise<LevelDef> {
-    const draft = await this.drafts.get({ number: n, assist: fails });
+    const started = performance.now();
+    // Hypothesis: the worker never answers, so the curtain stays closed; a stall is reported while it lasts.
+    const watchdog = setInterval(() => debug('make-level-stuck', { n, fails, ms: Math.round(performance.now() - started) }), 4000);
+    const draft = await this.drafts.get({ number: n, assist: fails }).finally(() => clearInterval(watchdog));
+    debug('make-level', { n, fails, ms: Math.round(performance.now() - started) });
     return finalizeLevel(draft, targetWinRate(this.save.director, planLevel(n).baseWinRate, fails));
   }
 
   /** Straight into play: no level card in between, the HUD shows the goals and explains them on tap. */
   private async playLevel(): Promise<void> {
+    debug('play-start', { mode: this.mode, speed: this.scene.tweens.speed, save: this.saveInfo() });
     await this.ui.curtain(async () => {
       const current = await this.currentLevel();
+      debug('play-level-ready', { def: current.def.number, game: this.gameInfo(current.game) });
       // A fresh random board every attempt; difficulty is calibrated over many boards, not this one.
       const game = current.game ?? createGame(current.def, (Math.random() * 2 ** 32) >>> 0);
       current.game = game;
@@ -134,9 +143,11 @@ export class GameApp {
     });
     const game = this.game;
     const current = this.save.current;
+    debug('curtain-open', { game: this.gameInfo(game), current: current != null });
     if (!game || !current) return;
     this.mode = Mode.Play;
     await this.view.entrance();
+    debug('entrance-done', { same: this.game === game, speed: this.scene.tweens.speed });
     if (this.game !== game) return;
     this.announce(game, current.fails);
     // A save made mid-cascade or right after the last move resumes from there.
@@ -196,6 +207,7 @@ export class GameApp {
       await this.view.play(events, (ev) => this.feedback(ev));
     }
     if (this.running === game) this.running = null;
+    debug('run-end', { same: this.game === game, mode: this.mode, game: this.gameInfo(game) });
     if (this.game !== game) return;
     this.ui.updateHud(game);
     this.updateInput();
@@ -206,6 +218,7 @@ export class GameApp {
   /** The board is calm: finish the level or let the player think. Deferred while paused. */
   private async onRest(): Promise<void> {
     const game = this.game;
+    debug('rest', { mode: this.mode, running: this.running === game, game: this.gameInfo(game) });
     if (!game || this.running === game || this.mode !== Mode.Play) return;
     if (game.status === 'won') await this.finishWin(game);
     else if (game.status === 'lost') this.showLose(game);
@@ -215,6 +228,7 @@ export class GameApp {
   private async finishWin(game: GameState): Promise<void> {
     this.mode = Mode.Finale;
     const movesAtWin = game.movesLeft;
+    debug('win-start', { game: this.gameInfo(game) });
     haptic(Haptic.Success);
     this.ui.flashText(S.win);
     if (game.movesLeft > 0) {
@@ -223,6 +237,7 @@ export class GameApp {
       await this.view.play(startFinale(game), (ev) => this.feedback(ev));
       this.ui.updateHud(game);
       await this.run(game);
+      debug('finale-end', { ramp: this.finaleRamp, boost: this.finaleBoost, game: this.gameInfo(game) });
       this.setFinaleSpeed(1, 1);
       this.ui.hideOverlay();
       this.ui.updateHud(game);
@@ -243,7 +258,9 @@ export class GameApp {
     this.game = null;
     this.persist();
 
+    debug('win-saved', { save: this.saveInfo() });
     await this.view.vanish();
+    debug('win-vanished', { same: this.game === null });
     this.mode = Mode.Won;
     this.ui.hideHud();
     this.ui.showWin(stars, game.score);
@@ -308,11 +325,18 @@ export class GameApp {
       this.ui.showSpedUp(FINALE_FAST_FORWARD);
       return;
     }
+    // Hypothesis: an earlier action never finished, so every later tap is silently dropped.
+    debug('action', { action, mode: this.mode, busy: this.actionRunning });
     if (this.actionRunning) return;
     this.actionRunning = true;
     this.audio.play(Sfx.Button);
+    const started = performance.now();
     try {
       await this.runAction(action);
+      debug('action-done', { action, mode: this.mode, ms: Math.round(performance.now() - started) });
+    } catch (error) {
+      debug('action-error', { action, mode: this.mode, error: String(error), stack: error instanceof Error ? error.stack?.slice(0, 1500) : undefined });
+      throw error;
     } finally {
       this.actionRunning = false;
     }
@@ -484,6 +508,16 @@ export class GameApp {
 
   private persist(): void {
     persist(this.save);
+  }
+
+  private saveInfo(): Record<string, unknown> {
+    const c = this.save.current;
+    return { level: this.save.level, def: c?.def.number, fails: c?.fails, game: this.gameInfo(c?.game ?? null) };
+  }
+
+  private gameInfo(game: GameState | null): Record<string, unknown> | null {
+    if (!game) return null;
+    return { n: game.level.number, status: game.status, moves: game.movesLeft, finale: game.finale, cascade: game.cascade, pending: game.pending != null };
   }
 
   private showDebug(): void {
