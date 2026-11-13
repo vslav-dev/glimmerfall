@@ -30,6 +30,7 @@ type Mode = (typeof Mode)[keyof typeof Mode];
  * lit specials going off one by one and the finale rush to the end. A board at rest plays at normal speed.
  */
 const CHAIN_RAMP = 1.12;
+const chainSpeed = (cascade: number): number => CHAIN_RAMP ** Math.max(0, cascade - 1);
 /** Off until there is something to pay for extra moves with (ads, coins): out of moves means a plain loss. */
 const OFFER_EXTRA_MOVES = false;
 
@@ -199,7 +200,7 @@ export class GameApp {
       if (!events) break;
       this.ui.updateHud(game);
       this.updateInput();
-      this.scene.tweens.speed = CHAIN_RAMP ** Math.max(0, game.cascade - 1);
+      this.scene.tweens.speed = chainSpeed(game.cascade);
       await this.view.play(events, (ev) => this.feedback(ev));
     }
     this.scene.tweens.speed = 1;
@@ -226,6 +227,8 @@ export class GameApp {
     haptic(Haptic.Success);
     this.ui.flashText(S.win);
     if (game.movesLeft > 0) {
+      // The finale continues the winning chain: it opens at the speed that chain reached.
+      this.scene.tweens.speed = chainSpeed(game.cascade);
       await this.view.play(startFinale(game), (ev) => this.feedback(ev));
       this.ui.updateHud(game);
       await this.run(game);

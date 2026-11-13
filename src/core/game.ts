@@ -135,6 +135,8 @@ export function advance(state: GameState): GameEvent[] | null {
     events.push(...step.events);
     return events;
   }
+  // A won chain is not over: the finale picks it up at this depth, so its pace and multiplier run on without a seam.
+  if (state.status === 'won') return null;
   state.cascade = 0;
   if (state.status !== 'playing') return null;
   if (state.movesLeft <= 0) {

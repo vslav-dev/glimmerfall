@@ -321,6 +321,17 @@ describe('game', () => {
     expect(advance(game)).toBeNull();
   });
 
+  it('the finale picks up the winning chain at its depth instead of starting over', () => {
+    const game = createGame(level({ moves: 6 }), 7);
+    game.status = 'won';
+    game.cascade = 5;
+    expect(advance(game)).toBeNull();
+    expect(game.cascade).toBe(5);
+    startFinale(game);
+    expect(advance(game)).not.toBeNull();
+    expect(game.cascade).toBe(6);
+  });
+
   it('the finale fires step by step, scoring as it goes, until no special is left', () => {
     const game = createGame(level({ moves: 6 }), 7);
     game.status = 'won';
