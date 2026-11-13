@@ -244,6 +244,22 @@ describe('game', () => {
     expect(run(50)).toBe('lost');
   });
 
+  it('the last chance keeps firing until no special is left, also those its cascades create', () => {
+    for (const seed of [1, 2, 3, 4, 5]) {
+      const game = createGame(level({ moves: 1, objectives: [{ kind: ObjectiveKind.Collect, target: 500, color: 1 }] }), seed);
+      const kinds = [Special.LineH, Special.LineV, Special.Bomb, Special.Spark];
+      game.board.cells.forEach((cell, i) => {
+        if (cell.piece && i % 7 === 0) cell.piece.special = kinds[i % kinds.length];
+      });
+      game.movesLeft = 0;
+      const types: string[] = [];
+      for (let step = advance(game); step; step = advance(game)) types.push(...step.map((e) => e.type));
+      expect(types.filter((t) => t === 'lastChance')).toHaveLength(1);
+      expect(game.board.cells.some((c) => c.piece && c.piece.special !== Special.None)).toBe(false);
+      expect(game.status).toBe('lost');
+    }
+  });
+
   it('without specials on the board, running out of moves is a plain loss', () => {
     const game = createGame(level({ moves: 1, objectives: [{ kind: ObjectiveKind.Collect, target: 50, color: 1 }] }), 7);
     game.board = boardFrom(['01201', '12012', '20120']);

@@ -10,11 +10,12 @@ import {
   type Objective,
   ObjectiveKind,
   type Pos,
+  Special,
   type SwapEvent,
 } from '@/core/types';
 
 export const EXTRA_MOVES = 5;
-/** cap on finale detonations: cascades can keep creating specials */
+/** cap on finale and last-chance detonation rounds: cascades can keep creating specials */
 const FINALE_ROUNDS = 20;
 
 export function createBoard(level: LevelDef, seed: number): Board {
@@ -123,6 +124,8 @@ export function advance(state: GameState): GameEvent[] | null {
     if (blast) {
       state.cascade = round + 1;
       applyTally(state, blast.tally);
+      // The last chance runs on these rounds too: its detonations can complete the level.
+      if (state.status === 'playing' && isComplete(state)) state.status = 'won';
       return blast.events;
     }
     state.finale = 0;
@@ -143,18 +146,16 @@ export function advance(state: GameState): GameEvent[] | null {
 }
 
 /**
- * Out of moves with goals left: every special still on the board fires once, cascades included.
- * Once per level. The bot plays by the same rule, so calibration already prices it into the move count.
+ * Out of moves with goals left: the specials on the board fire round by round, like the finale,
+ * until none is left, so specials born in their cascades fire too. Once per level.
+ * The bot plays by the same rule, so calibration already prices it into the move count.
  */
 function lastChance(state: GameState): GameEvent[] | null {
   if (state.lastChance) return null;
   state.lastChance = true;
-  const blast = resolveDetonation(state.board, 0, scorerFor(state));
-  if (!blast) return null;
-  state.cascade = 1;
-  applyTally(state, blast.tally);
-  if (isComplete(state)) state.status = 'won';
-  return [{ type: 'lastChance' }, ...blast.events];
+  if (!state.board.cells.some((c) => c.piece && c.piece.special !== Special.None)) return null;
+  state.finale = FINALE_ROUNDS;
+  return [{ type: 'lastChance' }];
 }
 
 /** Makes a move and runs the board to rest at once, without playback (bot, tests). */
