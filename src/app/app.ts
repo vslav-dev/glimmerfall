@@ -7,6 +7,7 @@ import { recordAttempt, targetWinRate } from '@/difficulty/director';
 import { LevelDrafts } from '@/gen/drafts';
 import { finalizeLevel } from '@/gen/generator';
 import { planLevel } from '@/gen/plan';
+import { flushPerf, perfContext, timed } from '@/telemetry/perf';
 import { exitApp, Haptic, haptic, onBackButton, onHidden, onVisible, setFullscreen, setHapticsEnabled } from '@/platform/platform';
 import { Action, Ui } from '@/ui/ui';
 import { S } from '@/ui/strings';
@@ -91,6 +92,8 @@ export class GameApp {
   // ---------- flow ----------
 
   private showTitle(): void {
+    flushPerf('title');
+    perfContext({ level: null, board: null });
     this.mode = Mode.Title;
     this.game = null;
     this.view.inputEnabled = false;
@@ -118,12 +121,15 @@ export class GameApp {
 
   /** Straight into play: no level card in between, the HUD shows the goals and explains them on tap. */
   private async playLevel(): Promise<void> {
-    await this.ui.curtain(async () => {
+    flushPerf('level');
+    // Measured behind the curtain: draft wait, calibration, board build.
+    await this.ui.curtain(() => timed('level', async () => {
       const current = await this.currentLevel();
       // A fresh random board every attempt; difficulty is calibrated over many boards, not this one.
       const game = current.game ?? createGame(current.def, (Math.random() * 2 ** 32) >>> 0);
       current.game = game;
       this.game = game;
+      perfContext({ level: game.level.number, board: `${game.board.cols}x${game.board.rows}` });
       this.view.inputEnabled = false;
       this.persist();
       this.ui.setTheme(game.level.number);
@@ -132,7 +138,7 @@ export class GameApp {
       this.ui.updateHud(game);
       this.view.setBoard(game.board);
       this.showDebug();
-    });
+    }));
     const game = this.game;
     const current = this.save.current;
     if (!game || !current) return;
@@ -189,7 +195,7 @@ export class GameApp {
     while (this.game === game) {
       while (this.swaps.size > 0) await Promise.all(this.swaps);
       if (this.game !== game) break;
-      const events = advance(game);
+      const events = timed('advance', () => advance(game));
       if (!events) break;
       this.ui.updateHud(game);
       this.updateInput();
@@ -471,6 +477,7 @@ export class GameApp {
     setFullscreen(s.fullscreen);
     this.view.setReducedMotion(s.reducedMotion);
     this.view.setScale(s.boardSize / 100);
+    perfContext({ boardSize: s.boardSize, reducedMotion: s.reducedMotion });
     document.documentElement.classList.toggle('reduced-motion', s.reducedMotion);
   }
 

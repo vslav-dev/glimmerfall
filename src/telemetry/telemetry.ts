@@ -74,12 +74,18 @@ export function startTelemetry(): void {
     screen: [screen.width, screen.height],
     viewport: [innerWidth, innerHeight],
     dpr: devicePixelRatio,
+    cores: navigator.hardwareConcurrency,
+    memoryGb: (navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? null,
+    gamut: ['rec2020', 'p3', 'srgb'].find((g) => matchMedia(`(color-gamut: ${g})`).matches) ?? null,
+    hdr: matchMedia('(dynamic-range: high)').matches,
     missing: FEATURES.filter(([, has]) => !safe(has)).map(([name]) => name),
   });
   addEventListener('error', (e) => reportError(e.error ?? e.message, `${e.filename}:${e.lineno}:${e.colno}`));
   addEventListener('unhandledrejection', (e) => reportError(e.reason, 'promise'));
   // Old Safari skips visibilitychange on unload; pagehide covers it. The second call finds an empty queue.
-  document.addEventListener('visibilitychange', () => {
+  // On window, not document: the event bubbles up from document, so events queued by document listeners
+  // (the perf window sent on hide) go out with this beacon.
+  addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') beacon();
   });
   addEventListener('pagehide', beacon);

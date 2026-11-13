@@ -1,4 +1,5 @@
 import { CanvasSource, Rectangle, Texture } from 'pixi.js';
+import { timed } from '@/telemetry/perf';
 import { PAINTERS } from '@/view/art';
 
 const PAD = 2;
@@ -16,7 +17,17 @@ export class Atlas {
   public build(cell: number, resolution: number): boolean {
     const key = `${cell}@${resolution}`;
     if (key === this.key) return false;
+    timed('atlas', () => this.paint(cell, resolution));
+    // Set last: a failed paint must be retried next time, not leave the board with empty frames.
+    this.key = key;
+    return true;
+  }
 
+  public get(name: string): Texture {
+    return this.frames.get(name) ?? Texture.EMPTY;
+  }
+
+  private paint(cell: number, resolution: number): void {
     const px = Math.ceil(cell * resolution);
     const slot = px + PAD * 2;
     const names = [...PAINTERS.keys()];
@@ -47,12 +58,5 @@ export class Atlas {
       const frame = new Rectangle(x / resolution, y / resolution, px / resolution, px / resolution);
       this.frames.set(name, new Texture({ source: this.source, frame }));
     }
-    // Set last: a failed paint must be retried next time, not leave the board with empty frames.
-    this.key = key;
-    return true;
-  }
-
-  public get(name: string): Texture {
-    return this.frames.get(name) ?? Texture.EMPTY;
   }
 }

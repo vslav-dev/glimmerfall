@@ -1,4 +1,5 @@
 import { autoDetectRenderer, Container, type Renderer } from 'pixi.js';
+import { countDraws, perfContext, recordFrame } from '@/telemetry/perf';
 import { track } from '@/telemetry/telemetry';
 import { Tweens } from '@/view/tween';
 
@@ -47,6 +48,7 @@ export class Scene {
       skipExtensionImports: true,
     });
     track('gl', glInfo(renderer));
+    if ('gl' in renderer) countDraws(renderer.gl);
     canvas.addEventListener('webglcontextlost', () => track('gl', { event: 'contextlost' }));
     canvas.addEventListener('webglcontextrestored', () => track('gl', { event: 'contextrestored' }));
     return new Scene(renderer);
@@ -64,6 +66,7 @@ export class Scene {
     this.width = width;
     this.height = height;
     this.renderer.resize(width, height, this.resolution);
+    this.reportSize();
     // Resizing wipes the canvas; drawing now keeps a blank frame off the screen.
     this.renderer.render(this.root);
     this.request();
@@ -81,13 +84,17 @@ export class Scene {
 
   private readonly frame = (now: number): void => {
     this.scheduled = false;
-    const dt = this.last ? Math.min(50, now - this.last) : 16;
+    const interval = this.last ? now - this.last : 0;
+    const dt = this.last ? Math.min(50, interval) : 16;
     this.last = now;
 
+    const start = performance.now();
     this.tweens.update(dt);
     let active = this.tweens.active;
     for (const update of this.updaters) active = update(dt) || active;
+    const updated = performance.now();
     this.renderer.render(this.root);
+    recordFrame(interval, updated - start, performance.now() - updated);
 
     if (active) {
       this.trackSpeed(dt);
@@ -103,7 +110,21 @@ export class Scene {
     this.quality++;
     this.slowFrames = 0;
     this.renderer.resize(this.width, this.height, this.resolution);
+    this.reportSize();
+    track('perf', { kind: 'quality', quality: this.quality, res: this.resolution, t: Math.round(performance.now() / 1000) });
     this.onQualityChange?.();
+  }
+
+  /** CSS size, device pixel ratio and the backing size actually rendered (pixels per frame to fill). */
+  private reportSize(): void {
+    const res = this.resolution;
+    perfContext({
+      quality: this.quality,
+      dpr: window.devicePixelRatio,
+      res,
+      css: [Math.round(this.width), Math.round(this.height)],
+      px: [Math.round(this.width * res), Math.round(this.height * res)],
+    });
   }
 }
 

@@ -3,6 +3,7 @@ import { BitmapFont, BitmapText, Container, Sprite, type Texture } from 'pixi.js
 import { isAdjacent } from '@/core/board';
 import { findMoves } from '@/core/moves';
 import { type Blast, BlastKind, type Board, type GameEvent, NO_COLOR, type Piece, type Pos, Special, type SwapEvent } from '@/core/types';
+import { perfContext, timed } from '@/telemetry/perf';
 import { FrameName, GEM_TINTS } from '@/view/art';
 import { Atlas } from '@/view/atlas';
 import { Particles } from '@/view/particles';
@@ -209,7 +210,8 @@ export class BoardView {
     this.originY = Math.round((height - cell * b.rows) / 2);
     this.boardRoot.position.set(this.originX, this.originY);
     this.particles.density = this.scene.particleDensity * (this.reducedMotion ? 0.5 : 1);
-    if (this.atlas.build(cell, this.scene.resolution) || forceRebuild) this.rebuild();
+    perfContext({ cell });
+    if (this.atlas.build(cell, this.scene.resolution) || forceRebuild) timed('rebuild', () => this.rebuild());
     this.scene.request();
   }
 

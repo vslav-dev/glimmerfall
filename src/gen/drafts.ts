@@ -1,4 +1,5 @@
 import type { DraftRequest, LevelDraft } from '@/gen/generator';
+import { timed } from '@/telemetry/perf';
 
 /** Assist below 3 does not change the draft, so requests are normalized to share cache entries. */
 const ASSIST_DRAFT = 3;
@@ -29,7 +30,8 @@ export class LevelDrafts {
     let draft = this.cache.get(key);
     if (!draft) {
       const id = this.nextId++;
-      draft = new Promise<LevelDraft>((resolve, reject) => this.pending.set(id, { resolve, reject }));
+      // Worker latency: bot calibration time, a CPU benchmark of the device.
+      draft = timed('draft', () => new Promise<LevelDraft>((resolve, reject) => this.pending.set(id, { resolve, reject })));
       // A failed draft is not cached: the next request tries again.
       draft.catch(() => this.cache.delete(key));
       this.worker.postMessage({ id, ...normalized });

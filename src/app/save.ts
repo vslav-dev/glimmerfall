@@ -1,6 +1,7 @@
 import type { GameState, LevelDef } from '@/core/types';
 import { type DirectorState, newDirector } from '@/difficulty/director';
 import { loadJson, saveText } from '@/platform/platform';
+import { timed } from '@/telemetry/perf';
 
 const KEY = 'glimmerfall-save';
 const VERSION = 2;
@@ -69,6 +70,6 @@ export async function loadSave(): Promise<SaveData> {
 let queue: Promise<void> = Promise.resolve();
 
 export function persist(data: SaveData): void {
-  const text = JSON.stringify(data);
+  const text = timed('persist', () => JSON.stringify(data));
   queue = queue.then(() => saveText(KEY, text)).catch(() => undefined);
 }
