@@ -248,7 +248,7 @@ export class GameApp {
     this.ui.hideHud();
     this.ui.showWin(stars, game.score);
     this.audio.play(Sfx.Win);
-    for (let k = 0; k < stars; k++) setTimeout(() => this.audio.play(Sfx.Star, 1 + k * 0.12), 450 + k * 280);
+    for (let k = 0; k < stars; k++) setTimeout(() => this.audio.play(Sfx.Star, 1 + k * 0.12), 150 + k * 120);
   }
 
   private setFinaleSpeed(ramp: number, boost: number): void {

@@ -560,8 +560,9 @@ body {
   stroke-width: 0.9;
   stroke-linejoin: round;
   filter: drop-shadow(0 0 12px rgba(255, 210, 94, 0.6));
-  animation: star-in 0.45s cubic-bezier(0.2, 1.6, 0.4, 1) both;
-  animation-delay: calc(var(--i) * 280ms + 200ms);
+  /* 150 / 270 / 390 ms, all landed by ~0.7 s; the star sounds in app.ts follow the same timing */
+  animation: star-in 0.3s cubic-bezier(0.2, 1.6, 0.4, 1) both;
+  animation-delay: calc(var(--i) * 120ms + 30ms);
 }
 
 .score-line b {
