@@ -25,7 +25,6 @@ export const Action = {
   BoardSmaller: 'board-smaller',
   BoardBigger: 'board-bigger',
   Reset: 'reset',
-  Skip: 'skip',
 } as const;
 export type Action = (typeof Action)[keyof typeof Action];
 
@@ -34,9 +33,6 @@ const THEMES = 5;
 const STAR_PATH = 'M12 2.4l2.95 6.07 6.65.95-4.8 4.7 1.13 6.63L12 17.6l-5.93 3.15 1.13-6.63-4.8-4.7 6.65-.95z';
 const starSvg = (cls: string): string => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="${STAR_PATH}"/></svg>`;
 const ICON_SIZE = 72;
-/** Fast-forward: two arrows that run left to right while the button waits. */
-const FF_SVG =
-  '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5.5l8 6.5-8 6.5z"/><path d="M12 5.5l8 6.5-8 6.5z"/></svg>';
 
 /**
  * DOM layer: menus, cards and the HUD over the canvas. Only transform/opacity animate,
@@ -70,11 +66,6 @@ export class Ui {
     root.addEventListener('click', (e) => {
       const target = (e.target as HTMLElement).closest<HTMLElement>('[data-action]');
       if (target) this.onAction(target.dataset.action as Action);
-    });
-    // `data-press` fires on touch-down, not on release: holding counts at once.
-    root.addEventListener('pointerdown', (e) => {
-      const target = (e.target as HTMLElement).closest<HTMLElement>('[data-press]');
-      if (target) this.onAction(target.dataset.press as Action);
     });
   }
 
@@ -208,24 +199,6 @@ export class Ui {
     const button = this.overlay.querySelector<HTMLElement>(`[data-action="${Action.Reset}"]`);
     if (button) button.textContent = S.resetConfirm;
     return false;
-  }
-
-  /** Full-screen catcher that lets a tap anywhere fast-forward the finale; the button at the bottom says so. */
-  public showSkipLayer(): void {
-    this.show(
-      `<div class="skip" data-press="${Action.Skip}">
-        <button class="btn ff">${FF_SVG}<span>${S.speedUp}</span></button>
-      </div>`,
-      'clear',
-    );
-  }
-
-  /** The finale now runs `factor` times faster: the button lights up and says so. */
-  public showSpedUp(factor: number): void {
-    const button = this.overlay.querySelector<HTMLElement>('.ff');
-    if (!button) return;
-    button.classList.add('on');
-    button.querySelector('span')!.textContent = S.spedUp(factor);
   }
 
   public hideOverlay(): void {

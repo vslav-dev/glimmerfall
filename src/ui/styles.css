@@ -416,8 +416,7 @@ body {
   background: rgba(8, 3, 24, 0.55);
 }
 
-#overlay.visible.title,
-#overlay.visible.clear {
+#overlay.visible.title {
   background: transparent;
 }
 
@@ -568,67 +567,6 @@ body {
 .score-line b {
   color: var(--text);
   font-size: 22px;
-}
-
-.skip {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  padding-bottom: calc(env(safe-area-inset-bottom) + 18px);
-}
-
-/* fast-forward pill: a card-colored chip, solid rather than blurred, so it costs nothing over the moving board */
-.btn.ff {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  width: auto;
-  min-width: 172px;
-  margin: 0;
-  padding: 10px 20px 10px 16px;
-  background: var(--panel);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.12);
-  font-size: 16px;
-  /* appears once "level complete" has had its moment */
-  animation: ff-in 0.35s ease-out 0.5s both;
-  transition: transform 0.08s, background 0.25s, box-shadow 0.25s;
-}
-
-.btn.ff svg {
-  width: 20px;
-  height: 20px;
-  fill: var(--accent);
-}
-
-.btn.ff path {
-  animation: ff-run 1.2s ease-in-out infinite;
-}
-
-.btn.ff path + path {
-  animation-delay: 0.2s;
-}
-
-.btn.ff.on {
-  border-color: transparent;
-  background: linear-gradient(180deg, var(--accent), var(--accent-2));
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35), 0 0 16px var(--glow), inset 0 2px 0 rgba(255, 255, 255, 0.35);
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-}
-
-.btn.ff.on svg {
-  fill: #fff;
-}
-
-/* the arrows run as fast as the finale now does */
-.btn.ff.on path {
-  animation-duration: 0.3s;
-}
-
-.btn.ff.on path + path {
-  animation-delay: 0.05s;
 }
 
 /* ---------- title ---------- */
@@ -798,15 +736,6 @@ body {
   to { transform: translateY(14px) rotate(8deg); }
 }
 
-@keyframes ff-in {
-  from { opacity: 0; transform: translateY(16px) scale(0.92); }
-}
-
-@keyframes ff-run {
-  0%, 100% { opacity: 0.35; }
-  50% { opacity: 1; }
-}
-
 @keyframes praise {
   0% { opacity: 0; transform: translate(-50%, -50%) scale(0.5); }
   20% { opacity: 1; transform: translate(-50%, -50%) scale(1.12); }
@@ -816,8 +745,7 @@ body {
 }
 
 .reduced-motion .float-gem,
-.reduced-motion .hud-moves.low .value,
-.reduced-motion .btn.ff path {
+.reduced-motion .hud-moves.low .value {
   animation: none;
 }
 

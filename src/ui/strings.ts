@@ -56,8 +56,6 @@ export const S = {
   almost: 'Осталось совсем немного:',
   extraMoves: (n: number): string => `+${n} ходов`,
   retry: 'Ещё раз',
-  speedUp: 'Ускорить',
-  spedUp: (k: number): string => `Ускорено ×${k}`,
   shuffle: 'Перемешиваем!',
   lastChance: 'Последний шанс!',
   on: 'Вкл',

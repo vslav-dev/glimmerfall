@@ -24,7 +24,6 @@ const Mode = {
 } as const;
 type Mode = (typeof Mode)[keyof typeof Mode];
 
-const FINALE_FAST_FORWARD = 4;
 /** every finale step plays this much faster than the one before, without a cap: long chains rush to the end */
 const FINALE_RAMP = 1.12;
 /** Off until there is something to pay for extra moves with (ads, coins): out of moves means a plain loss. */
@@ -47,9 +46,6 @@ export class GameApp {
   /** swap animations in flight; the next board step waits for them */
   private readonly swaps = new Set<Promise<void>>();
   private actionRunning = false;
-  /** finale playback speed: the self-accelerating ramp times the player's fast-forward */
-  private finaleRamp = 1;
-  private finaleBoost = 1;
   /** where the stage sat at the last resize, so the board knows how far its canvas moved */
   private stageAt = { x: 0, y: 0 };
   /** `?debug` in the URL shows level and director numbers for tuning */
@@ -194,7 +190,7 @@ export class GameApp {
       if (!events) break;
       this.ui.updateHud(game);
       this.updateInput();
-      if (this.mode === Mode.Finale) this.setFinaleSpeed(this.finaleRamp * FINALE_RAMP, this.finaleBoost);
+      if (this.mode === Mode.Finale) this.scene.tweens.speed *= FINALE_RAMP;
       await this.view.play(events, (ev) => this.feedback(ev));
     }
     if (this.running === game) this.running = null;
@@ -220,13 +216,11 @@ export class GameApp {
     haptic(Haptic.Success);
     this.ui.flashText(S.win);
     if (game.movesLeft > 0) {
-      this.setFinaleSpeed(1, 1);
-      this.ui.showSkipLayer();
+      this.scene.tweens.speed = 1;
       await this.view.play(startFinale(game), (ev) => this.feedback(ev));
       this.ui.updateHud(game);
       await this.run(game);
-      this.setFinaleSpeed(1, 1);
-      this.ui.hideOverlay();
+      this.scene.tweens.speed = 1;
       this.ui.updateHud(game);
     }
 
@@ -251,12 +245,6 @@ export class GameApp {
     this.ui.showWin(stars, game.score);
     this.audio.play(Sfx.Win);
     for (let k = 0; k < stars; k++) setTimeout(() => this.audio.play(Sfx.Star, 1 + k * 0.12), 150 + k * 120);
-  }
-
-  private setFinaleSpeed(ramp: number, boost: number): void {
-    this.finaleRamp = ramp;
-    this.finaleBoost = boost;
-    this.scene.tweens.speed = ramp * boost;
   }
 
   private showLose(game: GameState): void {
@@ -306,11 +294,6 @@ export class GameApp {
 
   /** Screen actions run one at a time; a double tap must not start a level twice. */
   private async onAction(action: Action): Promise<void> {
-    if (action === Action.Skip) {
-      this.setFinaleSpeed(this.finaleRamp, FINALE_FAST_FORWARD);
-      this.ui.showSpedUp(FINALE_FAST_FORWARD);
-      return;
-    }
     if (this.actionRunning) return;
     this.actionRunning = true;
     this.audio.play(Sfx.Button);
