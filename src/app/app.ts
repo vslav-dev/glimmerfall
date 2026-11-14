@@ -394,6 +394,7 @@ export class GameApp {
     if (action === Action.ToggleMotion) s.reducedMotion = !s.reducedMotion;
     if (action === Action.ToggleFullscreen) s.fullscreen = !s.fullscreen;
     this.applySettings();
+    if (action === Action.ToggleHaptics && s.haptics) haptic(Haptic.Confirm);
     this.persist();
     this.ui.showSettings(s);
   }

@@ -15,6 +15,8 @@ export const Haptic = {
   Medium: 'medium',
   Heavy: 'heavy',
   Success: 'success',
+  /** a long, unmistakable buzz when vibration is switched on in the settings */
+  Confirm: 'confirm',
 } as const;
 export type Haptic = (typeof Haptic)[keyof typeof Haptic];
 
@@ -52,6 +54,7 @@ const VIBRATION: Record<Haptic, number[]> = {
   [Haptic.Medium]: [43],
   [Haptic.Heavy]: [61],
   [Haptic.Success]: [35, 65, 21],
+  [Haptic.Confirm]: [250],
 };
 
 let hapticReported = false;
@@ -69,9 +72,11 @@ function vibrate(kind: Haptic): boolean {
   if (!isNative) return 'vibrate' in navigator && navigator.vibrate(VIBRATION[kind]);
   // Vibration is a nicety, so native failures are ignored.
   const done =
-    kind === Haptic.Success
-      ? Haptics.notification({ type: NotificationType.Success })
-      : Haptics.impact({ style: kind === Haptic.Light ? ImpactStyle.Light : kind === Haptic.Medium ? ImpactStyle.Medium : ImpactStyle.Heavy });
+    kind === Haptic.Confirm
+      ? Haptics.vibrate({ duration: VIBRATION[kind][0] })
+      : kind === Haptic.Success
+        ? Haptics.notification({ type: NotificationType.Success })
+        : Haptics.impact({ style: kind === Haptic.Light ? ImpactStyle.Light : kind === Haptic.Medium ? ImpactStyle.Medium : ImpactStyle.Heavy });
   done.catch(() => undefined);
   return true;
 }
