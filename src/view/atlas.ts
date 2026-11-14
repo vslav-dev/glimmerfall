@@ -1,6 +1,6 @@
 import { CanvasSource, Rectangle, Texture } from 'pixi.js';
 import { timed } from '@/telemetry/perf';
-import { PAINTERS } from '@/view/art';
+import { PAINTERS, paintContext } from '@/view/art';
 
 const PAD = 2;
 
@@ -42,7 +42,7 @@ export class Atlas {
     this.source?.destroy();
     this.source = new CanvasSource({ width: width / resolution, height: height / resolution, resolution });
     const canvas = this.source.resource as HTMLCanvasElement;
-    const ctx = canvas.getContext('2d')!;
+    const ctx = paintContext(canvas);
 
     const places = names.map((name, k) => {
       const x = (k % perRow) * slot + PAD;

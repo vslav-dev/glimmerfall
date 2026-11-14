@@ -77,11 +77,21 @@ function buildPainters(): Map<string, Painter> {
 
 export const PAINTERS = buildPainters();
 
+/**
+ * Canvas 2D context the painters draw into. `willReadFrequently` keeps the canvas on the CPU rasterizer:
+ * the GPU one is driver-dependent, and on some Mali GPUs it inflates every translucent pixel
+ * (a 0.075 tile reads as ~0.46, soft shadows turn into thick black outlines). The CPU result is the same
+ * on every device, and it costs nothing here: frames are painted once per cell size, then uploaded.
+ */
+export function paintContext(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
+  return canvas.getContext('2d', { willReadFrequently: true })!;
+}
+
 /** Small standalone image of a frame, for DOM icons. */
 export function frameDataUrl(name: string, size: number): string {
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = size;
-  PAINTERS.get(name)?.(canvas.getContext('2d')!, size);
+  PAINTERS.get(name)?.(paintContext(canvas), size);
   return canvas.toDataURL();
 }
 
