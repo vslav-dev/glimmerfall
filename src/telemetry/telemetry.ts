@@ -1,4 +1,4 @@
-import { isNative } from '@/platform/platform';
+import { Capacitor } from '@capacitor/core';
 
 /**
  * Diagnostics sent to the MegaApp ingest (source `glimmerfall`) through gf.vslav.dev, whose nginx adds
@@ -6,6 +6,8 @@ import { isNative } from '@/platform/platform';
  * `error` (uncaught errors), `debug` (targeted logs, added per investigation and removed after it).
  * Dev builds print to the console instead of sending.
  */
+// Asked here, not taken from platform: platform reports through telemetry, so it must not be imported back.
+const isNative = Capacitor.isNativePlatform();
 const ENDPOINT = isNative ? 'https://gf.vslav.dev/api/ingest/glimmerfall' : '/api/ingest/glimmerfall';
 const SENDING = import.meta.env.PROD;
 const FLUSH_DELAY = 2000;

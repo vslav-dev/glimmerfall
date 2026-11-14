@@ -2,6 +2,7 @@ import { App } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { Haptics, ImpactStyle, NotificationType } from '@capacitor/haptics';
 import { Preferences } from '@capacitor/preferences';
+import { debug } from '@/telemetry/telemetry';
 
 /**
  * Everything that differs between the browser and the native shells.
@@ -45,14 +46,34 @@ function syncFullscreen(): void {
 // pointerup, not pointerdown: a touch grants the tap permission only on release.
 document.addEventListener('pointerup', syncFullscreen, { capture: true });
 
+/** Browser vibration per kind, in ms (vibrate, pause, vibrate…): the same timings as the native feel. */
+const VIBRATION: Record<Haptic, number[]> = {
+  [Haptic.Light]: [20],
+  [Haptic.Medium]: [43],
+  [Haptic.Heavy]: [61],
+  [Haptic.Success]: [35, 65, 21],
+};
+
+let hapticReported = false;
+
 export function haptic(kind: Haptic): void {
-  if (!hapticsEnabled) return;
-  // Unsupported browsers (iOS Safari) reject; vibration is a nicety, so failures are ignored.
+  const accepted = hapticsEnabled && vibrate(kind);
+  if (hapticReported) return;
+  hapticReported = true;
+  // Once per session: tells a refused call (no API, no tap yet) from one the phone drops itself (silent mode).
+  debug('haptics', { enabled: hapticsEnabled, api: 'vibrate' in navigator, accepted, activated: navigator.userActivation?.hasBeenActive ?? null });
+}
+
+/** False when the browser refused the call. */
+function vibrate(kind: Haptic): boolean {
+  if (!isNative) return 'vibrate' in navigator && navigator.vibrate(VIBRATION[kind]);
+  // Vibration is a nicety, so native failures are ignored.
   const done =
     kind === Haptic.Success
       ? Haptics.notification({ type: NotificationType.Success })
       : Haptics.impact({ style: kind === Haptic.Light ? ImpactStyle.Light : kind === Haptic.Medium ? ImpactStyle.Medium : ImpactStyle.Heavy });
   done.catch(() => undefined);
+  return true;
 }
 
 export async function loadJson<T>(key: string): Promise<T | null> {
