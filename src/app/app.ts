@@ -26,11 +26,14 @@ const Mode = {
 type Mode = (typeof Mode)[keyof typeof Mode];
 
 /**
- * Every step of a chain plays this much faster than the one before, without a cap: long chains,
- * lit specials going off one by one and the finale rush to the end. A board at rest plays at normal speed.
+ * Every step of a chain plays this much faster than the one before, up to CHAIN_MAX_SPEED: long chains,
+ * lit specials going off one by one and the finale rush, but stay readable. A board at rest plays at normal speed.
  */
 const CHAIN_RAMP = 1.12;
-const chainSpeed = (cascade: number): number => CHAIN_RAMP ** Math.max(0, cascade - 1);
+/** The ramp levels off here (around step 11 at 1.12×). */
+const CHAIN_MAX_SPEED = 3;
+const chainSpeed = (cascade: number): number =>
+  Math.min(CHAIN_MAX_SPEED, CHAIN_RAMP ** Math.max(0, cascade - 1));
 /** Off until there is something to pay for extra moves with (ads, coins): out of moves means a plain loss. */
 const OFFER_EXTRA_MOVES = false;
 
