@@ -138,26 +138,5 @@ function glInfo(renderer: Renderer): Record<string, unknown> {
     gpu: ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) as string : null,
     maxTexture: gl.getParameter(gl.MAX_TEXTURE_SIZE) as number,
     textureUnits: gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS) as number,
-    canvasAlpha: canvasAlpha(),
   };
-}
-
-/**
- * Alpha (0–255) that a GPU-backed and a CPU-backed Canvas 2D store for a disc filled with white at 0.075;
- * 19 is right. Tells which devices' GPU rasterizer bends translucency (the atlas uses the CPU one).
- */
-function canvasAlpha(): [number, number] {
-  const read = (settings?: CanvasRenderingContext2DSettings): number => {
-    const canvas = document.createElement('canvas');
-    // Small canvases are never GPU-accelerated; this one is big enough to be.
-    canvas.width = canvas.height = 256;
-    const ctx = canvas.getContext('2d', settings);
-    if (!ctx) return -1;
-    ctx.fillStyle = 'rgba(255,255,255,0.075)';
-    ctx.beginPath();
-    ctx.arc(128, 128, 100, 0, Math.PI * 2);
-    ctx.fill();
-    return ctx.getImageData(128, 128, 1, 1).data[3];
-  };
-  return [read(), read({ willReadFrequently: true })];
 }
