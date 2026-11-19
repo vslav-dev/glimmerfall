@@ -80,6 +80,8 @@ interface Ctx {
   /** ids of lit specials waiting their turn, shared across steps */
   fuse: number[];
   lit: LitPiece[];
+  /** matches other than the player's own create their specials; off once the moves are spent */
+  specials: boolean;
 }
 
 export function newTally(): Tally {
@@ -91,11 +93,20 @@ export function newTally(): Tally {
  * matched specials fire, the next lit special in `fuse` goes off, pieces fall.
  * A special hit by a blast is not fired at once: it is lit, stays on the board (falling with it)
  * and goes off in a later step, one per step, so chain reactions play out one by one while the board refills.
+ * With `specials` off, only the player's own match leaves a special behind; the others just clear.
  * Null when nothing matches and nothing is lit: the board is calm.
  */
-export function resolveStep(b: Board, swap: PendingSwap | null, cascadeLevel: number, scorer: TargetScorer, fuse: number[]): Step | null {
+export function resolveStep(
+  b: Board,
+  swap: PendingSwap | null,
+  cascadeLevel: number,
+  scorer: TargetScorer,
+  fuse: number[],
+  specials = true,
+): Step | null {
   const step: Step = { events: [], tally: newTally() };
-  return stepInto(b, swap, cascadeLevel, scorer, fuse, step) ? step : null;
+  const ctx = newCtx(b, step, scorer, cascadeLevel, fuse, specials);
+  return stepInto(ctx, swap) ? step : null;
 }
 
 /** Finale opening: up to `count` random plain pieces turn into line specials. */
@@ -125,18 +136,18 @@ export function lightAll(b: Board, fuse: number[]): LitPiece[] {
 }
 
 /** Appends one step to `step`; false when there is nothing to clear. */
-function stepInto(b: Board, swap: PendingSwap | null, cascadeLevel: number, scorer: TargetScorer, fuse: number[], step: Step): boolean {
+function stepInto(ctx: Ctx, swap: PendingSwap | null): boolean {
+  const b = ctx.b;
   // Only specials lit in earlier steps are due: whatever this step lights waits for the next one.
-  const due = fuse.length;
-  const ctx = newCtx(b, step, scorer, cascadeLevel, fuse);
+  const due = ctx.fuse.length;
   if (swap && isComboPair(b.cells[swap.to].piece!, b.cells[swap.from].piece!)) runCombo(ctx, swap.to, swap.from);
   // The player's match is found before the fuse goes off, so a blast never steals it.
   const groups = findGroups(b, swap ? [swap.to, swap.from] : []);
-  clearGroups(ctx, groups);
+  clearGroups(ctx, groups, swap);
   const fired = fireNext(ctx, due);
   if (ctx.removed.length === 0 && groups.length === 0 && !fired) return false;
   finishStep(ctx);
-  step.events.push({ type: 'fall', moves: settle(b) });
+  ctx.events.push({ type: 'fall', moves: settle(b) });
   return true;
 }
 
@@ -158,7 +169,7 @@ function fireNext(ctx: Ctx, due: number): boolean {
   return true;
 }
 
-function newCtx(b: Board, step: Step, scorer: TargetScorer, cascadeLevel: number, fuse: number[]): Ctx {
+function newCtx(b: Board, step: Step, scorer: TargetScorer, cascadeLevel: number, fuse: number[], specials: boolean): Ctx {
   return {
     b,
     tally: step.tally,
@@ -175,6 +186,7 @@ function newCtx(b: Board, step: Step, scorer: TargetScorer, cascadeLevel: number
     crateHits: new Set(),
     fuse,
     lit: [],
+    specials,
   };
 }
 
@@ -202,9 +214,11 @@ function finishStep(ctx: Ctx): void {
   });
 }
 
-function clearGroups(ctx: Ctx, groups: MatchGroup[]): void {
+function clearGroups(ctx: Ctx, groups: MatchGroup[], swap: PendingSwap | null): void {
   for (const g of groups) {
-    const special = g.special !== Special.None ? newPiece(ctx.b, g.color, g.special) : null;
+    // The player's own match always earns its special; other matches only while `specials` is on.
+    const own = swap !== null && (g.cells.includes(swap.to) || g.cells.includes(swap.from));
+    const special = (own || ctx.specials) && g.special !== Special.None ? newPiece(ctx.b, g.color, g.special) : null;
     let points = 0;
     for (const i of g.cells) {
       const cell = ctx.b.cells[i];

@@ -3,7 +3,7 @@ import { posOf } from '@/core/board';
 import { advance, createGame, playMove, startFinale } from '@/core/game';
 import { findMoves, type Move } from '@/core/moves';
 import { random, randInt, type RngHolder } from '@/core/rng';
-import { type GameState, type LevelDef, Special } from '@/core/types';
+import { type GameState, type LevelDef, type Pos } from '@/core/types';
 
 /**
  * How a player picks moves. `precision` sharpens the choice towards the best value: 0 picks at random,
@@ -27,8 +27,9 @@ export interface SimResult {
   /** score the finale adds per move left, measured on a won run when asked for; 0 otherwise */
   finale: number;
   /**
-   * Move counts before `needed` at which running out would still win through the last chance, with the final score:
-   * [moves, score]. Each holds for that exact count only: with more moves the game plays on and may spend the specials.
+   * Move counts up to `needed` at which a level ending right there is still won, with the final score: [moves, score].
+   * Each holds for that exact count only: the last move's cascade makes no specials and the last chance fires,
+   * while with more moves the game plays on and may spend its specials.
    */
   chances: [number, number][];
 }
@@ -36,11 +37,11 @@ export interface SimResult {
 export interface SimOptions {
   /** measure the finale on a won run */
   finale?: boolean;
-  /** look for last-chance wins up to this many moves made; 0 skips the look, the costly part of a run */
+  /** play every move up to this count once more as the last one; 0 skips that, the costly part of a run */
   chancesUpTo?: number;
 }
 
-/** Below this share of every goal, one volley of specials cannot finish the level: the check is skipped. */
+/** Below this share of every goal, one last move and a volley of specials cannot finish the level: the check is skipped. */
 const LAST_CHANCE_REACH = 0.5;
 /** Moves left over when the finale is measured; below the finale's conversion cap. */
 const FINALE_PROBE = 6;
@@ -84,11 +85,13 @@ export function simulate(level: LevelDef, seed: number, maxMoves: number, style:
     const move = chooseMove(game, style, rng);
     if (!move) break;
     const b = game.board;
-    playMove(game, posOf(b, move[0]), posOf(b, move[1]));
-    if (game.status === 'playing' && game.movesMade <= (opts.chancesUpTo ?? 0)) {
-      const score = lastChanceScore(game);
-      if (score !== null) chances.push([game.movesMade, score]);
+    const a = posOf(b, move[0]);
+    const c = posOf(b, move[1]);
+    if (game.movesMade < (opts.chancesUpTo ?? 0)) {
+      const score = lastMoveScore(game, a, c);
+      if (score !== null) chances.push([game.movesMade + 1, score]);
     }
+    playMove(game, a, c);
   }
   if (game.status !== 'won') return { needed: null, score: game.score, finale: 0, chances };
   return { needed: game.movesMade, score: game.score, finale: opts.finale ? finaleValue(game) : 0, chances };
@@ -114,13 +117,12 @@ function finaleValue(game: GameState): number {
 }
 
 /**
- * The final score if the moves ran out right now and the specials on the board finished the level; null when they would not.
- * Tried only when every goal is at least LAST_CHANCE_REACH done: one volley of specials closes a gap, not a level.
+ * The final score if this move were the level's last, played to the end with the last chance; null when it would lose.
+ * Tried only when every goal is at least LAST_CHANCE_REACH done: one move and one volley close a gap, not a level.
  */
-function lastChanceScore(game: GameState): number | null {
-  const near = game.level.objectives.every((o, k) => game.progress[k] >= o.target * LAST_CHANCE_REACH);
-  if (!near || !game.board.cells.some((c) => c.piece && c.piece.special !== Special.None)) return null;
-  const trial: GameState = { ...game, board: structuredClone(game.board), progress: [...game.progress], fuse: [...(game.fuse ?? [])], movesLeft: 0 };
-  while (advance(trial)) continue;
+function lastMoveScore(game: GameState, a: Pos, b: Pos): number | null {
+  if (!game.level.objectives.every((o, k) => game.progress[k] >= o.target * LAST_CHANCE_REACH)) return null;
+  const trial: GameState = { ...game, board: structuredClone(game.board), progress: [...game.progress], fuse: [...(game.fuse ?? [])], movesLeft: 1 };
+  playMove(trial, a, b);
   return trial.status === 'won' ? trial.score : null;
 }

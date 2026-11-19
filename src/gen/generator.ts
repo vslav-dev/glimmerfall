@@ -6,7 +6,7 @@ import { type LevelPlan, planLevel } from '@/gen/plan';
 import type { TwinStyle } from '@/player/style';
 
 /** Bumped whenever the same request builds a different level: a replay needs the generator that built its level. */
-export const GEN_VERSION = 5;
+export const GEN_VERSION = 6;
 /** Levels everyone shares: the tutorial, and the first read of the player's style. */
 const COMMON_LEVELS = 5;
 /** How deliberate the shared levels assume the player to be. */
@@ -49,7 +49,7 @@ export interface CalibrationRun {
   needed: number | null;
   /** score at completion */
   score: number;
-  /** move counts below `needed` that still win through the last chance, each with its final score */
+  /** move counts up to `needed` at which a level ending there is still won, each with its final score */
   chances: [number, number][];
 }
 
@@ -140,10 +140,11 @@ export function finalizeLevel(draft: LevelDraft, targetWinRate: number): LevelDe
 
 /**
  * The run's final score with this many moves, or null when it loses. A run that wins with moves to spare
- * scores its finale on top, as the player's game does; a last-chance win holds for its exact move count only.
+ * scores its finale on top, as the player's game does; a win on the very last move, or through the last chance,
+ * holds for its exact move count only.
  */
 function finalScore(run: CalibrationRun, moves: number, finale: number): number | null {
-  if (run.needed !== null && run.needed <= moves) return run.score + finale * Math.min(FINALE_CONVERSIONS, moves - run.needed);
+  if (run.needed !== null && run.needed < moves) return run.score + finale * Math.min(FINALE_CONVERSIONS, moves - run.needed);
   return run.chances.find(([m]) => m === moves)?.[1] ?? null;
 }
 

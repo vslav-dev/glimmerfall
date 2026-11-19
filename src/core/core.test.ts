@@ -301,8 +301,7 @@ describe('game', () => {
     expect(run(50)).toBe('lost');
   });
 
-  it('the last chance fires only the specials left on the board, not those its cascades create', () => {
-    let created = 0;
+  it('the last chance fires only the specials left on the board and creates none', () => {
     for (const seed of [1, 2, 3, 4, 5]) {
       const game = createGame(level({ moves: 1, objectives: [{ kind: ObjectiveKind.Collect, target: 500, color: 1 }] }), seed);
       const kinds = [Special.LineH, Special.LineV, Special.Bomb, Special.Spark];
@@ -317,11 +316,25 @@ describe('game', () => {
       const lights = events.filter((e) => e.type === 'light');
       expect(lights).toHaveLength(1);
       for (const p of lights[0].type === 'light' ? lights[0].pieces : []) expect(before.has(p.id)).toBe(true);
-      // Whatever specials the volley created are left standing.
-      created += game.board.cells.filter((c) => c.piece && c.piece.special !== Special.None && !before.has(c.piece.id)).length;
+      expect(events.flatMap((e) => (e.type === 'clear' ? e.created : []))).toEqual([]);
+      expect(events.filter((e) => e.type === 'transform')).toEqual([]);
+      expect(game.board.cells.some((c) => c.piece && c.piece.special !== Special.None)).toBe(false);
       expect(game.status).toBe('lost');
     }
-    expect(created).toBeGreaterThan(0);
+  });
+
+  it('after the last move only the swap itself makes a special; its cascades make none', () => {
+    const game = createGame(level({ moves: 1 }), 7);
+    // Swapping (1,3) up completes 0000 in row 0 (a special from the swap); row 3 is a ready 1111 for the cascade.
+    game.board = boardFrom(['00020', '12301', '23412', '41111', '34123']);
+    expect(makeMove(game, { r: 1, c: 3 }, { r: 0, c: 3 })?.valid).toBe(true);
+    expect(game.movesLeft).toBe(0);
+    const first = advance(game)!;
+    const created = first.flatMap((e) => (e.type === 'clear' ? e.created : []));
+    expect(created.map((c) => c.pos)).toEqual([{ r: 0, c: 3 }]);
+    const later: GameEvent[] = [];
+    for (let step = advance(game); step; step = advance(game)) later.push(...step);
+    expect(later.flatMap((e) => (e.type === 'clear' ? e.created : []))).toEqual([]);
   });
 
   it('without specials on the board, running out of moves is a plain loss', () => {
