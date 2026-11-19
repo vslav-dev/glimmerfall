@@ -1,4 +1,4 @@
-import { random, randInt } from '@/core/rng';
+import { randInt } from '@/core/rng';
 import { type Board, type Cell, type Piece, type Pos, NO_COLOR, Special } from '@/core/types';
 
 export function indexOf(b: Board, r: number, c: number): number {
@@ -54,9 +54,8 @@ export function newPiece(b: Board, color: number, special: Special = Special.Non
   return { id: b.nextId++, color: special === Special.Prism ? NO_COLOR : color, special };
 }
 
-/** Refill color; leans towards the assist color when the player gets help. */
+/** Refill color: uniform, so calibration over many boards stays honest. */
 export function spawnColor(b: Board): number {
-  if (b.bias && random(b) < b.bias.chance) return b.bias.color;
   return randInt(b, b.colors);
 }
 

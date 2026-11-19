@@ -1,70 +1,289 @@
-import { pick, randInt, random, type RngHolder, hashSeed } from '@/core/rng';
+import { RANDOM_BOT, type SimResult, simulate, STRONG_BOT, type BotStyle } from '@/bot/bot';
+import { FINALE_CONVERSIONS } from '@/core/resolve';
+import { hashSeed, pick, randInt, random, type RngHolder } from '@/core/rng';
 import { type LevelDef, LevelKind, Mechanic, NO_COLOR, type Objective, ObjectiveKind } from '@/core/types';
 import { type LevelPlan, planLevel } from '@/gen/plan';
-import { simulate } from '@/gen/simulate';
+import type { TwinStyle } from '@/player/style';
 
-const SIMS = 24;
+/** Bumped whenever the same request builds a different level: a replay needs the generator that built its level. */
+export const GEN_VERSION = 2;
+/** Levels everyone shares: the tutorial, and the first read of the player's style. */
+const COMMON_LEVELS = 5;
+/** How deliberate the shared levels assume the player to be. */
+const COMMON_CRAFT = 0.3;
+/** Layouts tried per level; the one that suits the player's style wins. */
+const CANDIDATES = 3;
+/** Twin runs per candidate while its goals are tuned to the intended length. */
+const SHAPE_SIMS = 12;
+/** Strong and random bot runs per candidate: how much skill matters on it. */
+const PROBE_SIMS = 8;
+/** Twin runs of the chosen layout that set the moves and the stars: ±7 % on the win rate. */
+const SIMS = 48;
+/** Won runs that also measure the finale. */
+const FINALE_RUNS = 8;
 const SIM_MAX_MOVES = 60;
 const MIN_MOVES = 10;
 const MAX_MOVES = 45;
 const MIN_COLORS = 4;
 /** Score-goal levels can never be completed early during calibration. */
 const UNREACHABLE = Number.MAX_SAFE_INTEGER;
+/** Quantiles of the twin's winning final scores: 3 stars about once in 6–7 wins, whatever the difficulty. */
+const TWO_STARS = 0.4;
+const THREE_STARS = 0.85;
 
-/** Bot results that let a level be finalized for any target win rate without simulating again. */
+export interface DraftRequest {
+  /** the player's own seed: levels after the shared ones differ per player */
+  seed: number;
+  number: number;
+  /** the player's style the level is built and calibrated for */
+  style: TwinStyle;
+}
+
+/** One twin run of a goal level: what it takes to win with a given number of moves. */
+export interface CalibrationRun {
+  /** moves needed to complete the goals by play; any level with at least that many is won */
+  needed: number | null;
+  /** score at completion */
+  score: number;
+  /** move counts below `needed` that still win through the last chance, each with its final score */
+  chances: [number, number][];
+}
+
+/** Twin bot results that let a level be finalized for any target win rate without simulating again. */
 export interface Calibration {
-  /** moves the bot needed per run, ascending; failed runs are Infinity (null in JSON) */
-  needed: (number | null)[];
-  /** score at completion of successful runs, ascending */
+  /** goal levels: the twin's runs */
+  runs: CalibrationRun[];
+  /** goal levels: score the finale adds per move left */
+  finale: number;
+  /** score levels: score after the fixed moves per run, ascending */
   scores: number[];
-  /** score-goal levels: fixed move count and final scores per run, ascending */
+  /** score levels: the fixed move count; 0 for goal levels */
   fixedMoves: number;
-  fixedScores: number[];
 }
 
 export interface LevelDraft {
+  request: DraftRequest;
+  /** which candidate layout won */
+  variant: number;
   level: LevelDef;
   calibration: Calibration;
 }
 
-export interface DraftRequest {
-  number: number;
-  /** number of failed attempts on this level; 3+ removes a color and leans the refill */
-  assist: number;
-}
-
-/** Layout, goals and bot calibration. Deterministic per (number, assist); layout depends on number only. */
+/** Layout, goals and twin calibration. Deterministic per request. */
 export function draftLevel(req: DraftRequest): LevelDraft {
   const n = req.number;
   const plan = planLevel(n);
-  const shapeRng: RngHolder = { rng: hashSeed(n, 11) };
-  const blockRng: RngHolder = { rng: hashSeed(n, 22) };
-  const goalRng: RngHolder = { rng: hashSeed(n, 33) };
+  const common = n <= COMMON_LEVELS;
+  const seed = common ? 0 : req.seed;
+  const craft = common ? COMMON_CRAFT : req.style.craft;
+  // A new mechanic is introduced on its plain layout: the lesson matters more than the fit.
+  const count = common || plan.intro ? 1 : CANDIDATES;
+
+  let best: LevelDef | null = null;
+  let bestFit = -Infinity;
+  let variant = 0;
+  for (let v = 0; v < count; v++) {
+    const level = buildLayout(n, plan, hashSeed(seed, n, v), craft);
+    const twin = shapeGoals(level, req.style, hashSeed(seed, n, v, 1));
+    if (count === 1) {
+      best = level;
+      break;
+    }
+    const fit = fitness(level, twin, craft, hashSeed(seed, n, v, 2));
+    if (best === null || fit > bestFit) {
+      best = level;
+      bestFit = fit;
+      variant = v;
+    }
+  }
+  return { request: req, variant, level: best!, calibration: calibrate(best!, req.style, hashSeed(seed, n, 3)) };
+}
+
+/** Picks the moves (or the score goal) so the twin wins with the requested probability, and sets the stars. */
+export function finalizeLevel(draft: LevelDraft, targetWinRate: number): LevelDef {
+  const level: LevelDef = structuredClone(draft.level);
+  const cal = draft.calibration;
+  level.targetWinRate = targetWinRate;
+
+  if (cal.fixedMoves > 0) {
+    const { scores } = cal;
+    const scoreGoal = level.objectives[0];
+    scoreGoal.target = roundTo(Math.max(500, scores[scores.length - 1 - rankOf(targetWinRate, scores.length)]), 50);
+    level.moves = cal.fixedMoves;
+    level.stars = starsFrom(scoreGoal.target, scores.filter((s) => s >= scoreGoal.target));
+    return level;
+  }
+
+  // The move count whose share of winning runs comes closest to the target; the fewer moves on a tie.
+  const winners = (moves: number): number[] => cal.runs.flatMap((run) => finalScore(run, moves, cal.finale) ?? []);
+  let best = MIN_MOVES;
+  let bestMiss = Infinity;
+  for (let moves = MIN_MOVES; moves <= MAX_MOVES; moves++) {
+    const miss = Math.abs(winners(moves).length / cal.runs.length - targetWinRate);
+    if (miss < bestMiss) {
+      best = moves;
+      bestMiss = miss;
+    }
+  }
+  level.moves = best;
+  level.stars = starsFrom(0, winners(best).sort((a, b) => a - b));
+  return level;
+}
+
+/**
+ * The run's final score with this many moves, or null when it loses. A run that wins with moves to spare
+ * scores its finale on top, as the player's game does; a last-chance win holds for its exact move count only.
+ */
+function finalScore(run: CalibrationRun, moves: number, finale: number): number | null {
+  if (run.needed !== null && run.needed <= moves) return run.score + finale * Math.min(FINALE_CONVERSIONS, moves - run.needed);
+  return run.chances.find(([m]) => m === moves)?.[1] ?? null;
+}
+
+/** Index into ascending results that leaves `rate` of the runs winning. */
+function rankOf(rate: number, count: number): number {
+  return Math.min(count - 1, Math.max(0, Math.ceil(rate * count) - 1));
+}
+
+/** Star thresholds from the twin's winning final scores, ascending; `first` is the one-star score. */
+function starsFrom(first: number, winners: number[]): [number, number, number] {
+  const two = Math.max(first + 50, 100, roundTo(quantile(winners, TWO_STARS), 50));
+  const three = Math.max(two + 50, roundTo(quantile(winners, THREE_STARS), 50));
+  return [first, two, three];
+}
+
+// ---------- simulation ----------
+
+function isScoreLevel(level: LevelDef): boolean {
+  return level.objectives.some((o) => o.kind === ObjectiveKind.Score);
+}
+
+function fixedMovesOf(n: number): number {
+  return 16 + Math.min(10, Math.floor(n / 8));
+}
+
+/** `full`: the final calibration, which also measures the finale and looks for last-chance wins. */
+function runs(level: LevelDef, style: BotStyle, moves: number, count: number, seed: number, full = false): SimResult[] {
+  return Array.from({ length: count }, (_, k) =>
+    simulate(level, hashSeed(seed, k), moves, style, full ? { finale: k < FINALE_RUNS, chancesUpTo: MAX_MOVES } : {}),
+  );
+}
+
+/** One number per run, higher is better: moves are inverted for goal levels, score per move for score levels. */
+function efficiency(level: LevelDef, r: SimResult): number {
+  if (isScoreLevel(level)) return r.score / fixedMovesOf(level.number);
+  return r.needed === null ? 0 : 1 / r.needed;
+}
+
+/** Tunes the goals so the twin's typical run lasts the intended level length. Returns the twin's efficiencies. */
+function shapeGoals(level: LevelDef, style: BotStyle, seed: number): number[] {
+  if (isScoreLevel(level)) return runs(level, style, fixedMovesOf(level.number), SHAPE_SIMS, seed).map((r) => efficiency(level, r));
+  const length = 15 + Math.min(10, Math.floor(level.number / 5));
+  let results = runs(level, style, SIM_MAX_MOVES, SHAPE_SIMS, seed);
+  for (let pass = 0; pass < 2 && adjustLength(level, medianNeeded(results), length); pass++) {
+    results = runs(level, style, SIM_MAX_MOVES, SHAPE_SIMS, seed);
+  }
+  return results.map((r) => efficiency(level, r));
+}
+
+/**
+ * How well a candidate suits the player. A deliberate player wants a level where skill decides:
+ * a wide gap between the strong and the random bot. A random tapper wants one where luck does not swing
+ * the result: a narrow spread of their twin's runs. A level the strong bot cannot finish is out.
+ */
+function fitness(level: LevelDef, twin: number[], craft: number, seed: number): number {
+  // Past the most moves a level can get, a run tells nothing: the random bot stops there.
+  const moves = isScoreLevel(level) ? fixedMovesOf(level.number) : MAX_MOVES;
+  const typical = (style: BotStyle, k: number): number =>
+    median(runs(level, style, moves, PROBE_SIMS, hashSeed(seed, k)).map((r) => efficiency(level, r)));
+  const strong = typical(STRONG_BOT, 0);
+  if (strong === 0) return -Infinity;
+  const gap = Math.max(0, strong - typical(RANDOM_BOT, 1)) / strong;
+  const sorted = [...twin].sort((a, b) => a - b);
+  const mid = quantile(sorted, 0.5);
+  const spread = mid > 0 ? (quantile(sorted, 0.75) - quantile(sorted, 0.25)) / mid : 1;
+  return craft * gap - (1 - craft) * spread;
+}
+
+function calibrate(level: LevelDef, style: BotStyle, seed: number): Calibration {
+  if (isScoreLevel(level)) {
+    const fixedMoves = fixedMovesOf(level.number);
+    const scores = runs(level, style, fixedMoves, SIMS, seed).map((r) => r.score);
+    return { runs: [], finale: 0, scores: scores.sort((a, b) => a - b), fixedMoves };
+  }
+  const results = runs(level, style, SIM_MAX_MOVES, SIMS, seed, true);
+  const measured = results.filter((r) => r.finale > 0);
+  return {
+    runs: results.map(({ needed, score, chances }) => ({ needed, score, chances })),
+    finale: measured.length > 0 ? measured.reduce((sum, r) => sum + r.finale, 0) / measured.length : 0,
+    scores: [],
+    fixedMoves: 0,
+  };
+}
+
+function medianNeeded(results: SimResult[]): number {
+  const sorted = results.map((r) => r.needed ?? Infinity).sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)];
+}
+
+/**
+ * Scales collect amounts, or strengthens / weakens crates and ice, towards the intended length.
+ * Returns whether it changed anything.
+ */
+function adjustLength(level: LevelDef, median: number, length: number): boolean {
+  const collects = level.objectives.filter((o) => o.kind === ObjectiveKind.Collect);
+  if (collects.length > 0) {
+    const factor = Number.isFinite(median) ? Math.min(3, Math.max(0.5, length / median)) : 0.6;
+    if (Math.abs(factor - 1) <= 0.15) return false;
+    for (const o of collects) o.target = Math.max(8, Math.round(o.target * factor));
+    return true;
+  }
+  const kinds = level.objectives.map((o) => o.kind);
+  const [layer, max] = kinds.includes(ObjectiveKind.Crate) ? [level.crate, 3] : kinds.includes(ObjectiveKind.Ice) ? [level.ice, 2] : [null, 0];
+  // Too quick: thicker layers. Too slow (a random tapper's twin): thinner ones.
+  const delta = median < length * 0.75 ? 1 : median > length * 1.5 ? -1 : 0;
+  if (!layer || delta === 0) return false;
+  let changed = false;
+  for (let i = 0; i < layer.length; i++) {
+    if (layer[i] > 0 && layer[i] + delta >= 1 && layer[i] + delta <= max) {
+      layer[i] += delta;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+// ---------- layout ----------
+
+/**
+ * One candidate layout with goals. `craft` (0 random taps … 1 planning) sets how intricate it gets:
+ * holes in the board, crate shelves, chains, thick layers, a sixth color, double goals.
+ */
+function buildLayout(n: number, plan: LevelPlan, seed: number, craft: number): LevelDef {
+  const shapeRng: RngHolder = { rng: hashSeed(seed, 11) };
+  const blockRng: RngHolder = { rng: hashSeed(seed, 22) };
+  const goalRng: RngHolder = { rng: hashSeed(seed, 33) };
 
   const cols = n <= 3 ? 7 : pick(shapeRng, [7, 8, 8]);
   const rows = Math.min(9, cols + pick(shapeRng, [0, 1, 1]));
-  const mask = makeShape(rows, cols, n, shapeRng);
+  const mask = makeShape(rows, cols, n, craft, shapeRng);
   const size = rows * cols;
 
-  let colors = chooseColors(n, plan, goalRng);
-  const goals = chooseGoals(n, plan, goalRng);
-  const collectCount = !goals.includes(ObjectiveKind.Collect) ? 0 : n >= 15 && random(goalRng) < 0.4 ? 2 : 1;
+  const colors = chooseColors(n, plan, craft, goalRng);
+  const goals = chooseGoals(n, plan, craft, goalRng);
+  const collectCount = !goals.includes(ObjectiveKind.Collect) ? 0 : n >= 15 && random(goalRng) < 0.2 + 0.4 * craft ? 2 : 1;
   const collect = pickColors(goalRng, collectCount);
 
   const crate = new Array<number>(size).fill(0);
   const ice = new Array<number>(size).fill(0);
   const chain = new Array<number>(size).fill(0);
   const grid: Grid = { rows, cols, mask, blocked: (i) => crate[i] > 0 || chain[i] > 0 };
-  if (goals.includes(ObjectiveKind.Crate) || (plan.mechanics.has(Mechanic.Crate) && n >= 25 && random(blockRng) < 0.3)) {
-    placeCrates(grid, crate, n, blockRng);
+  if (goals.includes(ObjectiveKind.Crate) || (plan.mechanics.has(Mechanic.Crate) && n >= 25 && random(blockRng) < 0.6 * craft)) {
+    placeCrates(grid, crate, n, craft, blockRng);
   }
-  if (goals.includes(ObjectiveKind.Ice)) placeIce(grid, ice, crate, n, blockRng);
-  if (plan.intro === Mechanic.Chain || (plan.mechanics.has(Mechanic.Chain) && random(blockRng) < 0.45)) {
-    placeChains(grid, chain, crate, n, blockRng);
+  if (goals.includes(ObjectiveKind.Ice)) placeIce(grid, ice, crate, n, craft, blockRng);
+  if (plan.intro === Mechanic.Chain || (plan.mechanics.has(Mechanic.Chain) && random(blockRng) < 0.25 + 0.4 * craft)) {
+    placeChains(grid, chain, crate, n, craft, blockRng);
   }
-
-  // Help on repeated failure changes only colors and refill luck, so the level stays recognizable.
-  if (req.assist >= 3) colors = Math.max(MIN_COLORS, colors - 1);
 
   const objectives: Objective[] = [];
   for (const g of goals) {
@@ -80,7 +299,7 @@ export function draftLevel(req: DraftRequest): LevelDraft {
     }
   }
 
-  const level: LevelDef = {
+  return {
     number: n,
     rows,
     cols,
@@ -95,94 +314,19 @@ export function draftLevel(req: DraftRequest): LevelDraft {
     kind: plan.kind,
     intro: plan.intro,
     targetWinRate: plan.baseWinRate,
-    assistBias: req.assist >= 3 && collect.length > 0 ? { color: collect[0], chance: 0.12 } : null,
-  };
-  return { level, calibration: calibrate(level) };
-}
-
-/** Picks moves (or the score goal) so the bot wins with the requested probability, and sets star thresholds. */
-export function finalizeLevel(draft: LevelDraft, targetWinRate: number): LevelDef {
-  const level: LevelDef = structuredClone(draft.level);
-  const cal = draft.calibration;
-  level.targetWinRate = targetWinRate;
-  const k = Math.min(SIMS - 1, Math.max(0, Math.ceil(targetWinRate * SIMS) - 1));
-
-  const scoreGoal = level.objectives.find((o) => o.kind === ObjectiveKind.Score);
-  if (scoreGoal) {
-    const descending = [...cal.fixedScores].sort((a, b) => b - a);
-    scoreGoal.target = roundTo(Math.max(500, descending[k]), 50);
-    level.moves = cal.fixedMoves;
-    level.stars = [scoreGoal.target, roundTo(scoreGoal.target * 1.3, 50), roundTo(scoreGoal.target * 1.7, 50)];
-    return level;
-  }
-
-  const needed = cal.needed.map((v) => v ?? Infinity);
-  const finite = needed.filter((v) => Number.isFinite(v));
-  const value = Number.isFinite(needed[k]) ? needed[k] : (finite.at(-1) ?? MAX_MOVES) + 3;
-  level.moves = Math.min(MAX_MOVES, Math.max(MIN_MOVES, value));
-  const two = Math.max(500, roundTo(quantile(cal.scores, 0.5) * 1.25, 50));
-  const three = Math.max(two + 500, roundTo(quantile(cal.scores, 0.85) * 1.6, 50));
-  level.stars = [0, two, three];
-  return level;
-}
-
-export function generateLevel(req: DraftRequest & { targetWinRate: number }): LevelDef {
-  return finalizeLevel(draftLevel(req), req.targetWinRate);
-}
-
-function calibrate(level: LevelDef): Calibration {
-  const isScore = level.objectives.some((o) => o.kind === ObjectiveKind.Score);
-  const fixedMoves = 16 + Math.min(10, Math.floor(level.number / 8));
-  const runs = (lv: LevelDef, moves: number) =>
-    Array.from({ length: SIMS }, (_, k) => simulate(lv, hashSeed(level.number, 1000 + k), moves));
-
-  if (isScore) {
-    const results = runs(level, fixedMoves);
-    return { needed: [], scores: [], fixedMoves, fixedScores: results.map((r) => r.score).sort((a, b) => a - b) };
-  }
-
-  // Goals are tuned so a typical bot run lasts about the intended level length.
-  let results = runs(level, SIM_MAX_MOVES);
-  const length = 15 + Math.min(10, Math.floor(level.number / 5));
-  for (let pass = 0; pass < 2; pass++) {
-    const sorted = results.map((r) => r.movesNeeded ?? Infinity).sort((a, b) => a - b);
-    if (!adjustLength(level, sorted[Math.floor(sorted.length / 2)], length)) break;
-    results = runs(level, SIM_MAX_MOVES);
-  }
-  const needed = results.map((r) => r.movesNeeded ?? Infinity).sort((a, b) => a - b);
-  return {
-    needed: needed.map((v) => (Number.isFinite(v) ? v : null)),
-    scores: results.flatMap((r) => (r.movesNeeded !== null ? [r.score] : [])).sort((a, b) => a - b),
-    fixedMoves: 0,
-    fixedScores: [],
   };
 }
 
-/** Scales collect amounts, or strengthens crates / ice, towards the intended length. Returns whether it changed. */
-function adjustLength(level: LevelDef, median: number, length: number): boolean {
-  const collects = level.objectives.filter((o) => o.kind === ObjectiveKind.Collect);
-  if (collects.length > 0) {
-    const factor = Number.isFinite(median) ? Math.min(3, Math.max(0.5, length / median)) : 0.6;
-    if (Math.abs(factor - 1) <= 0.15) return false;
-    for (const o of collects) o.target = Math.max(8, Math.round(o.target * factor));
-    return true;
-  }
-  if (median >= length * 0.75) return false;
-  const kinds = level.objectives.map((o) => o.kind);
-  const [layer, max] = kinds.includes(ObjectiveKind.Crate) ? [level.crate, 3] : kinds.includes(ObjectiveKind.Ice) ? [level.ice, 2] : [null, 0];
-  if (!layer || !layer.some((v) => v > 0 && v < max)) return false;
-  for (let i = 0; i < layer.length; i++) if (layer[i] > 0 && layer[i] < max) layer[i]++;
-  return true;
-}
-
-function chooseColors(n: number, plan: LevelPlan, h: RngHolder): number {
+/** Random tappers get four colors more often (more cascades, more show); deliberate players meet a sixth. */
+function chooseColors(n: number, plan: LevelPlan, craft: number, h: RngHolder): number {
   if (n <= 2) return MIN_COLORS;
-  if (n <= 30) return 5;
-  const sixChance = plan.kind === LevelKind.Hard ? 0.5 : n > 60 ? 0.25 : 0;
-  return random(h) < sixChance ? 6 : 5;
+  const four = Math.max(0, 0.5 - 2 * craft);
+  const six = n > 30 ? (plan.kind === LevelKind.Hard ? 0.5 : n > 60 ? 0.25 : 0) * 2 * craft : 0;
+  const roll = random(h);
+  return roll < four ? 4 : roll >= 1 - six ? 6 : 5;
 }
 
-function chooseGoals(n: number, plan: LevelPlan, h: RngHolder): ObjectiveKind[] {
+function chooseGoals(n: number, plan: LevelPlan, craft: number, h: RngHolder): ObjectiveKind[] {
   switch (plan.intro) {
     case Mechanic.Ice:
       return [ObjectiveKind.Ice];
@@ -204,14 +348,14 @@ function chooseGoals(n: number, plan: LevelPlan, h: RngHolder): ObjectiveKind[] 
   if (plan.mechanics.has(Mechanic.Crate)) pool.push([ObjectiveKind.Crate, 3]);
 
   const first = weighted(h, pool);
-  if (first === ObjectiveKind.Score || !plan.mechanics.has(Mechanic.DoubleGoal) || random(h) >= 0.4) {
+  if (first === ObjectiveKind.Score || !plan.mechanics.has(Mechanic.DoubleGoal) || random(h) >= 0.8 * craft) {
     return [first];
   }
   const rest = pool.filter(([kind]) => kind !== first && kind !== ObjectiveKind.Score);
   return rest.length > 0 ? [first, weighted(h, rest)] : [first];
 }
 
-/** Goal colors come from the first MIN_COLORS, so removing a color for assist never removes a goal. */
+/** Goal colors come from the first MIN_COLORS, so every level has them. */
 function pickColors(h: RngHolder, count: number): number[] {
   const all = Array.from({ length: MIN_COLORS }, (_, i) => i);
   const result: number[] = [];
@@ -229,8 +373,6 @@ function weighted<T>(h: RngHolder, items: [T, number][]): T {
   return items[items.length - 1][0];
 }
 
-// ---------- layout ----------
-
 export interface Grid {
   rows: number;
   cols: number;
@@ -241,7 +383,10 @@ export interface Grid {
 
 type ShapeRule = (r: number, c: number, rows: number, cols: number) => boolean;
 
-/** Board shapes; every rule is mirror-symmetric because it only looks at distances from the edges. */
+/**
+ * Board shapes, plainest first; every rule is mirror-symmetric because it only looks at distances from the edges.
+ * The player's craft decides how far down the list a level may reach.
+ */
 const SHAPES: ShapeRule[] = [
   () => true,
   (r, c, rows, cols) => !(edge(r, rows) === 0 && edge(c, cols) === 0),
@@ -252,8 +397,8 @@ const SHAPES: ShapeRule[] = [
   (r, c, rows, cols) => !(edge(c, cols) === 0 && edge(r, rows) >= 2),
 ];
 
-function makeShape(rows: number, cols: number, n: number, h: RngHolder): number[] {
-  const options = n <= 3 ? [SHAPES[0]] : SHAPES;
+function makeShape(rows: number, cols: number, n: number, craft: number, h: RngHolder): number[] {
+  const options = n <= 3 ? [SHAPES[0]] : SHAPES.slice(0, 1 + Math.round(craft * (SHAPES.length - 1)));
   for (let attempt = 0; attempt < 10; attempt++) {
     const rule = pick(h, options);
     const mask = Array.from({ length: rows * cols }, (_, i) => (rule(Math.floor(i / cols), i % cols, rows, cols) ? 1 : 0));
@@ -323,11 +468,12 @@ export function refillReachesAll(grid: Grid): boolean {
   return true;
 }
 
-function placeCrates(grid: Grid, crate: number[], n: number, h: RngHolder): void {
-  const strength = (): number => (n < 15 ? 1 : n < 40 ? 1 + randInt(h, 2) : 1 + randInt(h, 3));
+function placeCrates(grid: Grid, crate: number[], n: number, craft: number, h: RngHolder): void {
+  const cap = 1 + Math.round(2 * craft);
+  const strength = (): number => Math.min(cap, n < 15 ? 1 : n < 40 ? 1 + randInt(h, 2) : 1 + randInt(h, 3));
   const half = Math.ceil(grid.cols / 2);
-  if (random(h) < 0.5) {
-    // A shelf: one row of crates from the walls inwards, leaving the middle open.
+  if (random(h) < craft) {
+    // A shelf: one row of crates from the walls inwards, leaving the middle open; what is under it is hard to reach.
     const r = 3 + randInt(h, Math.max(1, grid.rows - 5));
     const width = 1 + randInt(h, Math.max(1, half - 2));
     const s = strength();
@@ -340,7 +486,7 @@ function placeCrates(grid: Grid, crate: number[], n: number, h: RngHolder): void
   }
 }
 
-function placeIce(grid: Grid, ice: number[], crate: number[], n: number, h: RngHolder): void {
+function placeIce(grid: Grid, ice: number[], crate: number[], n: number, craft: number, h: RngHolder): void {
   const { rows, cols } = grid;
   const fraction = 0.22 + Math.min(0.25, n / 400);
   const cr = (rows - 1) / 2;
@@ -353,7 +499,7 @@ function placeIce(grid: Grid, ice: number[], crate: number[], n: number, h: RngH
     (r, c) => edge(c, cols) <= 1 && Math.abs(r - cr) <= rows * fraction * 1.5,
   ];
   const pattern = pick(h, patterns);
-  const thick = n >= 40 && random(h) < 0.35;
+  const thick = n >= 40 && random(h) < 0.7 * craft;
   for (let i = 0; i < ice.length; i++) {
     const r = Math.floor(i / cols);
     const c = i % cols;
@@ -366,20 +512,24 @@ function placeIce(grid: Grid, ice: number[], crate: number[], n: number, h: RngH
   }
 }
 
-function placeChains(grid: Grid, chain: number[], crate: number[], n: number, h: RngHolder): void {
+function placeChains(grid: Grid, chain: number[], crate: number[], n: number, craft: number, h: RngHolder): void {
   const target = 4 + Math.min(8, Math.floor(n / 10));
   const half = Math.ceil(grid.cols / 2);
   for (let guard = 0; guard < 100 && chain.filter(Boolean).length < target; guard++) {
     const r = 1 + randInt(h, grid.rows - 1);
     const c = randInt(h, half);
     if (crate[r * grid.cols + c] > 0) continue;
-    setBlocker(grid, chain, r, c, n >= 50 && random(h) < 0.3 ? 2 : 1);
+    setBlocker(grid, chain, r, c, n >= 50 && random(h) < 0.6 * craft ? 2 : 1);
   }
 }
 
 function quantile(sorted: number[], q: number): number {
   if (sorted.length === 0) return 0;
   return sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))];
+}
+
+function median(values: number[]): number {
+  return quantile([...values].sort((a, b) => a - b), 0.5);
 }
 
 function roundTo(value: number, step: number): number {

@@ -1,5 +1,6 @@
 import { type GameState, type LevelDef, type Objective, ObjectiveKind, Special } from '@/core/types';
 import { BoardSize, type Settings } from '@/app/save';
+import { DIFFICULTIES } from '@/player/difficulty';
 import { FrameName, frameDataUrl } from '@/view/art';
 import { Counter } from '@/ui/counter';
 import { Glide } from '@/ui/glide';
@@ -24,6 +25,8 @@ export const Action = {
   ToggleFullscreen: 'toggle-fullscreen',
   BoardSmaller: 'board-smaller',
   BoardBigger: 'board-bigger',
+  Easier: 'easier',
+  Harder: 'harder',
   Reset: 'reset',
 } as const;
 export type Action = (typeof Action)[keyof typeof Action];
@@ -185,6 +188,12 @@ export class Ui {
           <button data-action="${Action.BoardSmaller}" aria-label="${S.smaller}" ${settings.boardSize <= BoardSize.Min ? 'disabled' : ''}>−</button>
           <i>${S.percent(settings.boardSize)}</i>
           <button data-action="${Action.BoardBigger}" aria-label="${S.bigger}" ${settings.boardSize >= BoardSize.Max ? 'disabled' : ''}>+</button>
+        </div>
+        <div class="toggle stepper">
+          <span>${S.difficulty}</span>
+          <button data-action="${Action.Easier}" aria-label="${S.easier}" ${settings.difficulty === DIFFICULTIES[0] ? 'disabled' : ''}>−</button>
+          <i>${S.difficulties[settings.difficulty]}</i>
+          <button data-action="${Action.Harder}" aria-label="${S.harder}" ${settings.difficulty === DIFFICULTIES.at(-1) ? 'disabled' : ''}>+</button>
         </div>
         <button class="btn danger" data-action="${Action.Reset}">${S.reset}</button>
         <button class="btn primary" data-action="${Action.Back}">${S.back}</button>

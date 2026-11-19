@@ -742,6 +742,11 @@ export class BoardView {
     this.hintTimer = window.setTimeout(() => void this.showHint(), HINT_DELAY);
   }
 
+  /** A move is pulsing: a swap made now may just follow it. */
+  public get hintShown(): boolean {
+    return this.hinted.length > 0;
+  }
+
   /** Call before the board changes under the hinted cells: their sprites return to rest. */
   public cancelHint(): void {
     window.clearTimeout(this.hintTimer);

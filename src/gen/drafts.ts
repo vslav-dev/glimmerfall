@@ -1,8 +1,6 @@
 import type { DraftRequest, LevelDraft } from '@/gen/generator';
 import { timed } from '@/telemetry/perf';
 
-/** Assist below 3 does not change the draft, so requests are normalized to share cache entries. */
-const ASSIST_DRAFT = 3;
 const CACHE_SIZE = 4;
 
 type Reply = { id: number; draft: LevelDraft } | { id: number; error: string };
@@ -24,9 +22,9 @@ export class LevelDrafts {
     };
   }
 
+  /** The first request for a level fixes the style it is built for: a prefetch is not rebuilt when the style drifts. */
   public get(req: DraftRequest): Promise<LevelDraft> {
-    const normalized = { number: req.number, assist: req.assist >= ASSIST_DRAFT ? ASSIST_DRAFT : 0 };
-    const key = `${normalized.number}:${normalized.assist}`;
+    const key = `${req.seed}:${req.number}`;
     let draft = this.cache.get(key);
     if (!draft) {
       const id = this.nextId++;
@@ -34,7 +32,7 @@ export class LevelDrafts {
       draft = timed('draft', () => new Promise<LevelDraft>((resolve, reject) => this.pending.set(id, { resolve, reject })));
       // A failed draft is not cached: the next request tries again.
       draft.catch(() => this.cache.delete(key));
-      this.worker.postMessage({ id, ...normalized });
+      this.worker.postMessage({ id, ...req });
       this.cache.set(key, draft);
       if (this.cache.size > CACHE_SIZE) this.cache.delete(this.cache.keys().next().value!);
     }

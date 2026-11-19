@@ -1,10 +1,13 @@
-import type { GameState, LevelDef } from '@/core/types';
-import { type DirectorState, newDirector } from '@/difficulty/director';
+import type { GameState } from '@/core/types';
+import type { LevelDraft } from '@/gen/generator';
+import { Difficulty } from '@/player/difficulty';
+import { newStyle, type StyleState } from '@/player/style';
 import { loadJson, saveText } from '@/platform/platform';
+import type { AttemptRecord } from '@/telemetry/attempt';
 import { timed } from '@/telemetry/perf';
 
 const KEY = 'glimmerfall-save';
-const VERSION = 3;
+const VERSION = 4;
 
 export interface Settings {
   sound: boolean;
@@ -14,25 +17,42 @@ export interface Settings {
   fullscreen: boolean;
   /** board size, percent of the space it may take */
   boardSize: number;
+  difficulty: Difficulty;
 }
 
 /** Board size steps: a big tablet screen otherwise fills edge to edge with huge pieces. */
 export const BoardSize = { Min: 60, Max: 100, Step: 10 } as const;
 
-/** The level being played: its definition, failures so far, and the unfinished game, if any. */
+/** An attempt in progress: the game and what replays it. */
+export interface Attempt {
+  game: GameState;
+  record: AttemptRecord;
+}
+
+/** The level being played: as built for the player, failures so far, and the unfinished attempt, if any. */
 export interface CurrentLevel {
-  def: LevelDef;
+  /** each attempt is finalized from it for the target win rate of that moment */
+  draft: LevelDraft;
   fails: number;
-  game: GameState | null;
+  attempt: Attempt | null;
+}
+
+/** What the game has learned about the player. */
+export interface PlayerState {
+  style: StyleState;
+  /** how much better than their twin bot the player does, in logit units */
+  skill: number;
 }
 
 export interface SaveData {
   version: number;
+  /** the player's own seed: their levels differ from everyone else's */
+  seed: number;
   /** next level to play */
   level: number;
   /** best stars per level, index = level - 1 */
   stars: number[];
-  director: DirectorState;
+  player: PlayerState;
   settings: Settings;
   current: CurrentLevel | null;
 }
@@ -40,15 +60,17 @@ export interface SaveData {
 export function defaultSave(): SaveData {
   return {
     version: VERSION,
+    seed: randomSeed(),
     level: 1,
     stars: [],
-    director: newDirector(),
+    player: { style: newStyle(), skill: 0 },
     settings: {
       sound: true,
       haptics: true,
       reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
       fullscreen: true,
       boardSize: BoardSize.Max,
+      difficulty: Difficulty.Normal,
     },
     current: null,
   };
@@ -57,18 +79,17 @@ export function defaultSave(): SaveData {
 export async function loadSave(): Promise<SaveData> {
   const data = await loadJson<SaveData>(KEY);
   if (!data) return defaultSave();
-  // v1 games predate step-by-step resolution; progress stays, the unfinished attempt restarts.
-  if (data.version === 1 && data.current) data.current.game = null;
-  if (data.version === 1) data.version = 2;
-  // v2 stored the old default (bars visible) for everyone; v3 turns fullscreen on by default.
-  if (data.version === 2) {
-    data.settings.fullscreen = true;
-    data.version = VERSION;
-  }
-  if (data.version !== VERSION) return defaultSave();
   const defaults = defaultSave();
   // Settings merge one level deeper: a setting added later gets its default in an older save.
-  return { ...defaults, ...data, settings: { ...defaults.settings, ...data.settings } };
+  const settings = { ...defaults.settings, ...data.settings };
+  if (data.version < VERSION) {
+    // Before v3 the bars stayed visible by default; v3 turned fullscreen on for everyone.
+    if (data.version < 3) settings.fullscreen = true;
+    // v4 builds levels per player: progress, stars and settings stay, the level in progress is rebuilt.
+    return { ...defaults, level: data.level, stars: data.stars, settings };
+  }
+  if (data.version !== VERSION) return defaults;
+  return { ...defaults, ...data, settings };
 }
 
 /** Writes are serialized so a slow write never lands after a newer one. */
@@ -77,4 +98,9 @@ let queue: Promise<void> = Promise.resolve();
 export function persist(data: SaveData): void {
   const text = timed('persist', () => JSON.stringify(data));
   queue = queue.then(() => saveText(KEY, text)).catch(() => undefined);
+}
+
+/** A random 32-bit seed, unsigned. */
+export function randomSeed(): number {
+  return crypto.getRandomValues(new Uint32Array(1))[0];
 }

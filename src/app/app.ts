@@ -1,12 +1,16 @@
-import { BoardSize, type CurrentLevel, type SaveData, defaultSave, loadSave, persist } from '@/app/save';
+import { type Attempt, BoardSize, type CurrentLevel, type SaveData, defaultSave, loadSave, persist, randomSeed } from '@/app/save';
 import { AudioBus } from '@/audio/audio';
 import { Sfx } from '@/audio/synth';
+import { goalsOf, type MoveOptions, moveOptions } from '@/bot/evaluate';
+import { indexOf } from '@/core/board';
 import { addExtraMoves, advance, canAct, createGame, EXTRA_MOVES, makeMove, startFinale, starsFor } from '@/core/game';
-import { BlastKind, type GameEvent, type GameState, type LevelDef, LevelKind, type Pos } from '@/core/types';
-import { recordAttempt, targetWinRate } from '@/difficulty/director';
+import { BlastKind, type GameEvent, type GameState, LevelKind, type Pos } from '@/core/types';
 import { LevelDrafts } from '@/gen/drafts';
-import { finalizeLevel } from '@/gen/generator';
+import { type DraftRequest, finalizeLevel } from '@/gen/generator';
 import { planLevel } from '@/gen/plan';
+import { DIFFICULTIES, targetWinRate, updateSkill } from '@/player/difficulty';
+import { observeMove, twinOf } from '@/player/style';
+import { AttemptEnd, type AttemptRecord, newRecord, recordMove, recordStep, trackAttempt } from '@/telemetry/attempt';
 import { flushPerf, perfContext, timed } from '@/telemetry/perf';
 import { exitApp, Haptic, haptic, onBackButton, onHidden, onVisible, setFullscreen, setHapticsEnabled } from '@/platform/platform';
 import { Action, Ui } from '@/ui/ui';
@@ -56,7 +60,11 @@ export class GameApp {
   private actionRunning = false;
   /** where the stage sat at the last resize, so the board knows how far its canvas moved */
   private stageAt = { x: 0, y: 0 };
-  /** `?debug` in the URL shows level and director numbers for tuning */
+  /** the calm board's moves, valued once when it came to rest: the next swap is read against them */
+  private rest: MoveOptions | null = null;
+  /** when the player could last act: thinking time of the next swap counts from here */
+  private thinkFrom = 0;
+  /** `?debug` in the URL shows level and difficulty numbers for tuning */
   private readonly debugEl = new URLSearchParams(location.search).has('debug') ? createDebugEl() : null;
 
   public constructor(
@@ -90,7 +98,7 @@ export class GameApp {
     this.applySettings();
     this.ui.setTheme(this.save.level);
     this.showTitle();
-    void this.drafts.get({ number: this.save.level, assist: this.save.current?.fails ?? 0 });
+    if (!this.save.current) void this.drafts.get(this.draftRequest(this.save.level));
   }
 
   // ---------- flow ----------
@@ -103,24 +111,37 @@ export class GameApp {
     this.view.inputEnabled = false;
     this.view.clear();
     this.ui.hideHud();
-    this.ui.showTitle(this.save.level, this.save.current?.game != null);
+    this.ui.showTitle(this.save.level, this.save.current?.attempt != null);
   }
 
-  /** The level to play now; a new one is generated when the saved one is already won. */
+  /** The level to play now; a new one is built when the saved one is already won. The next one is built meanwhile. */
   private async currentLevel(): Promise<CurrentLevel> {
     const n = this.save.level;
     let current = this.save.current;
-    if (!current || current.def.number !== n) {
-      current = { def: await this.makeLevel(n, 0), fails: 0, game: null };
+    if (!current || current.draft.request.number !== n) {
+      current = { draft: await this.drafts.get(this.draftRequest(n)), fails: 0, attempt: null };
       this.save.current = current;
     }
-    void this.drafts.get({ number: n + 1, assist: 0 });
+    void this.drafts.get(this.draftRequest(n + 1));
     return current;
   }
 
-  private async makeLevel(n: number, fails: number): Promise<LevelDef> {
-    const draft = await this.drafts.get({ number: n, assist: fails });
-    return finalizeLevel(draft, targetWinRate(this.save.director, planLevel(n).baseWinRate, fails));
+  /** A level of this player, for their style as it reads now. */
+  private draftRequest(n: number): DraftRequest {
+    return { seed: this.save.seed, number: n, style: twinOf(this.save.player.style) };
+  }
+
+  /**
+   * A new attempt on a fresh random board, finalized for the target of this moment: the difficulty setting,
+   * skill and failures so far. Difficulty is calibrated over many boards, not this one.
+   */
+  private startAttempt(current: CurrentLevel): Attempt {
+    const n = current.draft.request.number;
+    const { settings, player } = this.save;
+    const def = finalizeLevel(current.draft, targetWinRate(planLevel(n).baseWinRate, settings.difficulty, player.skill, current.fails));
+    const seed = randomSeed();
+    current.attempt = { game: createGame(def, seed), record: newRecord(seed) };
+    return current.attempt;
   }
 
   /** Straight into play: no level card in between, the HUD shows the goals and explains them on tap. */
@@ -129,10 +150,9 @@ export class GameApp {
     // Measured behind the curtain: draft wait, calibration, board build.
     await this.ui.curtain(() => timed('level', async () => {
       const current = await this.currentLevel();
-      // A fresh random board every attempt; difficulty is calibrated over many boards, not this one.
-      const game = current.game ?? createGame(current.def, (Math.random() * 2 ** 32) >>> 0);
-      current.game = game;
+      const game = (current.attempt ?? this.startAttempt(current)).game;
       this.game = game;
+      this.rest = null;
       perfContext({ level: game.level.number, board: `${game.board.cols}x${game.board.rows}` });
       this.view.inputEnabled = false;
       this.persist();
@@ -176,10 +196,14 @@ export class GameApp {
   private onSwap(a: Pos, b: Pos): void {
     const game = this.game;
     if (this.mode !== Mode.Play || !game) return;
+    const hint = this.view.hintShown;
     const swap = makeMove(game, a, b);
     if (!swap) return;
-    // Only a real move ends the hint; a rejected swap leaves it pulsing.
-    if (swap.valid) this.view.cancelHint();
+    if (swap.valid) {
+      // Only a real move ends the hint; a rejected swap leaves it pulsing.
+      this.view.cancelHint();
+      this.learn(game, a, b, hint);
+    }
     const anim = this.view.play([swap], (ev) => this.feedback(ev));
     this.swaps.add(anim);
     void anim.then(() => this.swaps.delete(anim));
@@ -201,6 +225,8 @@ export class GameApp {
       if (this.game !== game) break;
       const events = timed('advance', () => advance(game));
       if (!events) break;
+      const record = this.recordOf(game);
+      if (record) recordStep(record);
       this.ui.updateHud(game);
       this.updateInput();
       this.scene.tweens.speed = chainSpeed(game.cascade);
@@ -221,7 +247,50 @@ export class GameApp {
     if (!game || this.running === game || this.mode !== Mode.Play) return;
     if (game.status === 'won') await this.finishWin(game);
     else if (game.status === 'lost') this.showLose(game);
-    else this.view.armHint();
+    else {
+      this.rest = timed('options', () => moveOptions(game.board, goalsOf(game)));
+      this.thinkFrom = performance.now();
+      this.view.armHint();
+    }
+  }
+
+  /**
+   * A valid swap goes into the attempt record. Made on the calm board without a hint, it also shows
+   * how the player picks among all the moves there were: that teaches their style.
+   */
+  private learn(game: GameState, a: Pos, b: Pos, hint: boolean): void {
+    const now = performance.now();
+    const record = this.recordOf(game);
+    // makeMove already swapped the pieces; the cells are what the record needs.
+    if (record) recordMove(record, game.board, a, b, hint, now - this.thinkFrom);
+    this.thinkFrom = now;
+    const options = this.rest;
+    this.rest = null;
+    if (!options || hint) return;
+    const from = indexOf(game.board, a.r, a.c);
+    const to = indexOf(game.board, b.r, b.c);
+    const chosen = options.moves.findIndex(([i, j]) => (i === from && j === to) || (i === to && j === from));
+    if (chosen >= 0) observeMove(this.save.player.style, options, chosen);
+  }
+
+  private recordOf(game: GameState): AttemptRecord | null {
+    const attempt = this.save.current?.attempt;
+    return attempt?.game === game ? attempt.record : null;
+  }
+
+  /** Reports the attempt, then lets the player's skill learn from it. */
+  private endAttempt(game: GameState, end: AttemptEnd, left: number, stars: number): void {
+    const current = this.save.current;
+    const record = this.recordOf(game);
+    if (!current || !record) return;
+    const { player, settings } = this.save;
+    trackAttempt({ draft: current.draft, game, record, end, left, stars, fails: current.fails, difficulty: settings.difficulty, skill: player.skill });
+    player.skill = updateSkill(player.skill, {
+      won: end === AttemptEnd.Won,
+      predicted: game.level.targetWinRate,
+      movesLeftRatio: left / game.level.moves,
+      usedExtraMoves: game.extraMovesUsed,
+    });
   }
 
   private async finishWin(game: GameState): Promise<void> {
@@ -240,13 +309,7 @@ export class GameApp {
 
     const def = game.level;
     const stars = starsFor(game);
-    recordAttempt(this.save.director, {
-      level: def.number,
-      won: true,
-      predicted: def.targetWinRate,
-      movesLeftRatio: movesAtWin / def.moves,
-      usedExtraMoves: game.extraMovesUsed,
-    });
+    this.endAttempt(game, AttemptEnd.Won, movesAtWin, stars);
     this.save.stars[def.number - 1] = Math.max(this.save.stars[def.number - 1] ?? 0, stars);
     this.save.level = def.number + 1;
     this.save.current = null;
@@ -268,20 +331,14 @@ export class GameApp {
     this.ui.showLose(game, OFFER_EXTRA_MOVES && !game.extraMovesUsed && game.movesLeft === 0, EXTRA_MOVES);
   }
 
-  /** Ends the attempt as a failure: the director learns, the next attempt gets recalibrated. */
-  private async failLevel(): Promise<void> {
+  /** Ends the attempt as a failure; the next one is finalized with the failure counted. */
+  private failLevel(end: AttemptEnd): void {
     const current = this.save.current;
-    if (!current) return;
-    recordAttempt(this.save.director, {
-      level: current.def.number,
-      won: false,
-      predicted: current.def.targetWinRate,
-      movesLeftRatio: 0,
-      usedExtraMoves: current.game?.extraMovesUsed ?? false,
-    });
+    const game = current?.attempt?.game;
+    if (!current || !game) return;
+    this.endAttempt(game, end, game.movesLeft, 0);
     current.fails++;
-    current.game = null;
-    current.def = await this.makeLevel(current.def.number, current.fails);
+    current.attempt = null;
     this.game = null;
     this.persist();
   }
@@ -334,12 +391,12 @@ export class GameApp {
         this.resume();
         break;
       case Action.Restart:
-        if ((this.game?.movesMade ?? 0) > 0) await this.failLevel();
-        else if (this.save.current) this.save.current.game = null;
+        if ((this.game?.movesMade ?? 0) > 0) this.failLevel(AttemptEnd.Restart);
+        else if (this.save.current) this.save.current.attempt = null;
         await this.playLevel();
         break;
       case Action.Retry:
-        await this.failLevel();
+        this.failLevel(AttemptEnd.Lost);
         await this.playLevel();
         break;
       case Action.ExtraMoves:
@@ -354,7 +411,7 @@ export class GameApp {
         }
         break;
       case Action.Menu:
-        if (this.mode === Mode.Lost) await this.failLevel();
+        if (this.mode === Mode.Lost) this.failLevel(AttemptEnd.Lost);
         await this.ui.curtain(() => this.showTitle());
         break;
       case Action.Settings:
@@ -377,10 +434,15 @@ export class GameApp {
       case Action.BoardBigger:
         this.resizeBoard(action === Action.BoardBigger ? BoardSize.Step : -BoardSize.Step);
         break;
+      case Action.Easier:
+      case Action.Harder:
+        this.stepDifficulty(action === Action.Harder ? 1 : -1);
+        break;
       case Action.Reset:
         if (this.ui.confirmReset()) {
           this.save = defaultSave();
           this.game = null;
+          this.rest = null;
           this.applySettings();
           this.persist();
           this.ui.setTheme(1);
@@ -407,6 +469,15 @@ export class GameApp {
     const s = this.save.settings;
     s.boardSize = Math.min(BoardSize.Max, Math.max(BoardSize.Min, s.boardSize + delta));
     this.applySettings();
+    this.persist();
+    this.ui.showSettings(s);
+  }
+
+  /** Takes effect from the next attempt: the one in progress keeps its moves. */
+  private stepDifficulty(delta: number): void {
+    const s = this.save.settings;
+    const k = Math.min(DIFFICULTIES.length - 1, Math.max(0, DIFFICULTIES.indexOf(s.difficulty) + delta));
+    s.difficulty = DIFFICULTIES[k];
     this.persist();
     this.ui.showSettings(s);
   }
@@ -505,12 +576,17 @@ export class GameApp {
 
   private showDebug(): void {
     const current = this.save.current;
-    if (!this.debugEl || !current) return;
-    const d = current.def;
+    const d = current?.attempt?.game.level;
+    if (!this.debugEl || !current || !d) return;
+    const { player, settings } = this.save;
+    const built = current.draft.request.style;
+    const now = twinOf(player.style);
     this.debugEl.textContent = [
-      `L${d.number} ${d.kind}${d.intro ? ` +${d.intro}` : ''}`,
-      `p=${d.targetWinRate.toFixed(2)} colors=${d.colors} moves=${d.moves}`,
-      `fails=${current.fails} skill=${this.save.director.skill.toFixed(2)}`,
+      `L${d.number} ${d.kind}${d.intro ? ` +${d.intro}` : ''} v${current.draft.variant}`,
+      `p=${d.targetWinRate.toFixed(2)} ${settings.difficulty} colors=${d.colors} moves=${d.moves}`,
+      `fails=${current.fails} skill=${player.skill.toFixed(2)}`,
+      `built β=${built.precision} k=${built.bonus} craft=${built.craft}`,
+      `now β=${now.precision} k=${now.bonus} craft=${now.craft} (${player.style.moves} moves)`,
       `stars=${d.stars.join('/')}`,
     ].join('\n');
   }

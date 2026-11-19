@@ -9,7 +9,7 @@ import { BlastKind, type Board, type GameEvent, type LevelDef, LevelKind, Object
 
 /** Digits are colors, '.' is a hole, '#' a crate, '_' an empty cell. */
 function boardFrom(rows: string[], colors = 6): Board {
-  const b: Board = { rows: rows.length, cols: rows[0].length, colors, cells: [], nextId: 1, rng: 42, bias: null };
+  const b: Board = { rows: rows.length, cols: rows[0].length, colors, cells: [], nextId: 1, rng: 42 };
   for (const row of rows) {
     for (const ch of row) {
       b.cells.push({
@@ -45,7 +45,6 @@ function level(overrides: Partial<LevelDef> = {}): LevelDef {
     kind: LevelKind.Normal,
     intro: null,
     targetWinRate: 0.7,
-    assistBias: null,
     ...overrides,
   };
 }

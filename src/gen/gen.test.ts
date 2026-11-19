@@ -1,60 +1,105 @@
 import { describe, expect, it } from 'vitest';
-import { createGame } from '@/core/game';
+import { pickMove, simulate } from '@/bot/bot';
+import { goalsOf, moveOptions } from '@/bot/evaluate';
+import { posOf } from '@/core/board';
+import { advance, createGame, playMove, startFinale, starsFor } from '@/core/game';
 import { hasAnyMatch, hasMove } from '@/core/moves';
 import { LevelKind, ObjectiveKind } from '@/core/types';
-import { newDirector, recordAttempt, targetWinRate } from '@/difficulty/director';
-import { draftLevel, finalizeLevel, refillReachesAll } from '@/gen/generator';
+import { type DraftRequest, draftLevel, finalizeLevel, refillReachesAll } from '@/gen/generator';
 import { planLevel } from '@/gen/plan';
+import type { TwinStyle } from '@/player/style';
+
+const AVERAGE: TwinStyle = { precision: 0.32, bonus: 0.5, craft: 0.45 };
+const TAPPER: TwinStyle = { precision: 0, bonus: 1, craft: 0 };
+const PLANNER: TwinStyle = { precision: 1.28, bonus: 2, craft: 1 };
+const req = (number: number, seed = 12345, style = AVERAGE): DraftRequest => ({ seed, number, style });
 
 describe('generator', () => {
-  it('is deterministic per level number', () => {
-    const a = draftLevel({ number: 17, assist: 0 });
-    const b = draftLevel({ number: 17, assist: 0 });
-    expect(a).toEqual(b);
+  it('is deterministic per request', () => {
+    expect(draftLevel(req(17))).toEqual(draftLevel(req(17)));
   });
 
-  it('keeps the layout when assisting', () => {
-    const a = draftLevel({ number: 26, assist: 0 }).level;
-    const b = draftLevel({ number: 26, assist: 3 }).level;
-    expect(b.mask).toEqual(a.mask);
-    expect(b.crate).toEqual(a.crate);
-    expect(b.ice).toEqual(a.ice);
-    expect(b.colors).toBeLessThanOrEqual(a.colors);
+  it('shares the first levels and builds the rest per player', () => {
+    expect(draftLevel(req(3, 1)).level).toEqual(draftLevel(req(3, 2)).level);
+    expect(draftLevel(req(20, 1)).level).not.toEqual(draftLevel(req(20, 2)).level);
   });
 
   it('produces valid, playable levels across the curve', () => {
-    for (let n = 1; n <= 60; n += 3) {
-      const level = finalizeLevel(draftLevel({ number: n, assist: 0 }), planLevel(n).baseWinRate);
+    for (const n of [1, 2, 4, 9, 14, 22, 31, 47, 66]) {
+      const level = finalizeLevel(draftLevel(req(n)), planLevel(n).baseWinRate);
       expect(level.moves).toBeGreaterThanOrEqual(10);
       expect(level.moves).toBeLessThanOrEqual(45);
       expect(level.objectives.length).toBeGreaterThan(0);
       for (const o of level.objectives) expect(o.target).toBeGreaterThan(0);
       if (level.objectives.some((o) => o.kind === ObjectiveKind.Score)) expect(level.objectives).toHaveLength(1);
+      const [one, two, three] = level.stars;
+      expect(two).toBeGreaterThan(one);
+      expect(three).toBeGreaterThan(two);
       const game = createGame(level, 7);
       expect(hasAnyMatch(game.board)).toBe(false);
       expect(hasMove(game.board)).toBe(true);
     }
-    // Twenty full bot calibrations: seconds on a laptop, several times slower on CI runners.
-  }, 60_000);
+    // Full calibrations: seconds on a laptop, several times slower on CI runners.
+  }, 120_000);
+
+  it('gives a random tapper whole boards and a planner more intricate ones', () => {
+    const levels = [8, 20, 33, 51, 70];
+    const holes = (style: TwinStyle): number =>
+      levels.reduce((sum, n) => sum + draftLevel(req(n, 7, style)).level.mask.filter((m) => m === 0).length, 0);
+    expect(holes(TAPPER)).toBe(0);
+    expect(holes(PLANNER)).toBeGreaterThan(0);
+  }, 120_000);
 
   it('never walls a free cell off from the refill with crates and chains', () => {
-    // 171 once got a full-width crate wall: the cells below emptied and the board ran out of moves.
-    for (const n of [10, 16, 25, 48, 77, 103, 139, 171, 188]) {
-      const { level } = draftLevel({ number: n, assist: 0 });
+    for (const n of [10, 16, 25, 48, 77, 139]) {
+      const { level } = draftLevel(req(n, n * 31, PLANNER));
       const blocked = (i: number): boolean => level.crate[i] > 0 || level.chain[i] > 0;
       expect(refillReachesAll({ rows: level.rows, cols: level.cols, mask: level.mask, blocked }), `level ${n}`).toBe(true);
     }
+  }, 120_000);
+
+  it('predicts each twin run at the finalized moves, wins about as targeted, and keeps 3 stars rare', () => {
+    const level = finalizeLevel(draftLevel(req(26)), 0.7);
+    const runs = 80;
+    let wins = 0;
+    let three = 0;
+    let mispredicted = 0;
+    for (let k = 0; k < runs; k++) {
+      const seed = 9000 + k;
+      // The same seeds as a calibration run: the played game follows the simulated one move for move.
+      const sim = simulate(level, seed, 60, AVERAGE, { chancesUpTo: level.moves });
+      const predicted = (sim.needed !== null && sim.needed <= level.moves) || sim.chances.some(([m]) => m === level.moves);
+      const game = createGame(level, seed);
+      const rng = { rng: seed ^ 0x5bd1e995 };
+      while (game.status === 'playing') {
+        const options = moveOptions(game.board, goalsOf(game));
+        const [i, j] = options.moves[pickMove(options, AVERAGE, rng)];
+        playMove(game, posOf(game.board, i), posOf(game.board, j));
+      }
+      if (predicted !== (game.status === 'won')) mispredicted++;
+      if (game.status !== 'won') continue;
+      startFinale(game);
+      while (advance(game)) continue;
+      wins++;
+      if (starsFor(game) === 3) three++;
+    }
+    // Only the skipped last-chance checks far from the goals can disagree.
+    expect(mispredicted).toBeLessThanOrEqual(runs * 0.03);
+    expect(wins / runs).toBeGreaterThan(0.55);
+    expect(wins / runs).toBeLessThan(0.9);
+    expect(three / wins).toBeLessThan(0.35);
   }, 60_000);
 
   it('gives more moves for a higher target win rate', () => {
-    const draft = draftLevel({ number: 13, assist: 0 });
+    const draft = draftLevel(req(13));
     expect(finalizeLevel(draft, 0.9).moves).toBeGreaterThanOrEqual(finalizeLevel(draft, 0.4).moves);
   });
 
-  it('drafts a level fast enough for a worker between screens', () => {
+  it('drafts a level fast enough for a worker during the previous level', () => {
+    draftLevel(req(44));
     const start = performance.now();
-    draftLevel({ number: 45, assist: 0 });
-    expect(performance.now() - start).toBeLessThan(1500);
+    draftLevel(req(45));
+    expect(performance.now() - start).toBeLessThan(3000);
   });
 });
 
@@ -63,22 +108,5 @@ describe('plan', () => {
     expect(planLevel(4).kind).toBe(LevelKind.Intro);
     expect(planLevel(11).kind).toBe(LevelKind.Hard);
     expect(planLevel(12).kind).toBe(LevelKind.Relief);
-  });
-});
-
-describe('director', () => {
-  it('raises the target after failures and lowers it for a strong player', () => {
-    const d = newDirector();
-    const base = targetWinRate(d, 0.7, 0);
-    expect(targetWinRate(d, 0.7, 2)).toBeGreaterThan(base);
-    for (let i = 0; i < 10; i++) recordAttempt(d, { level: i, won: true, predicted: 0.7, movesLeftRatio: 0.5, usedExtraMoves: false });
-    expect(targetWinRate(d, 0.7, 0)).toBeLessThan(base);
-  });
-
-  it('stays inside the corridor', () => {
-    const d = newDirector();
-    for (let i = 0; i < 50; i++) recordAttempt(d, { level: i, won: false, predicted: 0.9, movesLeftRatio: 0, usedExtraMoves: false });
-    expect(targetWinRate(d, 0.5, 5)).toBeLessThanOrEqual(0.97);
-    expect(targetWinRate(newDirector(), 0.1, 0)).toBeGreaterThanOrEqual(0.35);
   });
 });

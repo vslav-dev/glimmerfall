@@ -33,7 +33,6 @@ export function createBoard(level: LevelDef, seed: number): Board {
     cells,
     nextId: 1,
     rng: seed,
-    bias: level.assistBias,
   };
   fillBoard(b);
   return b;

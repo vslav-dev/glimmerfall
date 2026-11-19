@@ -23,7 +23,8 @@ import {
 const PIECE_POINTS = 10;
 const LAYER_POINTS = 20;
 const MAX_MULTIPLIER = 5;
-const FINALE_CONVERSIONS = 12;
+/** Most moves the finale turns into specials; moves beyond it add nothing. */
+export const FINALE_CONVERSIONS = 12;
 const SPARK_PAIR_TARGETS = 4;
 
 const SPECIAL_BONUS: Record<Special, number> = {

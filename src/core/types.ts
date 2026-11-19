@@ -35,11 +35,6 @@ export interface Pos {
   c: number;
 }
 
-export interface SpawnBias {
-  color: number;
-  chance: number;
-}
-
 /** Plain, JSON-serializable board. Owns its RNG state and id counter so a saved board resumes exactly. */
 export interface Board {
   rows: number;
@@ -48,7 +43,6 @@ export interface Board {
   cells: Cell[];
   nextId: number;
   rng: number;
-  bias: SpawnBias | null;
 }
 
 export const ObjectiveKind = {
@@ -100,8 +94,6 @@ export interface LevelDef {
   intro: Mechanic | null;
   /** win probability the level was calibrated for */
   targetWinRate: number;
-  /** collect-objective color the refill leans towards while the player gets help */
-  assistBias: SpawnBias | null;
 }
 
 export const BlastKind = {
