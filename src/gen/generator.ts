@@ -6,7 +6,7 @@ import { type LevelPlan, planLevel } from '@/gen/plan';
 import type { TwinStyle } from '@/player/style';
 
 /** Bumped whenever the same request builds a different level: a replay needs the generator that built its level. */
-export const GEN_VERSION = 4;
+export const GEN_VERSION = 5;
 /** Levels everyone shares: the tutorial, and the first read of the player's style. */
 const COMMON_LEVELS = 5;
 /** How deliberate the shared levels assume the player to be. */

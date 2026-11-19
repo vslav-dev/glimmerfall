@@ -301,7 +301,8 @@ describe('game', () => {
     expect(run(50)).toBe('lost');
   });
 
-  it('the last chance keeps firing until no special is left, also those its cascades create', () => {
+  it('the last chance fires only the specials left on the board, not those its cascades create', () => {
+    let created = 0;
     for (const seed of [1, 2, 3, 4, 5]) {
       const game = createGame(level({ moves: 1, objectives: [{ kind: ObjectiveKind.Collect, target: 500, color: 1 }] }), seed);
       const kinds = [Special.LineH, Special.LineV, Special.Bomb, Special.Spark];
@@ -309,12 +310,18 @@ describe('game', () => {
         if (cell.piece && i % 7 === 0) cell.piece.special = kinds[i % kinds.length];
       });
       game.movesLeft = 0;
-      const types: string[] = [];
-      for (let step = advance(game); step; step = advance(game)) types.push(...step.map((e) => e.type));
-      expect(types.filter((t) => t === 'lastChance')).toHaveLength(1);
-      expect(game.board.cells.some((c) => c.piece && c.piece.special !== Special.None)).toBe(false);
+      const before = new Set(game.board.cells.flatMap((c) => (c.piece && c.piece.special !== Special.None ? [c.piece.id] : [])));
+      const events: GameEvent[] = [];
+      for (let step = advance(game); step; step = advance(game)) events.push(...step);
+      expect(events.filter((e) => e.type === 'lastChance')).toHaveLength(1);
+      const lights = events.filter((e) => e.type === 'light');
+      expect(lights).toHaveLength(1);
+      for (const p of lights[0].type === 'light' ? lights[0].pieces : []) expect(before.has(p.id)).toBe(true);
+      // Whatever specials the volley created are left standing.
+      created += game.board.cells.filter((c) => c.piece && c.piece.special !== Special.None && !before.has(c.piece.id)).length;
       expect(game.status).toBe('lost');
     }
+    expect(created).toBeGreaterThan(0);
   });
 
   it('without specials on the board, running out of moves is a plain loss', () => {

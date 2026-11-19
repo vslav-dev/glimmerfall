@@ -152,15 +152,16 @@ export function advance(state: GameState): GameEvent[] | null {
 }
 
 /**
- * Out of moves with goals left: the specials on the board are lit and go off one by one, like the finale,
- * until none is left, so specials born in their cascades go off too. Once per level.
+ * Out of moves with goals left: the specials left on the board are lit once and go off one by one, like the finale.
+ * Specials their cascades create stay unlit: the last chance spends what the player built, it adds nothing.
+ * A special hit by a blast still goes off, as always. Without specials there is no last chance. Once per level.
  * The bot plays by the same rule, so calibration already prices it into the move count.
  */
 function lastChance(state: GameState): GameEvent[] | null {
   if (state.lastChance) return null;
   state.lastChance = true;
   if (!state.board.cells.some((c) => c.piece && c.piece.special !== Special.None)) return null;
-  state.finale = FINALE_ROUNDS;
+  state.finale = 1;
   return [{ type: 'lastChance' }];
 }
 
