@@ -114,6 +114,7 @@ export function trackAttempt(r: AttemptReport): void {
     n: request.number,
     variant,
     style: [request.style.precision, request.style.bonus, request.style.craft],
+    pace: request.pace,
     difficulty: r.difficulty,
     fails: r.fails,
     skill: round2(r.skill),

@@ -5,6 +5,7 @@ import { posOf } from '@/core/board';
 import { createGame, playMove } from '@/core/game';
 import { type LevelDef, LevelKind, ObjectiveKind } from '@/core/types';
 import { Difficulty, targetWinRate, updateSkill } from '@/player/difficulty';
+import { paceFactor, updatePace } from '@/player/pace';
 import { newStyle, observeMove, type StyleState, twinOf } from '@/player/style';
 
 function level(): LevelDef {
@@ -91,5 +92,24 @@ describe('difficulty', () => {
     expect(skill).toBeLessThanOrEqual(1);
     // A stronger player gets a lower target: fewer moves.
     expect(targetWinRate(0.7, Difficulty.Normal, skill, 0)).toBeLessThan(0.7);
+  });
+});
+
+describe('pace', () => {
+  it('learns how much faster than the twin the player finishes, wins and losses alike', () => {
+    let pace = 0;
+    for (let k = 0; k < 30; k++) pace = updatePace(pace, 24, 12, 1);
+    expect(paceFactor(pace)).toBeCloseTo(2, 1);
+    // A loss halfway through 20 moves reads as 40 needed: slower than a twin that needs 24.
+    expect(updatePace(0, 24, 20, 0.5)).toBeLessThan(0);
+  });
+
+  it('ignores attempts that say too little, and stays bounded', () => {
+    expect(updatePace(0.2, 24, 2, 1)).toBe(0.2);
+    expect(updatePace(0.2, 24, 10, 0.1)).toBe(0.2);
+    expect(updatePace(0.2, null, 10, 1)).toBe(0.2);
+    let pace = 0;
+    for (let k = 0; k < 100; k++) pace = updatePace(pace, 60, 3, 1);
+    expect(paceFactor(pace)).toBeLessThanOrEqual(3);
   });
 });

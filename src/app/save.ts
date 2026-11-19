@@ -42,6 +42,8 @@ export interface PlayerState {
   style: StyleState;
   /** how much better than their twin bot the player does, in logit units */
   skill: number;
+  /** how much faster than their twin bot the player finishes, in log units */
+  pace: number;
 }
 
 export interface SaveData {
@@ -63,7 +65,7 @@ export function defaultSave(): SaveData {
     seed: randomSeed(),
     level: 1,
     stars: [],
-    player: { style: newStyle(), skill: 0 },
+    player: { style: newStyle(), skill: 0, pace: 0 },
     settings: {
       sound: true,
       haptics: true,
@@ -89,7 +91,8 @@ export async function loadSave(): Promise<SaveData> {
     return { ...defaults, level: data.level, stars: data.stars, settings };
   }
   if (data.version !== VERSION) return defaults;
-  return { ...defaults, ...data, settings };
+  // Player fields merge too: one added later starts from its default.
+  return { ...defaults, ...data, player: { ...defaults.player, ...data.player }, settings };
 }
 
 /** Writes are serialized so a slow write never lands after a newer one. */

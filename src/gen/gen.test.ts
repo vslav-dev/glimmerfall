@@ -12,7 +12,7 @@ import type { TwinStyle } from '@/player/style';
 const AVERAGE: TwinStyle = { precision: 0.32, bonus: 0.5, craft: 0.45 };
 const TAPPER: TwinStyle = { precision: 0, bonus: 1, craft: 0 };
 const PLANNER: TwinStyle = { precision: 1.28, bonus: 2, craft: 1 };
-const req = (number: number, seed = 12345, style = AVERAGE): DraftRequest => ({ seed, number, style });
+const req = (number: number, seed = 12345, style = AVERAGE, pace = 1): DraftRequest => ({ seed, number, style, pace });
 
 describe('generator', () => {
   it('is deterministic per request', () => {
@@ -88,6 +88,14 @@ describe('generator', () => {
     expect(wins / runs).toBeGreaterThan(0.55);
     expect(wins / runs).toBeLessThan(0.9);
     expect(three / wins).toBeLessThan(0.35);
+  }, 60_000);
+
+  it('grows the goals and the moves for a player faster than their twin', () => {
+    const own = finalizeLevel(draftLevel(req(22, 5, AVERAGE, 1)), 0.7);
+    const fast = finalizeLevel(draftLevel(req(22, 5, AVERAGE, 2)), 0.7);
+    const amount = (l: typeof own): number => l.objectives.reduce((sum, o) => sum + o.target, 0);
+    expect(fast.moves).toBeGreaterThan(own.moves);
+    expect(amount(fast)).toBeGreaterThan(amount(own));
   }, 60_000);
 
   it('gives more moves for a higher target win rate', () => {

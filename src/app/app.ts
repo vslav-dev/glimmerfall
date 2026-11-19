@@ -6,9 +6,10 @@ import { indexOf } from '@/core/board';
 import { addExtraMoves, advance, canAct, createGame, EXTRA_MOVES, makeMove, startFinale, starsFor } from '@/core/game';
 import { BlastKind, type GameEvent, type GameState, LevelKind, type Pos } from '@/core/types';
 import { LevelDrafts } from '@/gen/drafts';
-import { type DraftRequest, finalizeLevel } from '@/gen/generator';
+import { type DraftRequest, finalizeLevel, GEN_VERSION, twinMoves } from '@/gen/generator';
 import { planLevel } from '@/gen/plan';
 import { DIFFICULTIES, targetWinRate, updateSkill } from '@/player/difficulty';
+import { paceFactor, updatePace } from '@/player/pace';
 import { observeMove, twinOf } from '@/player/style';
 import { AttemptEnd, type AttemptRecord, newRecord, recordMove, recordStep, trackAttempt } from '@/telemetry/attempt';
 import { flushPerf, perfContext, timed } from '@/telemetry/perf';
@@ -118,8 +119,11 @@ export class GameApp {
   private async currentLevel(): Promise<CurrentLevel> {
     const n = this.save.level;
     let current = this.save.current;
-    if (!current || current.draft.request.number !== n) {
-      current = { draft: await this.drafts.get(this.draftRequest(n)), fails: 0, attempt: null };
+    // A level built by an older generator is rebuilt, unless an attempt on it is under way.
+    const stale = current && !current.attempt && current.draft.version !== GEN_VERSION;
+    if (!current || current.draft.request.number !== n || stale) {
+      const fails = current?.draft.request.number === n ? current.fails : 0;
+      current = { draft: await this.drafts.get(this.draftRequest(n)), fails, attempt: null };
       this.save.current = current;
     }
     void this.drafts.get(this.draftRequest(n + 1));
@@ -128,7 +132,8 @@ export class GameApp {
 
   /** A level of this player, for their style as it reads now. */
   private draftRequest(n: number): DraftRequest {
-    return { seed: this.save.seed, number: n, style: twinOf(this.save.player.style) };
+    const { player } = this.save;
+    return { seed: this.save.seed, number: n, style: twinOf(player.style), pace: paceFactor(player.pace) };
   }
 
   /**
@@ -278,7 +283,7 @@ export class GameApp {
     return attempt?.game === game ? attempt.record : null;
   }
 
-  /** Reports the attempt, then lets the player's skill learn from it. */
+  /** Reports the attempt, then lets the player's skill and pace learn from it. */
   private endAttempt(game: GameState, end: AttemptEnd, left: number, stars: number): void {
     const current = this.save.current;
     const record = this.recordOf(game);
@@ -291,6 +296,8 @@ export class GameApp {
       movesLeftRatio: left / game.level.moves,
       usedExtraMoves: game.extraMovesUsed,
     });
+    const progress = Math.min(...game.level.objectives.map((o, k) => game.progress[k] / o.target));
+    player.pace = updatePace(player.pace, twinMoves(current.draft, game.level), game.movesMade, progress);
   }
 
   private async finishWin(game: GameState): Promise<void> {
@@ -584,7 +591,7 @@ export class GameApp {
     this.debugEl.textContent = [
       `L${d.number} ${d.kind}${d.intro ? ` +${d.intro}` : ''} v${current.draft.variant}`,
       `p=${d.targetWinRate.toFixed(2)} ${settings.difficulty} colors=${d.colors} moves=${d.moves}`,
-      `fails=${current.fails} skill=${player.skill.toFixed(2)}`,
+      `fails=${current.fails} skill=${player.skill.toFixed(2)} pace=${paceFactor(player.pace)} (built ${current.draft.request.pace})`,
       `built β=${built.precision} k=${built.bonus} craft=${built.craft}`,
       `now β=${now.precision} k=${now.bonus} craft=${now.craft} (${player.style.moves} moves)`,
       `stars=${d.stars.join('/')}`,

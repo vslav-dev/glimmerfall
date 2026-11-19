@@ -6,7 +6,7 @@ import { type LevelPlan, planLevel } from '@/gen/plan';
 import type { TwinStyle } from '@/player/style';
 
 /** Bumped whenever the same request builds a different level: a replay needs the generator that built its level. */
-export const GEN_VERSION = 2;
+export const GEN_VERSION = 3;
 /** Levels everyone shares: the tutorial, and the first read of the player's style. */
 const COMMON_LEVELS = 5;
 /** How deliberate the shared levels assume the player to be. */
@@ -21,9 +21,11 @@ const PROBE_SIMS = 8;
 const SIMS = 48;
 /** Won runs that also measure the finale. */
 const FINALE_RUNS = 8;
-const SIM_MAX_MOVES = 60;
-const MIN_MOVES = 10;
-const MAX_MOVES = 45;
+const SIM_MAX_MOVES = 64;
+const MIN_MOVES = 14;
+const MAX_MOVES = 50;
+/** Twin length a level is tuned to at most, so a slow twin still fits the move cap with room for the target win rate. */
+const MAX_TWIN_LENGTH = 40;
 const MIN_COLORS = 4;
 /** Score-goal levels can never be completed early during calibration. */
 const UNREACHABLE = Number.MAX_SAFE_INTEGER;
@@ -37,6 +39,8 @@ export interface DraftRequest {
   number: number;
   /** the player's style the level is built and calibrated for */
   style: TwinStyle;
+  /** how many times fewer moves than the twin the player needs: goals grow so the player's level lasts its length */
+  pace: number;
 }
 
 /** One twin run of a goal level: what it takes to win with a given number of moves. */
@@ -62,6 +66,8 @@ export interface Calibration {
 }
 
 export interface LevelDraft {
+  /** the generator that built it */
+  version: number;
   request: DraftRequest;
   /** which candidate layout won */
   variant: number;
@@ -79,12 +85,14 @@ export function draftLevel(req: DraftRequest): LevelDraft {
   // A new mechanic is introduced on its plain layout: the lesson matters more than the fit.
   const count = common || plan.intro ? 1 : CANDIDATES;
 
+  // The twin plays slower or faster than the player: its length is the player's, scaled by their pace.
+  const length = Math.min(MAX_TWIN_LENGTH, Math.round(playerLength(n) * req.pace));
   let best: LevelDef | null = null;
   let bestFit = -Infinity;
   let variant = 0;
   for (let v = 0; v < count; v++) {
-    const level = buildLayout(n, plan, hashSeed(seed, n, v), craft);
-    const twin = shapeGoals(level, req.style, hashSeed(seed, n, v, 1));
+    const level = buildLayout(n, plan, hashSeed(seed, n, v), craft, length);
+    const twin = shapeGoals(level, req.style, length, hashSeed(seed, n, v, 1));
     if (count === 1) {
       best = level;
       break;
@@ -96,7 +104,7 @@ export function draftLevel(req: DraftRequest): LevelDraft {
       variant = v;
     }
   }
-  return { request: req, variant, level: best!, calibration: calibrate(best!, req.style, hashSeed(seed, n, 3)) };
+  return { version: GEN_VERSION, request: req, variant, level: best!, calibration: calibrate(best!, req.style, hashSeed(seed, n, 3)) };
 }
 
 /** Picks the moves (or the score goal) so the twin wins with the requested probability, and sets the stars. */
@@ -139,6 +147,17 @@ function finalScore(run: CalibrationRun, moves: number, finale: number): number 
   return run.chances.find(([m]) => m === moves)?.[1] ?? null;
 }
 
+/** Moves the twin typically needs to complete the finalized level; null when most of its runs never do. */
+export function twinMoves(draft: LevelDraft, level: LevelDef): number | null {
+  const cal = draft.calibration;
+  if (cal.fixedMoves > 0) {
+    const perMove = quantile(cal.scores, 0.5) / cal.fixedMoves;
+    return perMove > 0 ? level.objectives[0].target / perMove : null;
+  }
+  const typical = median(cal.runs.map((r) => r.needed ?? Infinity));
+  return Number.isFinite(typical) ? typical : null;
+}
+
 /** Index into ascending results that leaves `rate` of the runs winning. */
 function rankOf(rate: number, count: number): number {
   return Math.min(count - 1, Math.max(0, Math.ceil(rate * count) - 1));
@@ -157,8 +176,13 @@ function isScoreLevel(level: LevelDef): boolean {
   return level.objectives.some((o) => o.kind === ObjectiveKind.Score);
 }
 
+/** Moves the player is meant to spend on a goal level: a level is a stay, not a few quick swaps. */
+function playerLength(n: number): number {
+  return 18 + Math.min(10, Math.floor(n / 5));
+}
+
 function fixedMovesOf(n: number): number {
-  return 16 + Math.min(10, Math.floor(n / 8));
+  return 20 + Math.min(10, Math.floor(n / 8));
 }
 
 /** `full`: the final calibration, which also measures the finale and looks for last-chance wins. */
@@ -174,10 +198,9 @@ function efficiency(level: LevelDef, r: SimResult): number {
   return r.needed === null ? 0 : 1 / r.needed;
 }
 
-/** Tunes the goals so the twin's typical run lasts the intended level length. Returns the twin's efficiencies. */
-function shapeGoals(level: LevelDef, style: BotStyle, seed: number): number[] {
+/** Tunes the goals so the twin's typical run lasts `length` moves. Returns the twin's efficiencies. */
+function shapeGoals(level: LevelDef, style: BotStyle, length: number, seed: number): number[] {
   if (isScoreLevel(level)) return runs(level, style, fixedMovesOf(level.number), SHAPE_SIMS, seed).map((r) => efficiency(level, r));
-  const length = 15 + Math.min(10, Math.floor(level.number / 5));
   let results = runs(level, style, SIM_MAX_MOVES, SHAPE_SIMS, seed);
   for (let pass = 0; pass < 2 && adjustLength(level, medianNeeded(results), length); pass++) {
     results = runs(level, style, SIM_MAX_MOVES, SHAPE_SIMS, seed);
@@ -257,8 +280,9 @@ function adjustLength(level: LevelDef, median: number, length: number): boolean 
 /**
  * One candidate layout with goals. `craft` (0 random taps … 1 planning) sets how intricate it gets:
  * holes in the board, crate shelves, chains, thick layers, a sixth color, double goals.
+ * `length`, the twin's intended moves, sizes the crate and ice goals: their amount is the layout itself.
  */
-function buildLayout(n: number, plan: LevelPlan, seed: number, craft: number): LevelDef {
+function buildLayout(n: number, plan: LevelPlan, seed: number, craft: number, length: number): LevelDef {
   const shapeRng: RngHolder = { rng: hashSeed(seed, 11) };
   const blockRng: RngHolder = { rng: hashSeed(seed, 22) };
   const goalRng: RngHolder = { rng: hashSeed(seed, 33) };
@@ -278,9 +302,9 @@ function buildLayout(n: number, plan: LevelPlan, seed: number, craft: number): L
   const chain = new Array<number>(size).fill(0);
   const grid: Grid = { rows, cols, mask, blocked: (i) => crate[i] > 0 || chain[i] > 0 };
   if (goals.includes(ObjectiveKind.Crate) || (plan.mechanics.has(Mechanic.Crate) && n >= 25 && random(blockRng) < 0.6 * craft)) {
-    placeCrates(grid, crate, n, craft, blockRng);
+    placeCrates(grid, crate, n, craft, length, blockRng);
   }
-  if (goals.includes(ObjectiveKind.Ice)) placeIce(grid, ice, crate, n, craft, blockRng);
+  if (goals.includes(ObjectiveKind.Ice)) placeIce(grid, ice, crate, n, craft, length, blockRng);
   if (plan.intro === Mechanic.Chain || (plan.mechanics.has(Mechanic.Chain) && random(blockRng) < 0.25 + 0.4 * craft)) {
     placeChains(grid, chain, crate, n, craft, blockRng);
   }
@@ -468,7 +492,10 @@ export function refillReachesAll(grid: Grid): boolean {
   return true;
 }
 
-function placeCrates(grid: Grid, crate: number[], n: number, craft: number, h: RngHolder): void {
+/** Twin length the base amounts of crates and ice were set for; longer levels get proportionally more. */
+const LAYER_LENGTH = 18;
+
+function placeCrates(grid: Grid, crate: number[], n: number, craft: number, length: number, h: RngHolder): void {
   const cap = 1 + Math.round(2 * craft);
   const strength = (): number => Math.min(cap, n < 15 ? 1 : n < 40 ? 1 + randInt(h, 2) : 1 + randInt(h, 3));
   const half = Math.ceil(grid.cols / 2);
@@ -479,16 +506,17 @@ function placeCrates(grid: Grid, crate: number[], n: number, craft: number, h: R
     const s = strength();
     for (let c = 0; c < width; c++) setBlocker(grid, crate, r, c, s);
   }
-  const target = 6 + Math.min(12, Math.floor(n / 5));
+  // Capped well below the board: the refill check refuses crates that would wall cells off anyway.
+  const target = Math.min(Math.round(grid.rows * grid.cols * 0.4), Math.round((6 + Math.min(12, Math.floor(n / 5))) * (length / LAYER_LENGTH)));
   for (let guard = 0; guard < 100 && crate.filter(Boolean).length < target; guard++) {
     const r = 2 + randInt(h, Math.max(1, grid.rows - 3));
     setBlocker(grid, crate, r, randInt(h, half), strength());
   }
 }
 
-function placeIce(grid: Grid, ice: number[], crate: number[], n: number, craft: number, h: RngHolder): void {
+function placeIce(grid: Grid, ice: number[], crate: number[], n: number, craft: number, length: number, h: RngHolder): void {
   const { rows, cols } = grid;
-  const fraction = 0.22 + Math.min(0.25, n / 400);
+  const fraction = Math.min(0.5, (0.22 + Math.min(0.25, n / 400)) * Math.sqrt(length / LAYER_LENGTH));
   const cr = (rows - 1) / 2;
   const cc = (cols - 1) / 2;
   const patterns: ((r: number, c: number) => boolean)[] = [
