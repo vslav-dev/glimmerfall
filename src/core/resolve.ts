@@ -140,17 +140,22 @@ function stepInto(b: Board, swap: PendingSwap | null, cascadeLevel: number, scor
   return true;
 }
 
-/** The oldest lit special still on the board goes off; lit ones that were matched meanwhile are gone already. */
+/**
+ * The topmost due special goes off (leftmost on a tie), so a field of lit specials burns from the top down
+ * instead of the upper ones falling into the blasts below. Lit ones matched meanwhile are gone already.
+ */
 function fireNext(ctx: Ctx, due: number): boolean {
-  for (let k = 0; k < due; k++) {
-    const id = ctx.fuse.shift()!;
+  const live = ctx.fuse.splice(0, due).flatMap((id) => {
     const i = ctx.b.cells.findIndex((cell) => cell.piece?.id === id);
-    if (i === -1) continue;
-    unchain(ctx, i, 0);
-    removePiece(ctx, i, 0, -1, true);
-    return true;
-  }
-  return false;
+    return i === -1 ? [] : [{ id, i }];
+  });
+  if (live.length === 0) return false;
+  // Row-major cells: the smallest index is the topmost, then leftmost.
+  const next = live.reduce((top, s) => (s.i < top.i ? s : top));
+  ctx.fuse.unshift(...live.filter((s) => s !== next).map((s) => s.id));
+  unchain(ctx, next.i, 0);
+  removePiece(ctx, next.i, 0, -1, true);
+  return true;
 }
 
 function newCtx(b: Board, step: Step, scorer: TargetScorer, cascadeLevel: number, fuse: number[]): Ctx {

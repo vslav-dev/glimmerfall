@@ -143,6 +143,19 @@ describe('fuse', () => {
     expect(b.cells.some((cell) => cell.piece?.id === col.id)).toBe(false);
   });
 
+  it('lit specials go off from the top down, whatever order they were lit in', () => {
+    const b = boardFrom(['01234', '12340', '23401', '34012', '40123']);
+    const low = b.cells[indexOf(b, 4, 0)].piece!;
+    const high = b.cells[indexOf(b, 1, 4)].piece!;
+    low.special = Special.LineH;
+    high.special = Special.LineH;
+    const fuse = [low.id, high.id];
+
+    const first = resolveStep(b, null, 0, noTarget, fuse)!;
+    expect(lineBlasts(first.events).map((x) => x.origin)).toEqual([{ r: 1, c: 4 }]);
+    expect(fuse).toEqual([low.id]);
+  });
+
   it('prism + line lights the whole color; the lines go off one per step', () => {
     const game = createGame(level({ rows: 5, cols: 5 }), 7);
     game.board = boardFrom(['01234', '12340', '23401', '34012', '40123']);
