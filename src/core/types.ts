@@ -92,7 +92,7 @@ export interface LevelDef {
   stars: [number, number, number];
   kind: LevelKind;
   intro: Mechanic | null;
-  /** win probability the level was calibrated for */
+  /** the twin bot's win rate at these moves: what the level was calibrated for, and the prediction the player is measured against */
   targetWinRate: number;
 }
 

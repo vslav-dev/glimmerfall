@@ -3,6 +3,7 @@ import { advance, createGame, makeMove, startFinale } from '@/core/game';
 import type { Board, GameState, LevelDef, Pos } from '@/core/types';
 import { GEN_VERSION, type LevelDraft } from '@/gen/generator';
 import type { Difficulty } from '@/player/difficulty';
+import type { PlayerModel } from '@/player/model';
 import { track } from '@/telemetry/telemetry';
 
 /**
@@ -10,6 +11,7 @@ import { track } from '@/telemetry/telemetry';
  * the player's moves rebuild every board, cascade and score offline. Each move also keeps when it was made
  * (board steps since the previous move: swaps are allowed mid-cascade), how long the player thought,
  * and whether a hint was showing. Sent as one `attempt` event: a summary always, the moves for a share of players.
+ * Swaps that matched nothing are only counted: they show what the player misreads, and change no state.
  */
 export interface AttemptRecord {
   /** seed of the starting board */
@@ -18,6 +20,8 @@ export interface AttemptRecord {
   moves: number[];
   /** board steps played since the last move */
   steps: number;
+  /** swaps tried that matched nothing */
+  bad: number;
 }
 
 export const AttemptEnd = {
@@ -39,7 +43,7 @@ const DIRECTIONS: readonly Pos[] = [
 ];
 
 export function newRecord(board: number): AttemptRecord {
-  return { board, moves: [], steps: 0 };
+  return { board, moves: [], steps: 0, bad: 0 };
 }
 
 /** A board step was played (a clear, a shuffle, the last chance). */
@@ -67,7 +71,8 @@ export function replayAttempt(level: LevelDef, rec: Pick<AttemptRecord, 'board' 
     makeMove(game, a, { r: a.r + d.r, c: a.c + d.c });
   }
   while (advance(game)) continue;
-  if (game.status === 'won') {
+  // As in the app: the finale runs only with moves left over.
+  if (game.status === 'won' && game.movesLeft > 0) {
     startFinale(game);
     while (advance(game)) continue;
   }
@@ -97,28 +102,36 @@ export interface AttemptReport {
   stars: number;
   fails: number;
   difficulty: Difficulty;
-  skill: number;
+  /** the win rate the attempt was finalized for, before the twin's own rate at the chosen moves */
+  target: number;
+  /** the 3-star quantile it was finalized with */
+  threeStars: number;
+  model: PlayerModel;
 }
 
 /**
- * Everything that rebuilds the level (generator version, player seed, number, the style it was built for),
- * how it was finalized, and how the attempt went.
+ * Everything that rebuilds the level: the generator that built it, the player seed, number, the twin it was
+ * built for, and the exact numbers it was finalized with. Then the twin's prediction, the model as it stood,
+ * and how the attempt went. `rules` is the game code that played it: replays need the same.
  */
 export function trackAttempt(r: AttemptReport): void {
   const { request, variant } = r.draft;
   const { game } = r;
   const level = game.level;
   track('attempt', {
-    gen: GEN_VERSION,
+    gen: r.draft.version,
+    rules: GEN_VERSION,
     seed: request.seed,
     n: request.number,
     variant,
-    style: [request.style.precision, request.style.bonus, request.style.craft],
+    style: request.style,
     pace: request.pace,
     difficulty: r.difficulty,
     fails: r.fails,
-    skill: round2(r.skill),
+    target: r.target,
+    threeStars: r.threeStars,
     p: round2(level.targetWinRate),
+    model: [round2(r.model.strength), round2(r.model.rank), r.model.moves],
     moves: level.moves,
     board: r.record.board,
     end: r.end,
@@ -127,6 +140,7 @@ export function trackAttempt(r: AttemptReport): void {
     score: game.score,
     stars: r.stars,
     goals: level.objectives.map((o, k) => round2(game.progress[k] / o.target)),
+    bad: r.record.bad,
     rec: request.seed % 100 < REPLAY_PERCENT ? encodeMoves(r.record.moves) : null,
   });
 }

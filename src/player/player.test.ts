@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { type BotStyle, pickMove, STRONG_BOT } from '@/bot/bot';
-import { goalsOf, moveOptions } from '@/bot/evaluate';
+import { type BotStyle, EXPERT_BOT, pickMove, RANDOM_BOT } from '@/bot/bot';
+import { goalsOf, moveOptions } from '@/bot/features';
 import { posOf } from '@/core/board';
 import { createGame, playMove } from '@/core/game';
 import { type LevelDef, LevelKind, ObjectiveKind } from '@/core/types';
-import { Difficulty, targetWinRate, updateSkill } from '@/player/difficulty';
+import { Difficulty, targetWinRate } from '@/player/difficulty';
 import { paceFactor, updatePace } from '@/player/pace';
-import { newStyle, observeMove, type StyleState, twinOf } from '@/player/style';
+import { likelihood, newModel, observeMove, observeOutcome, type PlayerModel, twinOf } from '@/player/model';
+import { initialThreeStars, updateThreeStars } from '@/player/stars';
 
 function level(): LevelDef {
   const size = 64;
@@ -28,70 +29,86 @@ function level(): LevelDef {
   };
 }
 
-/** A player who plays like `style` for `moves` moves. */
-function observed(style: BotStyle, moves: number): StyleState {
-  const s = newStyle();
+/** A player who plays like `style` for `moves` moves, and the model learned from them. */
+function learned(style: BotStyle, moves: number): { model: PlayerModel; before: number; after: number } {
+  const model = newModel();
   const game = createGame(level(), 11);
   const rng = { rng: 5 };
+  let last = -1;
+  let before = 0;
+  let after = 0;
   for (let k = 0; k < moves; k++) {
-    const options = moveOptions(game.board, goalsOf(game));
+    const options = moveOptions(game.board, goalsOf(game), last);
     const m = pickMove(options, style, rng);
-    observeMove(s, options, m);
+    const p = Math.log(likelihood(model, options, m));
+    if (k < moves / 4) before += p;
+    if (k >= (moves * 3) / 4) after += p;
+    observeMove(model, options, m);
     const [i, j] = options.moves[m];
     playMove(game, posOf(game.board, i), posOf(game.board, j));
+    last = j;
   }
-  return s;
+  return { model, before, after };
 }
 
-describe('style', () => {
-  it('a new player starts in the middle', () => {
-    const twin = twinOf(newStyle());
-    expect(twin.craft).toBeGreaterThan(0.25);
-    expect(twin.craft).toBeLessThan(0.65);
+describe('player model', () => {
+  it('a new player starts from the population taste, at no extra strength', () => {
+    const twin = twinOf(newModel());
+    expect(twin.strength).toBe(0);
+    expect(twin.craft).toBeGreaterThan(0.2);
+    expect(twin.craft).toBeLessThan(0.4);
   });
 
-  it('tells a random tapper from a deliberate player', () => {
-    const random = twinOf(observed({ precision: 0, bonus: 0 }, 150));
-    const strong = twinOf(observed(STRONG_BOT, 150));
-    expect(random.precision).toBeLessThan(0.1);
-    expect(random.craft).toBeLessThan(0.2);
-    expect(strong.precision).toBeGreaterThan(0.6);
-    expect(strong.craft).toBeGreaterThan(0.6);
+  it('tells a random tapper from an expert, and predicts the expert better as it learns', () => {
+    const random = learned(RANDOM_BOT, 300);
+    const expert = learned(EXPERT_BOT, 300);
+    expect(random.model.rank).toBeGreaterThan(0.4);
+    expect(twinOf(random.model).craft).toBeLessThan(0.2);
+    expect(expert.model.rank).toBeLessThan(0.15);
+    expect(twinOf(expert.model).craft).toBeGreaterThan(0.7);
+    expect(expert.after).toBeGreaterThan(expert.before);
   });
 
-  it('recovers a middle precision', () => {
-    const twin = twinOf(observed({ precision: 0.32, bonus: 1 }, 300));
-    expect(twin.precision).toBeGreaterThan(0.15);
-    expect(twin.precision).toBeLessThan(0.7);
+  it('strength follows outcomes against the prediction, and bounds itself', () => {
+    const model = newModel();
+    for (let k = 0; k < 20; k++) observeOutcome(model, true, 0.5);
+    expect(model.strength).toBeGreaterThan(0.5);
+    for (let k = 0; k < 200; k++) observeOutcome(model, true, 0);
+    expect(model.strength).toBe(1);
+    for (let k = 0; k < 200; k++) observeOutcome(model, false, 1);
+    expect(model.strength).toBe(-1);
+    // Random taps mixed in: the twin plays less deliberately.
+    expect(twinOf(model).craft).toBe(0);
   });
 });
 
 describe('difficulty', () => {
   it('orders the settings and helps after failures', () => {
-    const easy = targetWinRate(0.7, Difficulty.Easy, 0, 0);
-    const normal = targetWinRate(0.7, Difficulty.Normal, 0, 0);
-    const hard = targetWinRate(0.7, Difficulty.Hard, 0, 0);
+    const easy = targetWinRate(0.7, Difficulty.Easy, 0);
+    const normal = targetWinRate(0.7, Difficulty.Normal, 0);
+    const hard = targetWinRate(0.7, Difficulty.Hard, 0);
     expect(normal).toBeCloseTo(0.7);
     expect(easy).toBeGreaterThan(0.83);
     expect(hard).toBeCloseTo(0.5, 1);
-    expect(targetWinRate(0.5, Difficulty.Hard, 0, 2)).toBeGreaterThan(targetWinRate(0.5, Difficulty.Hard, 0, 0));
+    expect(targetWinRate(0.5, Difficulty.Hard, 2)).toBeGreaterThan(targetWinRate(0.5, Difficulty.Hard, 0));
   });
 
   it('stays inside the corridor', () => {
-    expect(targetWinRate(0.95, Difficulty.Easy, -1, 6)).toBeLessThanOrEqual(0.97);
-    expect(targetWinRate(0.3, Difficulty.Hard, 1, 0)).toBeGreaterThanOrEqual(0.25);
+    expect(targetWinRate(0.95, Difficulty.Easy, 6)).toBeLessThanOrEqual(0.97);
+    expect(targetWinRate(0.3, Difficulty.Hard, 0)).toBeGreaterThanOrEqual(0.25);
   });
+});
 
-  it('skill rises with wins, falls with losses, and is bounded', () => {
-    const win = { won: true, predicted: 0.7, movesLeftRatio: 0.3, usedExtraMoves: false };
-    const loss = { ...win, won: false, movesLeftRatio: 0 };
-    expect(updateSkill(0, win)).toBeGreaterThan(0);
-    expect(updateSkill(0, loss)).toBeLessThan(0);
-    let skill = 0;
-    for (let k = 0; k < 100; k++) skill = updateSkill(skill, win);
-    expect(skill).toBeLessThanOrEqual(1);
-    // A stronger player gets a lower target: fewer moves.
-    expect(targetWinRate(0.7, Difficulty.Normal, skill, 0)).toBeLessThan(0.7);
+describe('stars', () => {
+  it('raises the 3-star bar for a player who collects them too often, lowers it otherwise, within bounds', () => {
+    let q = initialThreeStars();
+    for (let k = 0; k < 10; k++) q = updateThreeStars(q, true);
+    expect(q).toBeGreaterThan(initialThreeStars());
+    let low = initialThreeStars();
+    for (let k = 0; k < 10; k++) low = updateThreeStars(low, false);
+    expect(low).toBeLessThan(initialThreeStars());
+    for (let k = 0; k < 1000; k++) q = updateThreeStars(q, true);
+    expect(q).toBeLessThanOrEqual(0.97);
   });
 });
 

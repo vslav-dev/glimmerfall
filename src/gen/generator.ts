@@ -1,12 +1,12 @@
-import { RANDOM_BOT, type SimResult, simulate, STRONG_BOT, type BotStyle } from '@/bot/bot';
+import { type BotStyle, EXPERT_BOT, RANDOM_BOT, type SimResult, simulate } from '@/bot/bot';
 import { FINALE_CONVERSIONS } from '@/core/resolve';
 import { hashSeed, pick, randInt, random, type RngHolder } from '@/core/rng';
 import { type LevelDef, LevelKind, Mechanic, NO_COLOR, type Objective, ObjectiveKind } from '@/core/types';
 import { type LevelPlan, planLevel } from '@/gen/plan';
-import type { TwinStyle } from '@/player/style';
+import type { TwinStyle } from '@/player/model';
 
 /** Bumped whenever the same request builds a different level: a replay needs the generator that built its level. */
-export const GEN_VERSION = 6;
+export const GEN_VERSION = 7;
 /** Levels everyone shares: the tutorial, and the first read of the player's style. */
 const COMMON_LEVELS = 5;
 /** How deliberate the shared levels assume the player to be. */
@@ -15,6 +15,8 @@ const COMMON_CRAFT = 0.3;
 const CANDIDATES = 3;
 /** Twin runs per candidate while its goals are tuned to the intended length. */
 const SHAPE_SIMS = 12;
+/** Retuning rounds at most; each stops early once the length is within 15 %. */
+const SHAPE_PASSES = 4;
 /** Strong and random bot runs per candidate: how much skill matters on it. */
 const PROBE_SIMS = 8;
 /** Twin runs of the chosen layout that set the moves and the stars: ±7 % on the win rate. */
@@ -29,15 +31,18 @@ const MAX_TWIN_LENGTH = 40;
 const MIN_COLORS = 4;
 /** Score-goal levels can never be completed early during calibration. */
 const UNREACHABLE = Number.MAX_SAFE_INTEGER;
-/** Quantiles of the twin's winning final scores: 3 stars about once in 6–7 wins, whatever the difficulty. */
-const TWO_STARS = 0.4;
-const THREE_STARS = 0.85;
+/**
+ * Quantile of the twin's winning final scores for 3 stars: about once in 6–7 wins, whatever the difficulty.
+ * The player model nudges it when the real rate drifts; 2 stars sit a fixed step below.
+ */
+export const THREE_STARS = 0.85;
+const TWO_STARS_BELOW = 0.45;
 
 export interface DraftRequest {
   /** the player's own seed: levels after the shared ones differ per player */
   seed: number;
   number: number;
-  /** the player's style the level is built and calibrated for */
+  /** the twin bot the level is built and calibrated for */
   style: TwinStyle;
   /** how many times fewer moves than the twin the player needs: goals grow so the player's level lasts its length */
   pace: number;
@@ -107,18 +112,23 @@ export function draftLevel(req: DraftRequest): LevelDraft {
   return { version: GEN_VERSION, request: req, variant, level: best!, calibration: calibrate(best!, req.style, hashSeed(seed, n, 3)) };
 }
 
-/** Picks the moves (or the score goal) so the twin wins with the requested probability, and sets the stars. */
-export function finalizeLevel(draft: LevelDraft, targetWinRate: number): LevelDef {
+/**
+ * Picks the moves (or the score goal) so the twin wins about as often as targeted, and sets the stars.
+ * The level's `targetWinRate` becomes the twin's own win rate at the chosen moves: the prediction the player is measured against.
+ */
+export function finalizeLevel(draft: LevelDraft, targetWinRate: number, threeStars = THREE_STARS): LevelDef {
   const level: LevelDef = structuredClone(draft.level);
   const cal = draft.calibration;
-  level.targetWinRate = targetWinRate;
+  const quantiles: [number, number] = [Math.max(0.1, threeStars - TWO_STARS_BELOW), threeStars];
 
   if (cal.fixedMoves > 0) {
     const { scores } = cal;
     const scoreGoal = level.objectives[0];
     scoreGoal.target = roundTo(Math.max(500, scores[scores.length - 1 - rankOf(targetWinRate, scores.length)]), 50);
     level.moves = cal.fixedMoves;
-    level.stars = starsFrom(scoreGoal.target, scores.filter((s) => s >= scoreGoal.target));
+    const winners = scores.filter((s) => s >= scoreGoal.target);
+    level.targetWinRate = winners.length / scores.length;
+    level.stars = starsFrom(scoreGoal.target, winners, quantiles);
     return level;
   }
 
@@ -134,7 +144,9 @@ export function finalizeLevel(draft: LevelDraft, targetWinRate: number): LevelDe
     }
   }
   level.moves = best;
-  level.stars = starsFrom(0, winners(best).sort((a, b) => a - b));
+  const finals = winners(best).sort((a, b) => a - b);
+  level.targetWinRate = finals.length / cal.runs.length;
+  level.stars = starsFrom(0, finals, quantiles);
   return level;
 }
 
@@ -165,9 +177,9 @@ function rankOf(rate: number, count: number): number {
 }
 
 /** Star thresholds from the twin's winning final scores, ascending; `first` is the one-star score. */
-function starsFrom(first: number, winners: number[]): [number, number, number] {
-  const two = Math.max(first + 50, 100, roundTo(quantile(winners, TWO_STARS), 50));
-  const three = Math.max(two + 50, roundTo(quantile(winners, THREE_STARS), 50));
+function starsFrom(first: number, winners: number[], [twoAt, threeAt]: [number, number]): [number, number, number] {
+  const two = Math.max(first + 50, 100, roundTo(quantile(winners, twoAt), 50));
+  const three = Math.max(two + 50, roundTo(quantile(winners, threeAt), 50));
   return [first, two, three];
 }
 
@@ -187,24 +199,47 @@ function fixedMovesOf(n: number): number {
 }
 
 /** `full`: the final calibration, which also measures the finale and looks for last-chance wins. */
-function runs(level: LevelDef, style: BotStyle, moves: number, count: number, seed: number, full = false): SimResult[] {
+const RunKind = {
+  /** play only: how many moves the goals take */
+  Play: 'play',
+  /** up to the first move count that wins, the last chance included: a level's real length */
+  Length: 'length',
+  /** everything finalizing needs: every winning move count, and the finale */
+  Full: 'full',
+} as const;
+type RunKind = (typeof RunKind)[keyof typeof RunKind];
+
+function runs(level: LevelDef, style: BotStyle, moves: number, count: number, seed: number, kind: RunKind = RunKind.Play): SimResult[] {
   return Array.from({ length: count }, (_, k) =>
-    simulate(level, hashSeed(seed, k), moves, style, full ? { finale: k < FINALE_RUNS, chancesUpTo: MAX_MOVES } : {}),
+    simulate(level, hashSeed(seed, k), moves, style, {
+      // A level never has fewer moves than MIN_MOVES: wins before that need no checking.
+      chancesFrom: MIN_MOVES,
+      chancesUpTo: kind === RunKind.Play ? 0 : MAX_MOVES,
+      untilFirstWin: kind === RunKind.Length,
+      finale: kind === RunKind.Full && k < FINALE_RUNS,
+    }),
   );
 }
 
-/** One number per run, higher is better: moves are inverted for goal levels, score per move for score levels. */
+/** One number per run, higher is better: the first winning move count inverted for goal levels, score per move for score levels. */
 function efficiency(level: LevelDef, r: SimResult): number {
   if (isScoreLevel(level)) return r.score / fixedMovesOf(level.number);
-  return r.needed === null ? 0 : 1 / r.needed;
+  const first = firstWin(r);
+  return Number.isFinite(first) ? 1 / first : 0;
+}
+
+/** The fewest moves a level could have and still be won in this run, by play or through the last chance. */
+function firstWin(r: SimResult): number {
+  return Math.min(r.needed ?? Infinity, r.chances[0]?.[0] ?? Infinity);
 }
 
 /** Tunes the goals so the twin's typical run lasts `length` moves. Returns the twin's efficiencies. */
 function shapeGoals(level: LevelDef, style: BotStyle, length: number, seed: number): number[] {
   if (isScoreLevel(level)) return runs(level, style, fixedMovesOf(level.number), SHAPE_SIMS, seed).map((r) => efficiency(level, r));
-  let results = runs(level, style, SIM_MAX_MOVES, SHAPE_SIMS, seed);
-  for (let pass = 0; pass < 2 && adjustLength(level, medianNeeded(results), length); pass++) {
-    results = runs(level, style, SIM_MAX_MOVES, SHAPE_SIMS, seed);
+  // The last chance can finish a level well before play would: the length is the first move count that wins.
+  let results = runs(level, style, SIM_MAX_MOVES, SHAPE_SIMS, seed, RunKind.Length);
+  for (let pass = 0; pass < SHAPE_PASSES && adjustLength(level, medianFirstWin(results), length); pass++) {
+    results = runs(level, style, SIM_MAX_MOVES, SHAPE_SIMS, seed, RunKind.Length);
   }
   return results.map((r) => efficiency(level, r));
 }
@@ -219,7 +254,7 @@ function fitness(level: LevelDef, twin: number[], craft: number, seed: number): 
   const moves = isScoreLevel(level) ? fixedMovesOf(level.number) : MAX_MOVES;
   const typical = (style: BotStyle, k: number): number =>
     median(runs(level, style, moves, PROBE_SIMS, hashSeed(seed, k)).map((r) => efficiency(level, r)));
-  const strong = typical(STRONG_BOT, 0);
+  const strong = typical(EXPERT_BOT, 0);
   if (strong === 0) return -Infinity;
   const gap = Math.max(0, strong - typical(RANDOM_BOT, 1)) / strong;
   const sorted = [...twin].sort((a, b) => a - b);
@@ -234,7 +269,7 @@ function calibrate(level: LevelDef, style: BotStyle, seed: number): Calibration 
     const scores = runs(level, style, fixedMoves, SIMS, seed).map((r) => r.score);
     return { runs: [], finale: 0, scores: scores.sort((a, b) => a - b), fixedMoves };
   }
-  const results = runs(level, style, SIM_MAX_MOVES, SIMS, seed, true);
+  const results = runs(level, style, SIM_MAX_MOVES, SIMS, seed, RunKind.Full);
   const measured = results.filter((r) => r.finale > 0);
   return {
     runs: results.map(({ needed, score, chances }) => ({ needed, score, chances })),
@@ -244,8 +279,9 @@ function calibrate(level: LevelDef, style: BotStyle, seed: number): Calibration 
   };
 }
 
-function medianNeeded(results: SimResult[]): number {
-  const sorted = results.map((r) => r.needed ?? Infinity).sort((a, b) => a - b);
+/** Median over runs of the fewest moves a level could have and still be won, by play or through the last chance. */
+function medianFirstWin(results: SimResult[]): number {
+  const sorted = results.map(firstWin).sort((a, b) => a - b);
   return sorted[Math.floor(sorted.length / 2)];
 }
 

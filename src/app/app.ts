@@ -1,16 +1,17 @@
 import { type Attempt, BoardSize, type CurrentLevel, type SaveData, defaultSave, loadSave, persist, randomSeed } from '@/app/save';
 import { AudioBus } from '@/audio/audio';
 import { Sfx } from '@/audio/synth';
-import { goalsOf, type MoveOptions, moveOptions } from '@/bot/evaluate';
+import { goalsOf, type MoveOptions, moveOptions } from '@/bot/features';
 import { indexOf } from '@/core/board';
 import { addExtraMoves, advance, canAct, createGame, EXTRA_MOVES, makeMove, startFinale, starsFor } from '@/core/game';
 import { BlastKind, type GameEvent, type GameState, LevelKind, type Pos } from '@/core/types';
 import { LevelDrafts } from '@/gen/drafts';
 import { type DraftRequest, finalizeLevel, GEN_VERSION, twinMoves } from '@/gen/generator';
 import { planLevel } from '@/gen/plan';
-import { DIFFICULTIES, targetWinRate, updateSkill } from '@/player/difficulty';
+import { DIFFICULTIES, targetWinRate } from '@/player/difficulty';
 import { paceFactor, updatePace } from '@/player/pace';
-import { observeMove, twinOf } from '@/player/style';
+import { observeMove, observeOutcome, twinOf } from '@/player/model';
+import { updateThreeStars } from '@/player/stars';
 import { AttemptEnd, type AttemptRecord, newRecord, recordMove, recordStep, trackAttempt } from '@/telemetry/attempt';
 import { flushPerf, perfContext, timed } from '@/telemetry/perf';
 import { exitApp, Haptic, haptic, onBackButton, onHidden, onVisible, setFullscreen, setHapticsEnabled } from '@/platform/platform';
@@ -65,6 +66,8 @@ export class GameApp {
   private rest: MoveOptions | null = null;
   /** when the player could last act: thinking time of the next swap counts from here */
   private thinkFrom = 0;
+  /** where the player's last move landed in this attempt, or -1: where they are looking */
+  private lastTo = -1;
   /** `?debug` in the URL shows level and difficulty numbers for tuning */
   private readonly debugEl = new URLSearchParams(location.search).has('debug') ? createDebugEl() : null;
 
@@ -130,22 +133,23 @@ export class GameApp {
     return current;
   }
 
-  /** A level of this player, for their style as it reads now. */
+  /** A level of this player, for their twin as it reads now. */
   private draftRequest(n: number): DraftRequest {
     const { player } = this.save;
-    return { seed: this.save.seed, number: n, style: twinOf(player.style), pace: paceFactor(player.pace) };
+    return { seed: this.save.seed, number: n, style: twinOf(player.model), pace: paceFactor(player.pace) };
   }
 
   /**
-   * A new attempt on a fresh random board, finalized for the target of this moment: the difficulty setting,
-   * skill and failures so far. Difficulty is calibrated over many boards, not this one.
+   * A new attempt on a fresh random board, finalized for the target of this moment: the difficulty setting
+   * and failures so far, and the player's own 3-star rate. Difficulty is calibrated over many boards, not this one.
    */
   private startAttempt(current: CurrentLevel): Attempt {
     const n = current.draft.request.number;
     const { settings, player } = this.save;
-    const def = finalizeLevel(current.draft, targetWinRate(planLevel(n).baseWinRate, settings.difficulty, player.skill, current.fails));
+    const target = targetWinRate(planLevel(n).baseWinRate, settings.difficulty, current.fails);
+    const def = finalizeLevel(current.draft, target, player.threeStars);
     const seed = randomSeed();
-    current.attempt = { game: createGame(def, seed), record: newRecord(seed) };
+    current.attempt = { game: createGame(def, seed), record: newRecord(seed), target, threeStars: player.threeStars };
     return current.attempt;
   }
 
@@ -158,6 +162,7 @@ export class GameApp {
       const game = (current.attempt ?? this.startAttempt(current)).game;
       this.game = game;
       this.rest = null;
+      this.lastTo = -1;
       perfContext({ level: game.level.number, board: `${game.board.cols}x${game.board.rows}` });
       this.view.inputEnabled = false;
       this.persist();
@@ -213,6 +218,8 @@ export class GameApp {
     this.swaps.add(anim);
     void anim.then(() => this.swaps.delete(anim));
     if (!swap.valid) {
+      const record = this.recordOf(game);
+      if (record) record.bad++;
       if (this.running !== game) this.view.armHint();
       return;
     }
@@ -253,7 +260,7 @@ export class GameApp {
     if (game.status === 'won') await this.finishWin(game);
     else if (game.status === 'lost') this.showLose(game);
     else {
-      this.rest = timed('options', () => moveOptions(game.board, goalsOf(game)));
+      this.rest = timed('options', () => moveOptions(game.board, goalsOf(game), this.lastTo));
       this.thinkFrom = performance.now();
       this.view.armHint();
     }
@@ -261,7 +268,7 @@ export class GameApp {
 
   /**
    * A valid swap goes into the attempt record. Made on the calm board without a hint, it also shows
-   * how the player picks among all the moves there were: that teaches their style.
+   * how the player picks among all the moves there were: that teaches their taste.
    */
   private learn(game: GameState, a: Pos, b: Pos, hint: boolean): void {
     const now = performance.now();
@@ -269,13 +276,14 @@ export class GameApp {
     // makeMove already swapped the pieces; the cells are what the record needs.
     if (record) recordMove(record, game.board, a, b, hint, now - this.thinkFrom);
     this.thinkFrom = now;
+    const from = indexOf(game.board, a.r, a.c);
+    const to = indexOf(game.board, b.r, b.c);
+    this.lastTo = to;
     const options = this.rest;
     this.rest = null;
     if (!options || hint) return;
-    const from = indexOf(game.board, a.r, a.c);
-    const to = indexOf(game.board, b.r, b.c);
     const chosen = options.moves.findIndex(([i, j]) => (i === from && j === to) || (i === to && j === from));
-    if (chosen >= 0) observeMove(this.save.player.style, options, chosen);
+    if (chosen >= 0) observeMove(this.save.player.model, options, chosen);
   }
 
   private recordOf(game: GameState): AttemptRecord | null {
@@ -283,19 +291,17 @@ export class GameApp {
     return attempt?.game === game ? attempt.record : null;
   }
 
-  /** Reports the attempt, then lets the player's skill and pace learn from it. */
+  /** Reports the attempt, then lets the player's strength, star rate and pace learn from it. */
   private endAttempt(game: GameState, end: AttemptEnd, left: number, stars: number): void {
+    const attempt = this.save.current?.attempt;
     const current = this.save.current;
-    const record = this.recordOf(game);
-    if (!current || !record) return;
+    if (!current || !attempt || attempt.game !== game) return;
     const { player, settings } = this.save;
-    trackAttempt({ draft: current.draft, game, record, end, left, stars, fails: current.fails, difficulty: settings.difficulty, skill: player.skill });
-    player.skill = updateSkill(player.skill, {
-      won: end === AttemptEnd.Won,
-      predicted: game.level.targetWinRate,
-      movesLeftRatio: left / game.level.moves,
-      usedExtraMoves: game.extraMovesUsed,
-    });
+    const { record, target, threeStars } = attempt;
+    trackAttempt({ draft: current.draft, game, record, end, left, stars, fails: current.fails, difficulty: settings.difficulty, target, threeStars, model: player.model });
+    // An abandoned attempt has no outcome: it teaches neither strength nor stars.
+    if (end !== AttemptEnd.Restart) observeOutcome(player.model, end === AttemptEnd.Won, game.level.targetWinRate);
+    if (end === AttemptEnd.Won) player.threeStars = updateThreeStars(player.threeStars, stars === 3);
     const progress = Math.min(...game.level.objectives.map((o, k) => game.progress[k] / o.target));
     player.pace = updatePace(player.pace, twinMoves(current.draft, game.level), game.movesMade, progress);
   }
@@ -587,13 +593,14 @@ export class GameApp {
     if (!this.debugEl || !current || !d) return;
     const { player, settings } = this.save;
     const built = current.draft.request.style;
-    const now = twinOf(player.style);
+    const now = twinOf(player.model);
     this.debugEl.textContent = [
       `L${d.number} ${d.kind}${d.intro ? ` +${d.intro}` : ''} v${current.draft.variant}`,
       `p=${d.targetWinRate.toFixed(2)} ${settings.difficulty} colors=${d.colors} moves=${d.moves}`,
-      `fails=${current.fails} skill=${player.skill.toFixed(2)} pace=${paceFactor(player.pace)} (built ${current.draft.request.pace})`,
-      `built β=${built.precision} k=${built.bonus} craft=${built.craft}`,
-      `now β=${now.precision} k=${now.bonus} craft=${now.craft} (${player.style.moves} moves)`,
+      `fails=${current.fails} pace=${paceFactor(player.pace)} (built ${current.draft.request.pace}) 3★q=${player.threeStars.toFixed(2)}`,
+      `built strength=${built.strength} craft=${built.craft}`,
+      `now strength=${now.strength} craft=${now.craft} (${player.model.moves} moves)`,
+      `taste ${now.weights.map((w) => w.toFixed(1)).join(' ')}`,
       `stars=${d.stars.join('/')}`,
     ].join('\n');
   }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { pickMove, RANDOM_BOT, simulate, STRONG_BOT } from '@/bot/bot';
-import { goalsOf, moveOptions } from '@/bot/evaluate';
+import { EXPERT_BOT, pickMove, RANDOM_BOT, simulate } from '@/bot/bot';
+import { Feature, FEATURE_COUNT, goalsOf, moveOptions, score } from '@/bot/features';
 import { posOf, swapPieces } from '@/core/board';
 import { createGame, playMove } from '@/core/game';
 import { findGroups, newGroupScan, scanGroup } from '@/core/matches';
@@ -65,45 +65,64 @@ describe('scanGroup', () => {
 });
 
 describe('moveOptions', () => {
-  it('values every valid move and leaves the board as it was', () => {
+  const at = (o: ReturnType<typeof moveOptions>, m: number, f: Feature): number => o.features[m * FEATURE_COUNT + f];
+
+  it('describes every valid move and leaves the board as it was', () => {
     const game = createGame(level(), 3);
     const before = JSON.stringify(game.board);
-    const options = moveOptions(game.board, goalsOf(game));
+    const options = moveOptions(game.board, goalsOf(game), -1);
     expect(options.moves).toEqual(findMoves(game.board));
-    expect(options.plain.every((v) => v >= 3)).toBe(true);
+    options.moves.forEach((_, m) => {
+      expect(at(options, m, Feature.Cells) >= 3 || at(options, m, Feature.Combo) === 1).toBe(true);
+      expect(at(options, m, Feature.Far)).toBe(4);
+      expect(at(options, m, Feature.Low)).toBeGreaterThanOrEqual(0);
+      expect(at(options, m, Feature.Low)).toBeLessThanOrEqual(1);
+    });
     expect(JSON.stringify(game.board)).toBe(before);
   });
 
-  it('prefers the wanted color', () => {
+  it('counts the wanted color only while it is a goal, and the distance from the last move', () => {
     const game = createGame(level(), 5);
-    const options = moveOptions(game.board, goalsOf(game));
-    const none = moveOptions(game.board, { wanted: 0, ice: false, crate: false });
-    const wantedMove = options.moves.findIndex((_, m) => options.plain[m] > none.plain[m]);
-    expect(wantedMove).toBeGreaterThanOrEqual(0);
+    const options = moveOptions(game.board, goalsOf(game), 0);
+    const none = moveOptions(game.board, { wanted: 0, ice: false, crate: false }, 0);
+    expect(options.moves.some((_, m) => at(options, m, Feature.Wanted) > 0)).toBe(true);
+    expect(none.moves.every((_, m) => at(none, m, Feature.Wanted) === 0)).toBe(true);
+    options.moves.forEach(([i, j], m) => {
+      const d = Math.min(...[i, j].map((x) => Math.floor(x / 8) + (x % 8)));
+      expect(at(options, m, Feature.Far)).toBe(Math.min(8, d));
+    });
   });
 });
 
 describe('bots', () => {
-  it('the strong bot needs fewer moves than the random one', () => {
+  it('the expert needs fewer moves than a random tapper', () => {
     const median = (values: number[]): number => values.sort((a, b) => a - b)[Math.floor(values.length / 2)];
-    const needed = (style: typeof STRONG_BOT): number =>
+    const needed = (style: typeof EXPERT_BOT): number =>
       median(Array.from({ length: 12 }, (_, k) => simulate(level(), 100 + k, 60, style).needed ?? 99));
-    expect(needed(STRONG_BOT)).toBeLessThan(needed(RANDOM_BOT));
+    expect(needed(EXPERT_BOT)).toBeLessThan(needed(RANDOM_BOT));
   });
 
-  it('precision 0 picks evenly, Infinity always the best', () => {
+  it('greedy takes the best move, zero weights pick evenly, strength mixes in the expert or random taps', () => {
     const game = createGame(level(), 9);
-    const options = moveOptions(game.board, goalsOf(game));
+    const options = moveOptions(game.board, goalsOf(game), -1);
     const rng = { rng: 1 };
-    const best = pickMove(options, STRONG_BOT, rng);
-    for (let m = 0; m < options.moves.length; m++) expect(options.plain[m] + 1.5 * options.bonus[m]).toBeLessThanOrEqual(options.plain[best] + 1.5 * options.bonus[best]);
-    const counts = new Array<number>(options.moves.length).fill(0);
-    for (let k = 0; k < 4000; k++) counts[pickMove(options, { precision: 0, bonus: 0 }, rng)]++;
-    expect(Math.min(...counts)).toBeGreaterThan(0);
+    const best = pickMove(options, EXPERT_BOT, rng);
+    for (let m = 0; m < options.moves.length; m++) expect(score(options, m, EXPERT_BOT.weights)).toBeLessThanOrEqual(score(options, best, EXPERT_BOT.weights));
+    const counts = (style: Parameters<typeof pickMove>[1]): number[] => {
+      const c = new Array<number>(options.moves.length).fill(0);
+      for (let k = 0; k < 4000; k++) c[pickMove(options, style, rng)]++;
+      return c;
+    };
+    expect(Math.min(...counts(RANDOM_BOT))).toBeGreaterThan(0);
+    // A taste that dislikes the expert's best move still takes it at full strength.
+    const contrary = { weights: EXPERT_BOT.weights.map((w) => -w) };
+    expect(counts({ ...contrary, strength: 1 })[best]).toBe(4000);
+    expect(counts(contrary)[best]).toBeLessThan(400);
+    expect(Math.min(...counts({ ...contrary, strength: -1 }))).toBeGreaterThan(0);
   });
 
   it('measures the finale on a won run', () => {
-    const won = Array.from({ length: 6 }, (_, k) => simulate(level(), 200 + k, 60, STRONG_BOT, { finale: true })).find((r) => r.needed !== null);
+    const won = Array.from({ length: 6 }, (_, k) => simulate(level(), 200 + k, 60, EXPERT_BOT, { finale: true })).find((r) => r.needed !== null);
     expect(won?.finale).toBeGreaterThan(0);
   });
 });

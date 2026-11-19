@@ -1,17 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { pickMove, simulate } from '@/bot/bot';
-import { goalsOf, moveOptions } from '@/bot/evaluate';
+import { EXPERT_BOT, pickMove, simulate } from '@/bot/bot';
+import { goalsOf, moveOptions } from '@/bot/features';
 import { posOf } from '@/core/board';
 import { advance, createGame, playMove, startFinale, starsFor } from '@/core/game';
 import { hasAnyMatch, hasMove } from '@/core/moves';
 import { LevelKind, ObjectiveKind } from '@/core/types';
 import { type DraftRequest, draftLevel, finalizeLevel, refillReachesAll } from '@/gen/generator';
 import { planLevel } from '@/gen/plan';
-import type { TwinStyle } from '@/player/style';
+import { newModel, type TwinStyle, twinOf } from '@/player/model';
 
-const AVERAGE: TwinStyle = { precision: 0.32, bonus: 0.5, craft: 0.45 };
-const TAPPER: TwinStyle = { precision: 0, bonus: 1, craft: 0 };
-const PLANNER: TwinStyle = { precision: 1.28, bonus: 2, craft: 1 };
+const AVERAGE: TwinStyle = { ...twinOf(newModel()), strength: 0.3 };
+const TAPPER: TwinStyle = { weights: new Array<number>(14).fill(0), strength: 0, craft: 0 };
+const PLANNER: TwinStyle = { weights: [...EXPERT_BOT.weights], strength: 0.8, craft: 1 };
 const req = (number: number, seed = 12345, style = AVERAGE, pace = 1): DraftRequest => ({ seed, number, style, pace });
 
 describe('generator', () => {
@@ -71,10 +71,12 @@ describe('generator', () => {
       const predicted = (sim.needed !== null && sim.needed <= level.moves) || sim.chances.some(([m]) => m === level.moves);
       const game = createGame(level, seed);
       const rng = { rng: seed ^ 0x5bd1e995 };
+      let last = -1;
       while (game.status === 'playing') {
-        const options = moveOptions(game.board, goalsOf(game));
+        const options = moveOptions(game.board, goalsOf(game), last);
         const [i, j] = options.moves[pickMove(options, AVERAGE, rng)];
         playMove(game, posOf(game.board, i), posOf(game.board, j));
+        last = j;
       }
       if (predicted !== (game.status === 'won')) mispredicted++;
       if (game.status !== 'won') continue;
@@ -91,8 +93,9 @@ describe('generator', () => {
   }, 60_000);
 
   it('grows the goals and the moves for a player faster than their twin', () => {
-    const own = finalizeLevel(draftLevel(req(22, 5, AVERAGE, 1)), 0.7);
-    const fast = finalizeLevel(draftLevel(req(22, 5, AVERAGE, 2)), 0.7);
+    // A shared level: one layout, so only the goals can differ.
+    const own = finalizeLevel(draftLevel(req(1, 5, AVERAGE, 1)), 0.7);
+    const fast = finalizeLevel(draftLevel(req(1, 5, AVERAGE, 2)), 0.7);
     const amount = (l: typeof own): number => l.objectives.reduce((sum, o) => sum + o.target, 0);
     expect(fast.moves).toBeGreaterThan(own.moves);
     expect(amount(fast)).toBeGreaterThan(amount(own));
