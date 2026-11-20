@@ -6,7 +6,7 @@ const FILES = import.meta.glob<string>('./sfx/*/*.m4a', { eager: true, query: '?
 /** The synthesized placeholder and silence are variants too: recordings compare against both. */
 export const Variant = { Synth: 'synth', Off: 'off' } as const;
 
-/** The variant picked for each sound; a sound missing here plays its first variant. */
+/** The variant picked for each sound; a sound missing here plays its default. */
 export type SoundChoice = Partial<Record<Sfx, string>>;
 
 /** Variants of each sound in menu order: recordings by number, then the synth, then silence. */
@@ -26,8 +26,30 @@ export function fileUrl(id: Sfx, variant: string): string | undefined {
   return FILES[`./sfx/${id}/${variant}.m4a`];
 }
 
-/** The variant a sound plays: the picked one, or the first when none is picked or the picked one is gone. */
+/** Picked by ear on the phone (20.11.2026): what plays until the sound menu picks otherwise. */
+const DEFAULTS: Record<Sfx, string> = {
+  [Sfx.Button]: '07-tap',
+  [Sfx.Light]: '01-pluck',
+  [Sfx.Swap]: Variant.Off,
+  [Sfx.SwapFail]: Variant.Synth,
+  [Sfx.Match]: '01-chips',
+  [Sfx.Create]: Variant.Off,
+  [Sfx.Transform]: '05-three-tone',
+  [Sfx.LastChance]: '07-low-tone',
+  [Sfx.Line]: '05-laser',
+  [Sfx.Bomb]: '01-punch',
+  [Sfx.Prism]: '04-glass-ring',
+  [Sfx.Spark]: '08-glass',
+  [Sfx.Ice]: '01-glass-light',
+  [Sfx.Crate]: '01-wood-light',
+  [Sfx.Chain]: '04-metal-heavy',
+  [Sfx.Shuffle]: '01-card-fan',
+  [Sfx.Star]: '02-glass',
+  [Sfx.Win]: '10-confirm',
+  [Sfx.Lose]: '10-error',
+};
+
+/** The variant a sound plays: the picked one, else the default; the first one when that is gone too. */
 export function chosen(choice: SoundChoice, id: Sfx): string {
-  const variant = choice[id];
-  return variant !== undefined && VARIANTS[id].includes(variant) ? variant : VARIANTS[id][0];
+  return [choice[id], DEFAULTS[id]].find((v) => v !== undefined && VARIANTS[id].includes(v)) ?? VARIANTS[id][0];
 }
