@@ -58,7 +58,6 @@ interface LayerSprite {
  */
 export class BoardView {
   public inputEnabled = false;
-  private reducedMotion = false;
   /** player's board size setting, applied to the cell that fits */
   private scale = 1;
   private readonly atlas = new Atlas();
@@ -139,11 +138,6 @@ export class BoardView {
 
   // ---------- setup ----------
 
-  public setReducedMotion(on: boolean): void {
-    this.reducedMotion = on;
-    this.particles.density = this.scene.particleDensity * (on ? 0.5 : 1);
-  }
-
   /** The atlas is repainted for the new cell size, so a smaller board stays sharp. */
   public setScale(scale: number): void {
     if (scale === this.scale) return;
@@ -199,7 +193,7 @@ export class BoardView {
     const { originX, originY, cell } = this;
     const shown = this.board !== null;
     this.layout(width, height);
-    if (!shown || !this.board || this.reducedMotion) return;
+    if (!shown || !this.board) return;
     // screen = glide.position + glide.scale · local; keep the old picture, then let it decay to identity
     const g = this.glide;
     const scale = (g.scale.x * cell) / this.cell;
@@ -218,7 +212,7 @@ export class BoardView {
     this.originX = Math.round((width - cell * b.cols) / 2);
     this.originY = Math.round((height - cell * b.rows) / 2);
     this.boardRoot.position.set(this.originX, this.originY);
-    this.particles.density = this.scene.particleDensity * (this.reducedMotion ? 0.5 : 1);
+    this.particles.density = this.scene.particleDensity;
     perfContext({ cell });
     if (this.atlas.build(cell, this.scene.resolution) || forceRebuild) timed('rebuild', () => this.rebuild());
     this.scene.request();
@@ -485,7 +479,7 @@ export class BoardView {
   private pulseLit(dt: number): boolean {
     if (this.lit.size === 0) return false;
     this.litClock += dt;
-    const pulse = this.reducedMotion ? 0 : Math.sin(this.litClock / LIT_PULSE);
+    const pulse = Math.sin(this.litClock / LIT_PULSE);
     for (const [id, halo] of this.lit) {
       const piece = this.sprites.get(id);
       if (!piece) {
@@ -683,7 +677,6 @@ export class BoardView {
   }
 
   private shake(power: number): void {
-    if (this.reducedMotion) return;
     void this.scene.tweens.run(
       260,
       (k) => {

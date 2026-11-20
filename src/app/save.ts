@@ -1,3 +1,4 @@
+import type { SoundChoice } from '@/audio/sounds';
 import type { GameState } from '@/core/types';
 import type { LevelDraft } from '@/gen/generator';
 import { Difficulty } from '@/player/difficulty';
@@ -13,12 +14,13 @@ const VERSION = 5;
 export interface Settings {
   sound: boolean;
   haptics: boolean;
-  reducedMotion: boolean;
   /** hide the phone's status and navigation bars */
   fullscreen: boolean;
   /** board size, percent of the space it may take */
   boardSize: number;
   difficulty: Difficulty;
+  /** debug sound menu: the variant picked for each sound */
+  sounds: SoundChoice;
 }
 
 /** Board size steps: a big tablet screen otherwise fills edge to edge with huge pieces. */
@@ -72,10 +74,10 @@ export function defaultSave(): SaveData {
     settings: {
       sound: true,
       haptics: true,
-      reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
       fullscreen: true,
       boardSize: BoardSize.Max,
       difficulty: Difficulty.Normal,
+      sounds: {},
     },
     current: null,
   };

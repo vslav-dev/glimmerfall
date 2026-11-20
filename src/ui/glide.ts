@@ -26,7 +26,6 @@ export class Glide {
     this.y += this.top - offsetTop;
     this.left = offsetLeft;
     this.top = offsetTop;
-    if (document.documentElement.classList.contains('reduced-motion')) this.x = this.y = 0;
     this.render();
     if (!this.frame && (this.x || this.y)) {
       this.last = performance.now();

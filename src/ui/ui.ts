@@ -1,3 +1,5 @@
+import { chosen, type SoundChoice, VARIANTS } from '@/audio/sounds';
+import { Sfx } from '@/audio/synth';
 import { type GameState, type LevelDef, type Objective, ObjectiveKind, Special } from '@/core/types';
 import { BoardSize, type Settings } from '@/app/save';
 import { DIFFICULTIES } from '@/player/difficulty';
@@ -21,13 +23,16 @@ export const Action = {
   Back: 'back',
   ToggleSound: 'toggle-sound',
   ToggleHaptics: 'toggle-haptics',
-  ToggleMotion: 'toggle-motion',
   ToggleFullscreen: 'toggle-fullscreen',
   BoardSmaller: 'board-smaller',
   BoardBigger: 'board-bigger',
   Easier: 'easier',
   Harder: 'harder',
   Reset: 'reset',
+  Sounds: 'sounds',
+  SoundPrev: 'sound-prev',
+  SoundNext: 'sound-next',
+  SoundPlay: 'sound-play',
 } as const;
 export type Action = (typeof Action)[keyof typeof Action];
 
@@ -59,7 +64,8 @@ export class Ui {
 
   public constructor(
     root: HTMLElement,
-    private readonly onAction: (action: Action) => void,
+    /** `sound`: the row of the sound menu the action came from */
+    private readonly onAction: (action: Action, sound?: Sfx) => void,
   ) {
     this.hud = root.querySelector('#hud')!;
     this.hudGlide = new Glide(this.hud);
@@ -68,7 +74,7 @@ export class Ui {
     this.praiseEl = root.querySelector('#praise')!;
     root.addEventListener('click', (e) => {
       const target = (e.target as HTMLElement).closest<HTMLElement>('[data-action]');
-      if (target) this.onAction(target.dataset.action as Action);
+      if (target) this.onAction(target.dataset.action as Action, target.closest<HTMLElement>('[data-sound]')?.dataset.sound as Sfx);
     });
   }
 
@@ -181,7 +187,6 @@ export class Ui {
         <h2>${S.settings}</h2>
         ${toggle(Action.ToggleSound, S.sound, settings.sound)}
         ${toggle(Action.ToggleHaptics, S.haptics, settings.haptics)}
-        ${toggle(Action.ToggleMotion, S.reducedMotion, settings.reducedMotion)}
         ${toggle(Action.ToggleFullscreen, S.fullscreen, settings.fullscreen)}
         <div class="toggle stepper">
           <span>${S.boardSize}</span>
@@ -195,10 +200,49 @@ export class Ui {
           <i>${S.difficulties[settings.difficulty]}</i>
           <button data-action="${Action.Harder}" aria-label="${S.harder}" ${settings.difficulty === DIFFICULTIES.at(-1) ? 'disabled' : ''}>+</button>
         </div>
+        <button class="btn" data-action="${Action.Sounds}">${S.sounds}</button>
         <button class="btn danger" data-action="${Action.Reset}">${S.reset}</button>
         <button class="btn primary" data-action="${Action.Back}">${S.back}</button>
       </div>`,
     );
+  }
+
+  /** Debug menu: every sound the game plays, each with its variants to step through and hear. */
+  public showSounds(choice: SoundChoice): void {
+    const rows = Object.values(Sfx)
+      .map(
+        (id) => `<div class="sound-row" data-sound="${id}">
+          <span>${S.soundNames[id]}</span>
+          <div class="toggle stepper">
+            <button data-action="${Action.SoundPrev}" aria-label="${S.smaller}">‹</button>
+            <button class="variant" data-action="${Action.SoundPlay}">${this.variantHtml(id, choice)}</button>
+            <button data-action="${Action.SoundNext}" aria-label="${S.bigger}">›</button>
+          </div>
+        </div>`,
+      )
+      .join('');
+    this.show(
+      `<div class="card sounds">
+        <h2>${S.sounds}</h2>
+        <p class="hint">${S.soundsHint}</p>
+        ${rows}
+        <button class="btn primary" data-action="${Action.Back}">${S.back}</button>
+      </div>`,
+    );
+  }
+
+  /** In place: redrawing the card would replay its entrance and lose the scroll. */
+  public updateSound(id: Sfx, choice: SoundChoice): void {
+    const el = this.overlay.querySelector(`[data-sound="${id}"] .variant`);
+    if (el) el.innerHTML = this.variantHtml(id, choice);
+  }
+
+  private variantHtml(id: Sfx, choice: SoundChoice): string {
+    const variants = VARIANTS[id];
+    const variant = chosen(choice, id);
+    // recordings are named "03-glass-heavy": the number shows as the position instead
+    const name = S.variantNames[variant] ?? variant.replace(/^\d+-/, '').replaceAll('-', ' ');
+    return `▶ ${name} <small>${variants.indexOf(variant) + 1}/${variants.length}</small>`;
   }
 
   /** First tap arms the reset, the second confirms. Returns whether it is confirmed. */

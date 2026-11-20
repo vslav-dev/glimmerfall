@@ -1,15 +1,19 @@
 /**
- * Placeholder sound effects, synthesized once into buffers.
- * Real recordings replace a recipe with a decoded file; playback does not change.
+ * Every sound the game plays, and its synthesized placeholder: one of the variants to pick from (see sounds.ts).
  */
 
 export const Sfx = {
   Button: 'button',
-  Select: 'select',
+  /** a special on the calm board lights up to go off (last chance, finale) */
+  Light: 'light',
   Swap: 'swap',
   SwapFail: 'swap-fail',
   Match: 'match',
+  /** a match made a special */
   Create: 'create',
+  /** finale: the moves left turn into specials */
+  Transform: 'transform',
+  LastChance: 'last-chance',
   Line: 'line',
   Bomb: 'bomb',
   Prism: 'prism',
@@ -89,9 +93,17 @@ function notes(ctx: OfflineAudioContext, freqs: number[], step: number, length: 
   });
 }
 
+const create: Recipe = {
+  duration: 0.35,
+  build: (c) => {
+    tone(c, { from: 520, to: 1040, duration: 0.22, gain: 0.25 });
+    notes(c, [1568, 2093], 0.08, 0.2, 0.08);
+  },
+};
+
 export const RECIPES: Record<Sfx, Recipe> = {
   [Sfx.Button]: { duration: 0.08, build: (c) => tone(c, { from: 900, to: 700, duration: 0.07, gain: 0.2 }) },
-  [Sfx.Select]: { duration: 0.06, build: (c) => tone(c, { from: 1300, to: 1500, duration: 0.05, gain: 0.12 }) },
+  [Sfx.Light]: { duration: 0.06, build: (c) => tone(c, { from: 1300, to: 1500, duration: 0.05, gain: 0.12 }) },
   [Sfx.Swap]: {
     duration: 0.12,
     build: (c) => {
@@ -113,13 +125,9 @@ export const RECIPES: Record<Sfx, Recipe> = {
       tone(c, { type: 'triangle', from: 1320, to: 1980, duration: 0.12, gain: 0.08 });
     },
   },
-  [Sfx.Create]: {
-    duration: 0.35,
-    build: (c) => {
-      tone(c, { from: 520, to: 1040, duration: 0.22, gain: 0.25 });
-      notes(c, [1568, 2093], 0.08, 0.2, 0.08);
-    },
-  },
+  [Sfx.Create]: create,
+  [Sfx.Transform]: create,
+  [Sfx.LastChance]: create,
   [Sfx.Line]: {
     duration: 0.35,
     build: (c) => {

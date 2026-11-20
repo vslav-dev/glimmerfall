@@ -2,7 +2,7 @@ const ROLL_MS = 450;
 
 /**
  * A HUD number that rolls to each new value and pops as it changes.
- * The first value shows at once; with reduced motion every value does.
+ * The first value shows at once.
  */
 export class Counter {
   private shown: number | null = null;
@@ -20,7 +20,7 @@ export class Counter {
     const from = this.shown ?? value;
     this.target = value;
     cancelAnimationFrame(this.frame);
-    if (this.shown === null || document.documentElement.classList.contains('reduced-motion')) {
+    if (this.shown === null) {
       this.render(value);
       return;
     }

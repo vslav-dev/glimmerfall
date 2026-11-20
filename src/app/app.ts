@@ -1,5 +1,6 @@
 import { type Attempt, BoardSize, type CurrentLevel, type SaveData, defaultSave, loadSave, persist, randomSeed } from '@/app/save';
 import { AudioBus } from '@/audio/audio';
+import { chosen, VARIANTS } from '@/audio/sounds';
 import { Sfx } from '@/audio/synth';
 import { goalsOf, type MoveOptions, moveOptions } from '@/bot/features';
 import { indexOf } from '@/core/board';
@@ -25,6 +26,7 @@ const Mode = {
   Play: 'play',
   Pause: 'pause',
   Settings: 'settings',
+  Sounds: 'sounds',
   Finale: 'finale',
   Won: 'won',
   Lost: 'lost',
@@ -76,7 +78,7 @@ export class GameApp {
     private readonly scene: Scene,
     canvas: HTMLCanvasElement,
   ) {
-    this.ui = new Ui(root, (action) => void this.onAction(action));
+    this.ui = new Ui(root, (action, sound) => void this.onAction(action, sound));
     this.view = new BoardView(scene, canvas, {
       onSwap: (a, b, input) => void this.onSwap(a, b, input),
       onLayerHit: (layer) => this.audio.play(LAYER_SFX[layer]),
@@ -380,7 +382,12 @@ export class GameApp {
   // ---------- actions ----------
 
   /** Screen actions run one at a time; a double tap must not start a level twice. */
-  private async onAction(action: Action): Promise<void> {
+  private async onAction(action: Action, sound?: Sfx): Promise<void> {
+    if (sound) {
+      // the sound menu plays the variant itself, without the button sound over it
+      this.pickSound(action, sound);
+      return;
+    }
     if (this.actionRunning) return;
     this.actionRunning = true;
     this.audio.play(Sfx.Button);
@@ -435,14 +442,22 @@ export class GameApp {
         this.mode = Mode.Settings;
         this.ui.showSettings(this.save.settings);
         break;
+      case Action.Sounds:
+        this.mode = Mode.Sounds;
+        this.ui.showSounds(this.save.settings.sounds);
+        break;
       case Action.Back:
+        if (this.mode === Mode.Sounds) {
+          this.mode = Mode.Settings;
+          this.ui.showSettings(this.save.settings);
+          break;
+        }
         this.mode = this.settingsReturn;
         if (this.mode === Mode.Pause) this.ui.showPause();
         else this.showTitle();
         break;
       case Action.ToggleSound:
       case Action.ToggleHaptics:
-      case Action.ToggleMotion:
       case Action.ToggleFullscreen:
         this.toggleSetting(action);
         break;
@@ -472,7 +487,6 @@ export class GameApp {
     const s = this.save.settings;
     if (action === Action.ToggleSound) s.sound = !s.sound;
     if (action === Action.ToggleHaptics) s.haptics = !s.haptics;
-    if (action === Action.ToggleMotion) s.reducedMotion = !s.reducedMotion;
     if (action === Action.ToggleFullscreen) s.fullscreen = !s.fullscreen;
     this.applySettings();
     if (action === Action.ToggleHaptics && s.haptics) haptic(Haptic.Confirm);
@@ -498,6 +512,21 @@ export class GameApp {
     this.ui.showSettings(s);
   }
 
+  /** Sound menu: ‹ › step to the neighbouring variant and play it, the name replays it. The pick plays in the game at once. */
+  private pickSound(action: Action, id: Sfx): void {
+    const sounds = this.save.settings.sounds;
+    const variants = VARIANTS[id];
+    const step = action === Action.SoundNext ? 1 : action === Action.SoundPrev ? -1 : 0;
+    if (step !== 0) {
+      const k = variants.indexOf(chosen(sounds, id));
+      sounds[id] = variants[(k + step + variants.length) % variants.length];
+      this.audio.choose(sounds);
+      this.persist();
+      this.ui.updateSound(id, sounds);
+    }
+    void this.audio.preview(id, chosen(sounds, id));
+  }
+
   private async onBack(): Promise<void> {
     switch (this.mode) {
       case Mode.Play:
@@ -507,6 +536,7 @@ export class GameApp {
         this.resume();
         break;
       case Mode.Settings:
+      case Mode.Sounds:
         await this.onAction(Action.Back);
         break;
       case Mode.Won:
@@ -543,17 +573,17 @@ export class GameApp {
         break;
       }
       case 'transform':
-        this.audio.play(Sfx.Create);
+        this.audio.play(Sfx.Transform);
         break;
       case 'shuffle':
         this.audio.play(Sfx.Shuffle);
         this.ui.flashText(S.shuffle);
         break;
       case 'light':
-        this.audio.play(Sfx.Select);
+        this.audio.play(Sfx.Light);
         break;
       case 'lastChance':
-        this.audio.play(Sfx.Create);
+        this.audio.play(Sfx.LastChance);
         haptic(Haptic.Heavy);
         this.ui.flashText(S.lastChance);
         break;
@@ -567,12 +597,11 @@ export class GameApp {
   private applySettings(): void {
     const s = this.save.settings;
     this.audio.enabled = s.sound;
+    this.audio.choose(s.sounds);
     setHapticsEnabled(s.haptics);
     setFullscreen(s.fullscreen);
-    this.view.setReducedMotion(s.reducedMotion);
     this.view.setScale(s.boardSize / 100);
-    perfContext({ boardSize: s.boardSize, reducedMotion: s.reducedMotion });
-    document.documentElement.classList.toggle('reduced-motion', s.reducedMotion);
+    perfContext({ boardSize: s.boardSize });
   }
 
   /** Viewport changes (system bars sliding in, rotation) glide instead of jumping. */
