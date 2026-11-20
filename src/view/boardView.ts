@@ -3,6 +3,7 @@ import { BitmapFont, BitmapText, Container, Sprite, type Texture } from 'pixi.js
 import { isAdjacent } from '@/core/board';
 import { findMoves } from '@/core/moves';
 import { type Blast, BlastKind, type Board, type GameEvent, NO_COLOR, type Piece, type Pos, Special, type SwapEvent } from '@/core/types';
+import type { SwapInput } from '@/telemetry/attempt';
 import { perfContext, timed } from '@/telemetry/perf';
 import { FrameName, GEM_TINTS } from '@/view/art';
 import { Atlas } from '@/view/atlas';
@@ -41,7 +42,7 @@ const CHAIN_TINT = 0xd7dde8;
 export type Layer = 'ice' | 'crate' | 'chain';
 
 export interface BoardListener {
-  onSwap(a: Pos, b: Pos): void;
+  onSwap(a: Pos, b: Pos, input: SwapInput): void;
   /** a blocker layer visibly took a hit (for sound) */
   onLayerHit(layer: Layer): void;
 }
@@ -92,6 +93,8 @@ export class BoardView {
   private height = 1;
   private selected: Pos | null = null;
   private drag: { pos: Pos; x: number; y: number } | null = null;
+  /** pieces picked since the last swap: the one swapped, and those let go before it */
+  private picks = 0;
   private hintTimer = 0;
   private hintToken = 0;
   /** cells of the pulsing move; cells, not sprites, so a rebuild of the board keeps the hint */
@@ -156,6 +159,7 @@ export class BoardView {
     this.lit.clear();
     this.grid = board.cells.map((c) => c.piece);
     this.deselect();
+    this.picks = 0;
     this.layout(this.width, this.height, true);
   }
 
@@ -791,10 +795,11 @@ export class BoardView {
     if (this.selected && isAdjacent(this.selected, pos)) {
       const from = this.selected;
       this.deselect();
-      this.swap(from, pos);
+      this.swap(from, pos, false);
       return;
     }
     this.select(pos);
+    this.picks++;
     this.drag = { pos, x: e.clientX, y: e.clientY };
     this.canvas.setPointerCapture(e.pointerId);
   }
@@ -808,12 +813,15 @@ export class BoardView {
     const to = Math.abs(dx) > Math.abs(dy) ? { r: from.r, c: from.c + Math.sign(dx) } : { r: from.r + Math.sign(dy), c: from.c };
     this.drag = null;
     this.deselect();
-    this.swap(from, to);
+    this.swap(from, to, true);
   }
 
   /** Both cells must still be calm: a selection or a drag may have started before a cascade reached them. */
-  private swap(from: Pos, to: Pos): void {
-    if (this.isFree(from) && this.isFree(to)) this.input.onSwap(from, to);
+  private swap(from: Pos, to: Pos, drag: boolean): void {
+    if (!this.isFree(from) || !this.isFree(to)) return;
+    const repicks = Math.max(0, this.picks - 1);
+    this.picks = 0;
+    this.input.onSwap(from, to, { drag, repicks });
   }
 
   private isFree(p: Pos): boolean {

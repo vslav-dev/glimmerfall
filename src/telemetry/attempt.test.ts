@@ -3,7 +3,7 @@ import { posOf } from '@/core/board';
 import { advance, canAct, createGame, makeMove, startFinale } from '@/core/game';
 import { findMoves } from '@/core/moves';
 import { type GameState, type LevelDef, LevelKind, ObjectiveKind } from '@/core/types';
-import { decodeMoves, encodeMoves, newRecord, recordMove, recordStep, replayAttempt } from '@/telemetry/attempt';
+import { decodeMoves, encodeMoves, newRecord, recordMiss, recordMove, recordStep, replayAttempt } from '@/telemetry/attempt';
 
 function level(target: number): LevelDef {
   const size = 72;
@@ -47,7 +47,7 @@ function play(lv: LevelDef, seed: number) {
     const [i, j] = moves[(turn * 7 + seed) % moves.length];
     const [a, b] = turn % 2 ? [posOf(game.board, i), posOf(game.board, j)] : [posOf(game.board, j), posOf(game.board, i)];
     expect(makeMove(game, a, b)?.valid).toBe(true);
-    recordMove(record, game.board, a, b, turn % 5 === 0, turn * 450);
+    recordMove(record, game.board, a, b, turn % 5 === 0, turn * 450, { drag: turn % 2 === 0, repicks: turn % 4 });
   }
   while (advance(game)) recordStep(record);
   if (game.status === 'won') {
@@ -78,5 +78,18 @@ describe('attempt record', () => {
     const text = encodeMoves(moves);
     expect(text.length).toBe(16);
     expect(decodeMoves(text)).toEqual(moves);
+  });
+
+  it('keeps a missed swap with where on the replay it happened', () => {
+    const board = createGame(level(12), 1).board;
+    const record = newRecord(1);
+    recordMove(record, board, { r: 2, c: 3 }, { r: 2, c: 4 }, false, 1200, { drag: true, repicks: 5 });
+    recordStep(record);
+    recordStep(record);
+    recordMiss(record, board, { r: 4, c: 1 }, { r: 3, c: 1 });
+    const move = record.moves[0];
+    expect([(move >>> 18) & 255, (move >>> 26) & 1, (move >>> 27) & 3]).toEqual([12, 1, 3]);
+    const miss = record.misses[0];
+    expect([miss & 127, (miss >>> 7) & 3, (miss >>> 9) & 255, miss >>> 17]).toEqual([4 * 8 + 1, 3, 2, 1]);
   });
 });

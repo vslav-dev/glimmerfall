@@ -12,7 +12,7 @@ import { DIFFICULTIES, targetWinRate } from '@/player/difficulty';
 import { paceFactor, updatePace } from '@/player/pace';
 import { observeMove, observeOutcome, twinOf } from '@/player/model';
 import { updateThreeStars } from '@/player/stars';
-import { AttemptEnd, type AttemptRecord, newRecord, recordMove, recordStep, trackAttempt } from '@/telemetry/attempt';
+import { AttemptEnd, type AttemptRecord, newRecord, recordMiss, recordMove, recordStep, type SwapInput, trackAttempt } from '@/telemetry/attempt';
 import { flushPerf, perfContext, timed } from '@/telemetry/perf';
 import { exitApp, Haptic, haptic, onBackButton, onHidden, onVisible, setFullscreen, setHapticsEnabled } from '@/platform/platform';
 import { Action, Ui } from '@/ui/ui';
@@ -78,7 +78,7 @@ export class GameApp {
   ) {
     this.ui = new Ui(root, (action) => void this.onAction(action));
     this.view = new BoardView(scene, canvas, {
-      onSwap: (a, b) => void this.onSwap(a, b),
+      onSwap: (a, b, input) => void this.onSwap(a, b, input),
       onLayerHit: (layer) => this.audio.play(LAYER_SFX[layer]),
     });
 
@@ -203,7 +203,7 @@ export class GameApp {
   }
 
   /** Swaps are accepted while a cascade plays on, as long as both cells are calm (the view checks that). */
-  private onSwap(a: Pos, b: Pos): void {
+  private onSwap(a: Pos, b: Pos, input: SwapInput): void {
     const game = this.game;
     if (this.mode !== Mode.Play || !game) return;
     const hint = this.view.hintShown;
@@ -212,14 +212,15 @@ export class GameApp {
     if (swap.valid) {
       // Only a real move ends the hint; a rejected swap leaves it pulsing.
       this.view.cancelHint();
-      this.learn(game, a, b, hint);
+      this.learn(game, a, b, hint, input);
     }
     const anim = this.view.play([swap], (ev) => this.feedback(ev));
     this.swaps.add(anim);
     void anim.then(() => this.swaps.delete(anim));
     if (!swap.valid) {
       const record = this.recordOf(game);
-      if (record) record.bad++;
+      // An invalid swap leaves the board as it was: the cells are what the player tried.
+      if (record) recordMiss(record, game.board, a, b);
       if (this.running !== game) this.view.armHint();
       return;
     }
@@ -270,11 +271,11 @@ export class GameApp {
    * A valid swap goes into the attempt record. Made on the calm board without a hint, it also shows
    * how the player picks among all the moves there were: that teaches their taste.
    */
-  private learn(game: GameState, a: Pos, b: Pos, hint: boolean): void {
+  private learn(game: GameState, a: Pos, b: Pos, hint: boolean, input: SwapInput): void {
     const now = performance.now();
     const record = this.recordOf(game);
     // makeMove already swapped the pieces; the cells are what the record needs.
-    if (record) recordMove(record, game.board, a, b, hint, now - this.thinkFrom);
+    if (record) recordMove(record, game.board, a, b, hint, now - this.thinkFrom, input);
     this.thinkFrom = now;
     const from = indexOf(game.board, a.r, a.c);
     const to = indexOf(game.board, b.r, b.c);
@@ -357,6 +358,8 @@ export class GameApp {
   }
 
   private pause(): void {
+    const record = this.game && this.recordOf(this.game);
+    if (record) record.pauses++;
     this.mode = Mode.Pause;
     this.view.inputEnabled = false;
     this.view.cancelHint();

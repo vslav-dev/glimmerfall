@@ -73,6 +73,8 @@ export function startTelemetry(): void {
     device: deviceId(),
     ua: navigator.userAgent,
     lang: navigator.language,
+    /** minutes ahead of UTC: event times read as the player's local hour */
+    tz: -new Date().getTimezoneOffset(),
     screen: [screen.width, screen.height],
     viewport: [innerWidth, innerHeight],
     dpr: devicePixelRatio,

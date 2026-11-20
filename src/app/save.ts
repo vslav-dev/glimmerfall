@@ -4,7 +4,7 @@ import { Difficulty } from '@/player/difficulty';
 import { newModel, type PlayerModel, MODEL_VERSION } from '@/player/model';
 import { initialThreeStars } from '@/player/stars';
 import { loadJson, saveText } from '@/platform/platform';
-import type { AttemptRecord } from '@/telemetry/attempt';
+import { type AttemptRecord, newRecord } from '@/telemetry/attempt';
 import { timed } from '@/telemetry/perf';
 
 const KEY = 'glimmerfall-save';
@@ -98,6 +98,9 @@ export async function loadSave(): Promise<SaveData> {
   // Player fields merge too: one added later starts from its default; a model of another version starts over.
   const player = { ...defaults.player, ...data.player };
   if (player.model.version !== MODEL_VERSION) player.model = newModel();
+  // Record fields merge as well: an attempt saved before a field was added gets its default.
+  const attempt = data.current?.attempt;
+  if (attempt) attempt.record = { ...newRecord(attempt.record.board), ...attempt.record };
   return { ...defaults, ...data, player, settings };
 }
 

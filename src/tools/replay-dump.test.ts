@@ -34,6 +34,8 @@ interface Event {
   end: string;
   score: number;
   rec: string | null;
+  /** swaps that matched nothing, packed like moves (see AttemptRecord.misses); since 0.20.0 */
+  misses?: string | null;
   /** the request style, in whatever shape that version sent it */
   style: unknown;
   pace?: number;
@@ -87,6 +89,9 @@ describe.skipIf(!process.env.GF_IN)('replay dump', () => {
             last,
             hint: (packed >>> 9) & 1,
             think: ((packed >>> 18) & 255) / 10,
+            // sent since 0.20.0; zero in older events
+            drag: (packed >>> 26) & 1,
+            repicks: (packed >>> 27) & 3,
           });
         }
         makeMove(game, a, b);
