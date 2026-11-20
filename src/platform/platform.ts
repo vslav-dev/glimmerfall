@@ -37,12 +37,11 @@ export function setFullscreen(on: boolean): void {
   syncFullscreen();
 }
 
-/** Installed to the home screen, the app opens fullscreen by its manifest, without the browser's exit hint. */
-const installedFullscreen = window.matchMedia('(display-mode: fullscreen)');
-
+/**
+ * The fullscreen API, even in the installed app: Chrome on Android runs 120 Hz screens at full rate only here.
+ * A manifest with `display: fullscreen` hides the exit hint but drops to 60 Hz (Helio G99, Chrome 158).
+ */
 function syncFullscreen(): void {
-  // The fullscreen API shows the browser's exit hint on every entry; an installed app needs none of it.
-  if (installedFullscreen.matches && !document.fullscreenElement) return;
   // Unsupported (iOS Safari, some WebViews) or refused without a tap: rejections are ignored.
   if (fullscreenWanted && !document.fullscreenElement && document.fullscreenEnabled) {
     document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => undefined);
