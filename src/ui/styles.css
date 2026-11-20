@@ -307,7 +307,10 @@ body {
 
 .hud-score .value {
   min-width: 64px;
-  text-align: right;
+  /* the track's box: the flex row centers both alike, so the number sits level with the bar */
+  margin: 8px 0 20px;
+  line-height: 14px;
+  text-align: center;
   font-size: 18px;
   font-variant-numeric: tabular-nums;
 }
@@ -705,8 +708,8 @@ body {
 
 .hud-moves .value { --bump: 1.3; }
 .goal b { --bump: 1.45; }
-/* right-aligned, so it grows from its right edge and keeps clear of the bar */
-.hud-score .value { --bump: 1.35; --bump-glow: var(--gold); transform-origin: right center; }
+/* centered, so it grows evenly in every direction */
+.hud-score .value { --bump: 1.35; --bump-glow: var(--gold); }
 
 @keyframes num-bump {
   35% {
