@@ -137,7 +137,8 @@ function stepInto(ctx: Ctx, move: PendingMove | null): boolean {
   const due = ctx.fuse.length;
   const swap = move && !isStrike(move) ? move : null;
   if (move && isStrike(move)) STRIKES[move.booster](ctx, move);
-  if (swap && isComboPair(b.cells[swap.to].piece!, b.cells[swap.from].piece!)) runCombo(ctx, swap.to, swap.from);
+  // A combo goes off where the player's finger started, not where the moved piece landed.
+  if (swap && isComboPair(b.cells[swap.to].piece!, b.cells[swap.from].piece!)) runCombo(ctx, swap.from, swap.to);
   // The player's match is found before the fuse goes off, so a blast never steals it.
   const groups = findGroups(b, swap ? [swap.to, swap.from] : []);
   clearGroups(ctx, groups, swap);

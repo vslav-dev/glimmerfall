@@ -112,6 +112,26 @@ describe('resolveStep', () => {
     expect(clear?.type === 'clear' && clear.removed.length).toBe(9);
   });
 
+  it('a combo goes off at the cell the player touched, not where the moved piece landed', () => {
+    const centers = (a: Special, b2: Special) => {
+      const b = boardFrom(['01234', '12340', '23401', '34012', '40123']);
+      b.cells[indexOf(b, 2, 1)].piece!.special = a;
+      b.cells[indexOf(b, 2, 2)].piece!.special = b2;
+      const clear = resolveMove(b, indexOf(b, 2, 1), indexOf(b, 2, 2))?.events.find((e) => e.type === 'clear');
+      if (clear?.type !== 'clear') throw new Error('no clear');
+      return { combo: clear.combo, origins: clear.blasts.filter((x) => x.order === 0).map((x) => x.origin) };
+    };
+    const lines = centers(Special.LineH, Special.LineV);
+    expect(lines.combo).toEqual({ r: 2, c: 1 });
+    expect(lines.origins).toEqual([{ r: 2, c: 1 }, { r: 2, c: 1 }]);
+    const bombLine = centers(Special.Bomb, Special.LineH);
+    expect(bombLine.combo).toEqual({ r: 2, c: 1 });
+    // rows 1–3 and columns 0–2, each pair taken around (2,1)
+    expect(bombLine.origins).toEqual([
+      { r: 1, c: 1 }, { r: 2, c: 0 }, { r: 2, c: 1 }, { r: 2, c: 1 }, { r: 3, c: 1 }, { r: 2, c: 2 },
+    ]);
+  });
+
   it('prism + plain wipes that color', () => {
     const b = boardFrom(['0123', '1230', '2301', '3012']);
     b.cells[0].piece = { id: 99, color: -1, special: Special.Prism };

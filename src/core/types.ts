@@ -190,8 +190,9 @@ export type GameStatus = 'playing' | 'won' | 'lost';
 
 /** A valid swap already made on the board, waiting for the next step to clear it. Cell indices. */
 export interface PendingSwap {
+  /** the cell the player touched first; a combo centers here */
   from: number;
-  /** where the moved piece now is; a created special or a combo centers here */
+  /** where the moved piece now is; a special created by the swap's match appears here */
   to: number;
 }
 
