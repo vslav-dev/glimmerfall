@@ -11,6 +11,7 @@ export const BOOSTER_FOOTER = 74;
 /** a fill rises this long; a finished booster bursts this long */
 const FILL_MS = 900;
 const BURST_MS = 520;
+const BURST_EASE = 'cubic-bezier(0.2, 1.6, 0.4, 1)';
 
 const ACTIONS: Record<Booster, Action> = { [Booster.Star]: Action.Star, [Booster.Meteor]: Action.Meteor };
 
@@ -108,6 +109,11 @@ export class BoosterBar {
     }
   }
 
+  /** The effects menu can stop a ready button's breathing halo. */
+  public setGlow(on: boolean): void {
+    this.el.classList.toggle('calm', !on);
+  }
+
   /** Resolves once every gain has played out. */
   public settled(): Promise<void> {
     return Promise.all(Object.values(this.buttons).map((b) => b.settled)).then(() => undefined);
@@ -167,12 +173,15 @@ class BoosterButton {
     });
   }
 
+  /** A ring of light bursts out and the button pops: Web Animations, transform and opacity only. */
   private burst(): void {
     this.onCharged();
-    this.el.classList.remove('burst');
-    void this.el.offsetWidth;
-    this.el.classList.add('burst');
-    setTimeout(() => this.el.classList.remove('burst'), BURST_MS);
+    this.el.animate([{ opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(1.9)' }], {
+      duration: BURST_MS,
+      easing: 'ease-out',
+      pseudoElement: '::after',
+    });
+    this.el.querySelector('.orb')!.animate([{ transform: 'scale(1)', easing: BURST_EASE }, { offset: 0.4, transform: 'scale(1.22)', easing: BURST_EASE }, { transform: 'scale(1)' }], BURST_MS);
   }
 
   /** `animate` off jumps there at once: a fill starting over drops back without draining visibly. */

@@ -9,7 +9,11 @@ import { track } from '@/telemetry/telemetry';
  * A frame splits into the JS update (tweens, particles), the Pixi render submit (CPU) and the rest
  * of the interval (GPU, compositor, other main-thread work). Long frames and slow taps come from
  * the browser's own timing APIs (Chromium only); `ops` time the known heavy operations.
- * What else was going on: `flags` count the frames each state was on in (a booster glowing, the phone charging),
+ * Where a slow frame's time went: `profile` compares slow frames (>20 ms) with the rest by our JS (update, render),
+ * how late the frame started (the main thread busy before it), the pixels filled (sprites plus the canvas clear,
+ * in canvases), the sprites drawn and how many frames behind the GPU ran (WebGL2 fences). `fillBins` gives the
+ * slow share per fill level; `idle` counts frames left undrawn because nothing on screen changed.
+ * What else was going on: `flags` count the frames (and slow frames) each state was on in (a booster glowing, the phone charging),
  * `counts` tally what the board played (blasts by kind, popped pieces), `peaks` the most of something at once
  * (live particles), and the battery says how charged the phone is and whether it charges: a warm, charging phone
  * may be throttled.
@@ -19,6 +23,12 @@ type Data = Record<string, unknown>;
 
 /** Frame intervals above these (ms) are counted: ~1.2, 2, 3 and 6 frames at 60 Hz. */
 const SLOW_INTERVALS = [20, 33, 50, 100];
+/** a frame this long is slow for the profile and the flags */
+const SLOW_MS = SLOW_INTERVALS[0];
+/** upper edges of the fill levels the slow share is split by, in canvases */
+const FILL_BINS = [1.5, 2.5, 4, Infinity];
+/** GPU lags kept apart, in frames; the last one holds that many and more */
+const MAX_GPU_LAG = 5;
 /** A window with less play than this carries over into the next one instead of being sent. */
 const MIN_FRAMES = 30;
 /** Taps that take longer than this to show their result are reported (the API rounds to 8 ms). */
@@ -80,6 +90,43 @@ class Histogram {
   }
 }
 
+/** What one drawn frame cost and drew. */
+export interface FrameSample {
+  /** since the previous frame; 0 for the first frame after idle */
+  interval: number;
+  updateMs: number;
+  renderMs: number;
+  /** how late the frame callback started after the frame began */
+  lateMs: number;
+  /** pixels filled, in canvases: every visible sprite plus the clear */
+  fill: number;
+  sprites: number;
+}
+
+/** Sums of a group of frames, averaged in the report. */
+class Profile {
+  public n = 0;
+  private update = 0;
+  private render = 0;
+  private late = 0;
+  private fill = 0;
+  private sprites = 0;
+
+  public add(f: FrameSample): void {
+    this.n++;
+    this.update += f.updateMs;
+    this.render += f.renderMs;
+    this.late += f.lateMs;
+    this.fill += f.fill;
+    this.sprites += f.sprites;
+  }
+
+  public summary(): Data {
+    const avg = (v: number): number => round(this.n ? v / this.n : 0);
+    return { n: this.n, update: avg(this.update), render: avg(this.render), late: avg(this.late), fill: avg(this.fill), sprites: avg(this.sprites) };
+  }
+}
+
 function newWindow() {
   return {
     start: performance.now(),
@@ -92,7 +139,14 @@ function newWindow() {
     loaf: { n: 0, ms: 0, blockMs: 0, layoutMs: 0, maxMs: 0, worst: '' },
     input: { n: 0, maxMs: 0, worst: null as Data | null },
     ops: new Map<string, { n: number; ms: number; max: number }>(),
-    flags: new Map<string, number>(),
+    slowProfile: new Profile(),
+    fastProfile: new Profile(),
+    late: new Histogram(0.5, 50),
+    fill: new Histogram(0.25, 20),
+    fillBins: FILL_BINS.map(() => ({ frames: 0, slow: 0 })),
+    gpuLag: new Array<number>(MAX_GPU_LAG + 1).fill(0),
+    idle: 0,
+    flags: new Map<string, { frames: number; slow: number }>(),
     counts: new Map<string, number>(),
     peaks: new Map<string, number>(),
   };
@@ -167,20 +221,42 @@ export function perfContext(data: Data): void {
   Object.assign(context, data);
 }
 
-/** `interval` is 0 for the first frame after idle: there is no previous frame to measure from. */
-export function recordFrame(interval: number, updateMs: number, renderMs: number): void {
+export function recordFrame(f: FrameSample): void {
+  const { interval } = f;
+  const slow = interval > SLOW_MS;
   if (interval > 0) {
     win.interval.add(interval);
     SLOW_INTERVALS.forEach((limit, k) => {
       if (interval > limit) win.slow[k]++;
     });
+    (slow ? win.slowProfile : win.fastProfile).add(f);
+    const bin = win.fillBins[FILL_BINS.findIndex((edge) => f.fill < edge)];
+    bin.frames++;
+    if (slow) bin.slow++;
   }
-  win.update.add(updateMs);
-  win.render.add(renderMs);
+  win.update.add(f.updateMs);
+  win.render.add(f.renderMs);
+  win.late.add(f.lateMs);
+  win.fill.add(f.fill);
   win.draws += frameDraws;
   win.drawsMax = Math.max(win.drawsMax, frameDraws);
   frameDraws = 0;
-  for (const name of flagsOn) win.flags.set(name, (win.flags.get(name) ?? 0) + 1);
+  for (const name of flagsOn) {
+    const flag = win.flags.get(name) ?? { frames: 0, slow: 0 };
+    flag.frames++;
+    if (slow) flag.slow++;
+    win.flags.set(name, flag);
+  }
+}
+
+/** A frame the loop ran but did not draw: only pauses were running, nothing on screen changed. */
+export function recordIdleFrame(): void {
+  win.idle++;
+}
+
+/** The GPU finished a frame this many frames after it was submitted. */
+export function recordGpuLag(frames: number): void {
+  win.gpuLag[Math.min(MAX_GPU_LAG, frames)]++;
 }
 
 /** Times `fn`; a returned promise is timed until it settles. */
@@ -225,6 +301,12 @@ export function flushPerf(reason: string): void {
     update: w.update.summary(),
     render: w.render.summary(),
     draws: { avg: round(w.update.count ? w.draws / w.update.count : 0), max: w.drawsMax },
+    late: w.late.summary(),
+    fill: w.fill.summary(),
+    profile: { slow: w.slowProfile.summary(), fast: w.fastProfile.summary() },
+    fillBins: Object.fromEntries(FILL_BINS.map((edge, k) => [edge === Infinity ? `${FILL_BINS[k - 1]}+` : `<${edge}`, w.fillBins[k]])),
+    gpuLag: w.gpuLag,
+    idle: w.idle,
     loaf: loafSupported ? { ...w.loaf, ms: Math.round(w.loaf.ms), blockMs: Math.round(w.loaf.blockMs), layoutMs: Math.round(w.loaf.layoutMs) } : null,
     input: eventsSupported ? w.input : null,
     ops: Object.fromEntries([...w.ops].map(([name, o]) => [name, { n: o.n, ms: round(o.ms), max: round(o.max) }])),

@@ -4,6 +4,7 @@ import { type GameState, type LevelDef, type Objective, ObjectiveKind, Special }
 import { BoardSize, type Settings } from '@/app/save';
 import { DIFFICULTIES } from '@/player/difficulty';
 import { FrameName, frameDataUrl } from '@/view/art';
+import { perfFlag } from '@/telemetry/perf';
 import { Fx, type FxChoice } from '@/view/fx/switches';
 import { Counter } from '@/ui/counter';
 import { Glide } from '@/ui/glide';
@@ -46,6 +47,15 @@ const THEMES = 5;
 const STAR_PATH = 'M12 2.4l2.95 6.07 6.65.95-4.8 4.7 1.13 6.63L12 17.6l-5.93 3.15 1.13-6.63-4.8-4.7 6.65-.95z';
 const starSvg = (cls: string): string => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="${STAR_PATH}"/></svg>`;
 const ICON_SIZE = 72;
+/** A flashed word pops in, holds and drifts up as it fades: opacity and transform only, run by the compositor. */
+const FLASH_FRAMES: Keyframe[] = [
+  { offset: 0, opacity: 0, transform: 'translate(-50%, -50%) scale(0.5)', easing: 'ease-out' },
+  { offset: 0.2, opacity: 1, transform: 'translate(-50%, -50%) scale(1.12)', easing: 'ease-out' },
+  { offset: 0.35, transform: 'translate(-50%, -50%) scale(1)', easing: 'ease-out' },
+  { offset: 0.8, opacity: 1, easing: 'ease-out' },
+  { offset: 1, opacity: 0, transform: 'translate(-50%, -70%) scale(1)' },
+];
+const FLASH_MS = 1000;
 
 /**
  * DOM layer: menus, cards and the HUD over the canvas. Only transform/opacity animate,
@@ -66,6 +76,9 @@ export class Ui {
   private hudStars: HTMLElement[] = [];
   private hudGoals: HTMLElement[] = [];
   private resetArmed = false;
+  private flash: Animation | null = null;
+  /** DOM effects switched off in the debug menu */
+  private effects: FxChoice = {};
 
   public constructor(
     root: HTMLElement,
@@ -81,6 +94,15 @@ export class Ui {
       const target = (e.target as HTMLElement).closest<HTMLElement>('[data-action]');
       if (target) this.onAction(target.dataset.action as Action, target.closest<HTMLElement>('[data-item]')?.dataset.item);
     });
+  }
+
+  /** The effects menu's choice, for the DOM effects: the HUD pop and the praise. */
+  public setEffects(choice: FxChoice): void {
+    this.effects = choice;
+  }
+
+  private on(fx: Fx): boolean {
+    return this.effects[fx] !== false;
   }
 
   /** The viewport changed: the HUD drifts to its new spot. */
@@ -311,12 +333,13 @@ export class Ui {
         )}${this.markHtml(100, def.stars[2].toLocaleString('ru-RU'))}</div></div>
         <b class="value">0</b>
       </div>`;
-    this.hudMoves = new Counter(this.hud.querySelector('.hud-moves .value')!);
-    this.hudScore = new Counter(this.hud.querySelector('.hud-score .value')!);
+    const pops = (): boolean => this.on(Fx.HudPop);
+    this.hudMoves = new Counter(this.hud.querySelector('.hud-moves .value')!, pops);
+    this.hudScore = new Counter(this.hud.querySelector('.hud-score .value')!, pops);
     this.hudFill = this.hud.querySelector('.fill');
     this.hudStars = [...this.hud.querySelectorAll<HTMLElement>('.mark')];
     this.hudGoals = [...this.hud.querySelectorAll<HTMLElement>('.hud-goals .goal')];
-    this.hudGoalCounters = this.hudGoals.map((el) => new Counter(el.querySelector('b')!));
+    this.hudGoalCounters = this.hudGoals.map((el) => new Counter(el.querySelector('b')!, pops));
   }
 
   public hideHud(): void {
@@ -347,16 +370,21 @@ export class Ui {
 
   /** `step` 0 is the first praised step of a cascade; later steps draw more excited words. */
   public praise(step: number): void {
-    this.flashText(this.praiseWords.next(step));
+    if (this.on(Fx.Praise)) this.flashText(this.praiseWords.next(step));
   }
 
+  /** Restarted without a forced reflow: praise comes every step of a cascade. */
   public flashText(text: string): void {
     this.praiseEl.textContent = text;
     // Long phrases shrink to fit the screen width.
     this.praiseEl.style.setProperty('--chars', String(text.length));
-    this.praiseEl.classList.remove('show');
-    void this.praiseEl.offsetWidth;
-    this.praiseEl.classList.add('show');
+    this.flash?.cancel();
+    const flash = this.praiseEl.animate(FLASH_FRAMES, FLASH_MS);
+    this.flash = flash;
+    perfFlag('flashText', true);
+    flash.onfinish = flash.oncancel = () => {
+      if (this.flash === flash) perfFlag('flashText', false);
+    };
   }
 
   /** Fades to the curtain, runs the change behind it, fades back. */

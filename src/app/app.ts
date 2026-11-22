@@ -21,7 +21,7 @@ import { BOOSTER_FOOTER, BoosterBar } from '@/ui/boosterBar';
 import { Action, Ui } from '@/ui/ui';
 import { S } from '@/ui/strings';
 import { BoardView, type Layer } from '@/view/boardView';
-import type { Fx } from '@/view/fx/switches';
+import { Fx } from '@/view/fx/switches';
 import { Timing } from '@/view/fx/timeline';
 import type { Scene } from '@/view/scene';
 
@@ -635,7 +635,7 @@ export class GameApp {
     const effects = this.save.settings.effects;
     if (effects[fx] === false) delete effects[fx];
     else effects[fx] = false;
-    this.view.fx.set(effects);
+    this.applyEffects();
     this.persist();
     this.ui.updateEffect(fx, effects);
   }
@@ -716,11 +716,20 @@ export class GameApp {
     const s = this.save.settings;
     this.audio.enabled = s.sound;
     this.audio.choose(s.sounds);
-    this.view.fx.set(s.effects);
+    this.applyEffects();
     setHapticsEnabled(s.haptics);
     setFullscreen(s.fullscreen);
     this.view.setScale(s.boardSize / 100);
     perfContext({ boardSize: s.boardSize });
+  }
+
+  /** The board, the HUD and the bar follow the effects menu; perf windows say what was off, for A/B on a device. */
+  private applyEffects(): void {
+    const effects = this.save.settings.effects;
+    this.view.fx.set(effects);
+    this.ui.setEffects(effects);
+    this.boosters.setGlow(effects[Fx.BoosterGlow] !== false);
+    perfContext({ fxOff: Object.keys(effects).sort() });
   }
 
   /** Viewport changes (system bars sliding in, rotation) glide instead of jumping. */

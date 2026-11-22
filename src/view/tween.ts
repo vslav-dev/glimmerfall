@@ -13,6 +13,8 @@ export const Ease = {
 } as const;
 
 interface Tween {
+  /** false for a pause: it moves nothing on screen */
+  visual: boolean;
   /** negative while waiting for the delay */
   elapsed: number;
   duration: number;
@@ -41,9 +43,24 @@ export class Tweens {
     return this.list.length > 0;
   }
 
+  /** Something on screen is moving: a tween past its delay that is not a pause. */
+  public get visual(): boolean {
+    return this.list.some((t) => t.visual && t.elapsed >= 0);
+  }
+
   public run(duration: number, update: (k: number) => void, options: TweenOptions = {}): Promise<void> {
+    return this.add(true, duration, update, options);
+  }
+
+  /** A pause in game time: it keeps the clock running but draws nothing. */
+  public wait(ms: number): Promise<void> {
+    return this.add(false, ms, () => undefined, { ease: Ease.linear });
+  }
+
+  private add(visual: boolean, duration: number, update: (k: number) => void, options: TweenOptions): Promise<void> {
     return new Promise((resolve) => {
       this.list.push({
+        visual,
         elapsed: -(options.delay ?? 0),
         duration: Math.max(1, duration),
         ease: options.ease ?? Ease.outQuad,
@@ -54,11 +71,8 @@ export class Tweens {
     });
   }
 
-  public wait(ms: number): Promise<void> {
-    return this.run(ms, () => undefined, { ease: Ease.linear });
-  }
-
-  public update(dt: number): void {
+  /** Advances every tween; returns how many finished (what awaited them runs after this frame is drawn). */
+  public update(dt: number): number {
     const step = dt * this.speed;
     const done: Tween[] = [];
     for (const t of this.list) {
@@ -68,9 +82,10 @@ export class Tweens {
       t.update(t.ease(k));
       if (k >= 1) done.push(t);
     }
-    if (done.length === 0) return;
+    if (done.length === 0) return 0;
     this.list = this.list.filter((t) => !done.includes(t));
     for (const t of done) t.resolve();
+    return done.length;
   }
 
   /** Jumps every running tween to its end. */

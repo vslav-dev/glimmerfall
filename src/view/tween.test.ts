@@ -18,4 +18,19 @@ describe('Tweens', () => {
     await swap;
     expect(tweens.active).toBe(false);
   });
+
+  it('tells pauses and tweens still in their delay from what moves on screen, and counts what finished', () => {
+    const tweens = new Tweens(() => undefined);
+    void tweens.wait(100);
+    void tweens.run(100, () => undefined, { delay: 50 });
+    expect(tweens.visual).toBe(false);
+    expect(tweens.update(40)).toBe(0);
+    expect(tweens.visual).toBe(false);
+    expect(tweens.update(20)).toBe(0);
+    expect(tweens.visual).toBe(true);
+    expect(tweens.update(50)).toBe(1);
+    expect(tweens.active).toBe(true);
+    expect(tweens.update(100)).toBe(1);
+    expect(tweens.active).toBe(false);
+  });
 });

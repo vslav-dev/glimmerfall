@@ -1,5 +1,5 @@
-import { autoDetectRenderer, Container, type Renderer } from 'pixi.js';
-import { countDraws, perfContext, recordFrame } from '@/telemetry/perf';
+import { autoDetectRenderer, Container, type Renderer, Sprite } from 'pixi.js';
+import { countDraws, perfContext, recordFrame, recordGpuLag, recordIdleFrame } from '@/telemetry/perf';
 import { track } from '@/telemetry/telemetry';
 import { Tweens } from '@/view/tween';
 
@@ -19,7 +19,8 @@ type Updater = (dt: number) => boolean;
 
 /**
  * WebGL renderer with an on-demand loop: frames run only while something animates,
- * so an idle board costs no GPU, no battery and no heat.
+ * so an idle board costs no GPU, no battery and no heat. A frame where only pauses run (nothing on screen
+ * moves) keeps the clock going but is not drawn.
  */
 export class Scene {
   public readonly root = new Container();
@@ -33,11 +34,21 @@ export class Scene {
   private quality = 0;
   private slowFrames = 0;
   private scheduled = false;
+  /** the picture changed outside the tweens (or right after some finished): draw the next frame */
+  private dirty = true;
+  /** an updater animated in the previous frame: its last change still needs drawing */
+  private animated = false;
+  /** WebGL2 only: a fence after a drawn frame, to see how many frames behind the GPU runs */
+  private readonly gl2: WebGL2RenderingContext | null;
+  private fence: { sync: WebGLSync; frame: number } | null = null;
+  private drawn = 0;
   private last = 0;
   private width = 1;
   private height = 1;
 
-  private constructor(private readonly renderer: Renderer) {}
+  private constructor(private readonly renderer: Renderer) {
+    this.gl2 = 'gl' in renderer && renderer.context.webGLVersion === 2 ? renderer.gl : null;
+  }
 
   public static async create(canvas: HTMLCanvasElement): Promise<Scene> {
     const renderer = await autoDetectRenderer({
@@ -88,35 +99,72 @@ export class Scene {
     this.request();
   }
 
+  /** Something on screen changed: the next frame is drawn. */
   public request(): void {
+    this.dirty = true;
+    this.schedule();
+  }
+
+  private schedule(): void {
     if (this.scheduled) return;
     this.scheduled = true;
     requestAnimationFrame(this.frame);
   }
 
   private readonly frame = (now: number): void => {
+    const start = performance.now();
     this.scheduled = false;
     const interval = this.last ? now - this.last : 0;
     const dt = this.last ? Math.min(50, interval) : 16;
     this.last = now;
 
-    const start = performance.now();
     const gameDt = this.stopLeft > 0 ? dt * HITSTOP_SPEED : dt;
     this.stopLeft = Math.max(0, this.stopLeft - dt);
-    this.tweens.update(gameDt);
-    let active = this.tweens.active || this.stopLeft > 0;
-    for (const { fn, realTime } of this.updaters) active = fn(realTime ? dt : gameDt) || active;
+    const finished = this.tweens.update(gameDt);
+    let animating = false;
+    for (const { fn, realTime } of this.updaters) animating = fn(realTime ? dt : gameDt) || animating;
+    const draw = this.dirty || finished > 0 || animating || this.animated || this.tweens.visual;
+    // What awaited the finished tweens runs after this frame: whatever it changes is drawn in the next one.
+    this.dirty = finished > 0;
+    this.animated = animating;
     const updated = performance.now();
-    this.renderer.render(this.root);
-    recordFrame(interval, updated - start, performance.now() - updated);
+    if (draw) {
+      this.renderer.render(this.root);
+      const rendered = performance.now();
+      this.watchGpu();
+      recordFrame({ interval, updateMs: updated - start, renderMs: rendered - updated, lateMs: Math.max(0, start - now), ...coverage(this.root, this.width * this.height) });
+    } else {
+      recordIdleFrame();
+    }
 
-    if (active) {
-      this.trackSpeed(dt);
-      this.request();
+    if (this.tweens.active || this.stopLeft > 0 || animating || this.dirty) {
+      if (draw) this.trackSpeed(dt);
+      this.schedule();
     } else {
       this.last = 0;
+      this.dropFence();
     }
   };
+
+  /** After each drawn frame: how many drawn frames ago did the GPU finish the fenced one. */
+  private watchGpu(): void {
+    const gl = this.gl2;
+    if (!gl) return;
+    this.drawn++;
+    if (this.fence) {
+      if (gl.getSyncParameter(this.fence.sync, gl.SYNC_STATUS) !== gl.SIGNALED) return;
+      recordGpuLag(this.drawn - this.fence.frame - 1);
+      this.dropFence();
+    }
+    const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+    if (sync) this.fence = { sync, frame: this.drawn };
+  }
+
+  /** A fence left over a pause would read as a long lag: it is dropped when the loop stops. */
+  private dropFence(): void {
+    if (this.fence) this.gl2?.deleteSync(this.fence.sync);
+    this.fence = null;
+  }
 
   private trackSpeed(dt: number): void {
     this.slowFrames = dt > SLOW_FRAME_MS ? this.slowFrames + 1 : Math.max(0, this.slowFrames - 2);
@@ -140,6 +188,24 @@ export class Scene {
       px: [Math.round(this.width * res), Math.round(this.height * res)],
     });
   }
+}
+
+/** Pixels the frame fills, in canvases (every visible sprite, plus the clear), and the sprites drawn. */
+function coverage(root: Container, canvasArea: number): { fill: number; sprites: number } {
+  let area = 0;
+  let sprites = 0;
+  const visit = (node: Container): void => {
+    if (!node.visible || node.alpha <= 0) return;
+    if (node instanceof Sprite) {
+      const t = node.worldTransform;
+      const frame = node.texture.frame;
+      area += Math.abs(t.a * t.d - t.b * t.c) * frame.width * frame.height;
+      sprites++;
+    }
+    for (const child of node.children) visit(child);
+  };
+  visit(root);
+  return { fill: 1 + area / Math.max(1, canvasArea), sprites };
 }
 
 function glInfo(renderer: Renderer): Record<string, unknown> {
