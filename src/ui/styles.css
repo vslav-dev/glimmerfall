@@ -695,14 +695,17 @@ body {
   display: none;
 }
 
-/* out of moves with a booster saved: beside the boosters, for a player who would rather keep it */
+/*
+ * Out of moves with a booster saved: beside the boosters, for a player who would rather keep it.
+ * Dressed as an orb stretched sideways: the same height, rim and glass, ends rounded by half the height.
+ */
 .give-up {
-  /* level with the orbs' middle */
-  margin-top: 8px;
-  padding: 8px 14px;
-  border-radius: 99px;
+  height: 54px;
+  padding: 0 22px;
+  border-radius: 27px;
   border: 2px solid var(--panel-border);
-  background: rgba(0, 0, 0, 0.28);
+  background: radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.2), rgba(0, 0, 0, 0.25));
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.45);
   color: var(--text);
   font: inherit;
   font-size: 15px;
