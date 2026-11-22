@@ -40,7 +40,7 @@ const STOP_FROM = 5;
  */
 export function feel(hit: number): Feel {
   return {
-    shake: 0.15 * (1 + 0.25 * hit),
+    shake: Math.min(0.6, 0.2 * (1 + 0.4 * hit)),
     punch: Math.min(0.03, 0.003 * (1 + 0.6 * hit)),
     stopMs: hit < STOP_FROM ? 0 : Math.min(80, 35 + 10 * (hit - STOP_FROM)),
   };

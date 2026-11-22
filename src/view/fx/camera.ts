@@ -1,9 +1,9 @@
 import { Container } from 'pixi.js';
 
 /** strongest shake, in cells of shift and radians of tilt */
-const MAX_SHIFT = 0.15;
-const MAX_TILT = 0.015;
-/** trauma lost per second: a full 1 calms down in 1 s, a single hit in ~0.15 s */
+const MAX_SHIFT = 0.2;
+const MAX_TILT = 0.02;
+/** trauma lost per second: a full 1 calms down in 1 s, a first hit in ~0.2 s */
 const TRAUMA_DECAY = 1;
 /** shake noise, rad/s: a few incommensurate sines read as a rough, smooth tremble, never as a pattern */
 const NOISE = [38, 33, 27] as const;
