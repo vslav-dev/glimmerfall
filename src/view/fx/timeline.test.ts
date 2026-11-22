@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { type Blast, BlastKind, type GameEvent, NO_COLOR, type Pos } from '@/core/types';
-import { blastPower, bombRadius, hitstopMs } from '@/view/fx/impact';
+import { blastPower, bombRadius, hitstopMs, shakeOf } from '@/view/fx/impact';
 import { planClear, Timing } from '@/view/fx/timeline';
 
 type ClearEvent = Extract<GameEvent, { type: 'clear' }>;
@@ -77,5 +77,10 @@ describe('impact', () => {
     expect(hitstopMs(0.42)).toBe(0);
     expect(hitstopMs(0.75)).toBeGreaterThan(0);
     expect(hitstopMs(1.5)).toBeGreaterThan(hitstopMs(0.75));
+  });
+
+  it('shakes every hit alike, harder along the move', () => {
+    expect(shakeOf(1)).toBeGreaterThan(shakeOf(0));
+    expect(shakeOf(5)).toBeGreaterThan(shakeOf(4));
   });
 });

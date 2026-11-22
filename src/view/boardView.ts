@@ -8,7 +8,7 @@ import { perfContext, timed } from '@/telemetry/perf';
 import { FrameName, GEM_TINTS } from '@/view/art';
 import { Atlas } from '@/view/atlas';
 import { Camera } from '@/view/fx/camera';
-import { blastPower, COMBO_POWER, cascadeBoost, hitstopMs } from '@/view/fx/impact';
+import { blastPower, COMBO_POWER, cascadeBoost, hitstopMs, shakeOf } from '@/view/fx/impact';
 import { SpritePool } from '@/view/fx/pool';
 import { blastFx, comboCharge, createFx, flash, type FxKit, land, type Layer, layerFx, popPiece, WHITE } from '@/view/fx/stage';
 import { Fx, FxSwitches } from '@/view/fx/switches';
@@ -124,6 +124,8 @@ export class BoardView {
   private readonly locked = new Set<number>();
   /** bumped when the board is replaced or removed: playback still in flight stops */
   private epoch = 0;
+  /** special hits so far in the script being played: each next one shakes harder */
+  private hits = 0;
 
   public constructor(
     private readonly scene: Scene,
@@ -294,6 +296,7 @@ export class BoardView {
     const epoch = this.epoch;
     const cells = this.cellsOf(events);
     for (const i of cells) this.locked.add(i);
+    this.hits = 0;
     if (this.selected && cells.has(this.indexOf(this.selected))) this.deselect();
 
     for (const ev of events) {
@@ -420,7 +423,7 @@ export class BoardView {
 
   /**
    * A clear step, timed by its plan: every piece pops as its blast's wave reaches it, a chained special
-   * goes off once the wave got to it, a combo gathers its power first. Hits shake the board by their power.
+   * goes off once the wave got to it, a combo gathers its power first. Every hit shakes the board, harder along the move.
    */
   private async playClear(ev: ClearEvent): Promise<void> {
     const plan = planClear(ev, { wave: this.fx.on(Fx.Wave), charge: this.fx.on(Fx.Combo) });
@@ -509,9 +512,10 @@ export class BoardView {
     await this.scene.tweens.wait(Math.max(0, end - FALL_OVERLAP));
   }
 
-  /** A hit of `power`: shakes the board, punches it when big, and freezes the game for the biggest. */
+  /** A hit of `power`: shakes the board (harder with each hit of the move), punches it when big, freezes the game for the biggest. */
   private impact(power: number, stop: boolean): void {
-    if (this.fx.on(Fx.Shake)) this.camera.shake(power);
+    if (this.fx.on(Fx.Shake)) this.camera.shake(shakeOf(this.hits));
+    this.hits++;
     if (this.fx.on(Fx.Punch) && power >= 0.4) this.camera.punch(0.008 + 0.022 * Math.min(1, power));
     const ms = stop && this.fx.on(Fx.Hitstop) ? hitstopMs(power) : 0;
     if (ms > 0) this.scene.hitstop(ms);

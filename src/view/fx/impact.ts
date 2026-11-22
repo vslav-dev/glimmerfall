@@ -1,7 +1,7 @@
 import { type Blast, BlastKind } from '@/core/types';
 
 /**
- * How hard an event hits, one scale for every effect: shake, hitstop, the board's punch, particle counts.
+ * How hard an event hits, one scale for hitstop, the board's punch and the bomb's recoil (not the shake: see shakeOf).
  * ~0.1 a spark, ~0.3 a line, ~0.4 a bomb, ~0.75 a big bomb or a whole-color prism, 1+ the biggest combos.
  */
 export function blastPower(b: Blast): number {
@@ -24,6 +24,16 @@ export const COMBO_POWER = 0.35;
 /** Deeper cascades hit a little harder each step. */
 export function cascadeBoost(cascade: number): number {
   return 1 + 0.08 * Math.min(cascade, 6);
+}
+
+/** Trauma of a special's hit, any kind: barely there on its own. */
+const SHAKE_HIT = 0.15;
+/** each next hit of a move shakes this much more of it, so a long chain builds up */
+const SHAKE_GROWTH = 0.25;
+
+/** Shake of the move's `hit`-th special hit (from 0): the same for every kind, growing along the move. */
+export function shakeOf(hit: number): number {
+  return SHAKE_HIT * (1 + SHAKE_GROWTH * hit);
 }
 
 /** Freeze length for a hit: only big hits freeze, so the freeze itself tells how big. */

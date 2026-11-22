@@ -1,10 +1,10 @@
 import { Container } from 'pixi.js';
 
 /** strongest shake, in cells of shift and radians of tilt */
-const MAX_SHIFT = 0.13;
+const MAX_SHIFT = 0.15;
 const MAX_TILT = 0.015;
-/** trauma lost per second: a full 1 calms down in ~0.6 s */
-const TRAUMA_DECAY = 1.7;
+/** trauma lost per second: a full 1 calms down in 1 s, a single hit in ~0.15 s */
+const TRAUMA_DECAY = 1;
 /** shake noise, rad/s: a few incommensurate sines read as a rough, smooth tremble, never as a pattern */
 const NOISE = [38, 33, 27] as const;
 /** the board's punch: rings at this many Hz and dies out at this rate per second */
@@ -14,7 +14,7 @@ const PUNCH_LIFE = 0.5;
 
 /**
  * Moves the whole board around its center: shake by trauma (Eiserloh, GDC 2016) and a springy punch.
- * Hits add trauma; the visible shake is trauma^1.5, so a line just trembles it and big hits rattle.
+ * Hits add trauma and the shake follows it as is: hits close together pile up into a stronger one.
  * Runs in real time: a hitstop freezes the game, not the shake.
  */
 export class Camera {
@@ -66,7 +66,7 @@ export class Camera {
   }
 
   private apply(): void {
-    const k = this.trauma ** 1.5;
+    const k = this.trauma;
     const shift = k * MAX_SHIFT * this.cell;
     this.view.position.set(this.cx + shift * this.noise(0), this.cy + shift * this.noise(1.7));
     this.view.rotation = k * MAX_TILT * this.noise(3.1);
