@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { posOf } from '@/core/board';
-import { advance, canAct, createGame, makeMove, startFinale } from '@/core/game';
+import { advance, canAct, canStrike, createGame, makeMove, startFinale, strike } from '@/core/game';
 import { findMoves } from '@/core/moves';
-import { type GameState, type LevelDef, LevelKind, ObjectiveKind } from '@/core/types';
-import { decodeMoves, encodeMoves, newRecord, recordMiss, recordMove, recordStep, replayAttempt } from '@/telemetry/attempt';
+import { Booster, type GameState, type LevelDef, LevelKind, ObjectiveKind } from '@/core/types';
+import { decodeMoves, encodeMoves, newRecord, recordMiss, recordMove, recordStep, recordStrike, replayAttempt } from '@/telemetry/attempt';
 
 function level(target: number): LevelDef {
   const size = 72;
@@ -29,8 +29,8 @@ function level(target: number): LevelDef {
   return lv;
 }
 
-/** Plays like the app: board steps one by one, a swap now at rest, now in the middle of a cascade. */
-function play(lv: LevelDef, seed: number) {
+/** Plays like the app: board steps one by one, a swap now at rest, now in the middle of a cascade; boosters at rest. */
+function play(lv: LevelDef, seed: number, boosters = false) {
   const game = createGame(lv, seed);
   const record = newRecord(seed);
   for (let turn = 0; game.status === 'playing' && turn < 200; turn++) {
@@ -42,6 +42,14 @@ function play(lv: LevelDef, seed: number) {
       events = advance(game);
     }
     if (!canAct(game)) continue;
+    if (boosters && turn % 6 === 3 && canStrike(game)) {
+      const booster = turn % 12 === 3 ? Booster.Meteor : Booster.Star;
+      // Cell 0 is a hole.
+      const at = posOf(game.board, 1 + ((turn * 11 + seed) % 71));
+      expect(strike(game, booster, at)).toBe(true);
+      recordStrike(record, game.board, booster, at);
+      continue;
+    }
     const moves = findMoves(game.board);
     if (moves.length === 0) continue;
     const [i, j] = moves[(turn * 7 + seed) % moves.length];
@@ -57,17 +65,19 @@ function play(lv: LevelDef, seed: number) {
   return { game, record };
 }
 
-const summary = (g: GameState) => ({ status: g.status, score: g.score, made: g.movesMade, left: g.movesLeft, progress: g.progress });
+const summary = (g: GameState) => ({ status: g.status, score: g.score, made: g.movesMade, left: g.movesLeft, progress: g.progress, strikes: g.strikes });
 
 describe('attempt record', () => {
-  for (const [name, target] of [
-    ['a won attempt', 12],
-    ['a lost attempt', 500],
+  for (const [name, target, boosters] of [
+    ['a won attempt', 12, false],
+    ['a lost attempt', 500, false],
+    ['an attempt with boosters', 500, true],
   ] as const) {
     it(`replays ${name} exactly from the board seed and the packed moves`, () => {
       const lv = level(target);
-      const { game, record } = play(lv, 4242);
+      const { game, record } = play(lv, 4242, boosters);
       expect(game.status).toBe(target === 12 ? 'won' : 'lost');
+      if (boosters) expect(game.strikes).toBeGreaterThan(0);
       const replayed = replayAttempt(lv, { board: record.board, moves: decodeMoves(encodeMoves(record.moves)) });
       expect(summary(replayed)).toEqual(summary(game));
     });

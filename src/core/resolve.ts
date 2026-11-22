@@ -7,18 +7,22 @@ import {
   type Blast,
   BlastKind,
   type Board,
+  Booster,
   type CreatedPiece,
   type GameEvent,
+  isStrike,
   type LayerChange,
   type LitPiece,
   MAX_COLORS,
   NO_COLOR,
+  type PendingMove,
   type PendingSwap,
   type Piece,
   type Pos,
   type RemovedPiece,
   type ScorePopup,
   Special,
+  type Strike,
 } from '@/core/types';
 
 const PIECE_POINTS = 10;
@@ -26,14 +30,12 @@ const LAYER_POINTS = 20;
 const MAX_MULTIPLIER = 5;
 /** Most moves the finale turns into specials; moves beyond it add nothing. */
 export const FINALE_CONVERSIONS = 12;
-const SPARK_PAIR_TARGETS = 4;
 
 const SPECIAL_BONUS: Record<Special, number> = {
   [Special.None]: 0,
   [Special.LineH]: 40,
   [Special.LineV]: 40,
   [Special.Bomb]: 60,
-  [Special.Spark]: 30,
   [Special.Prism]: 100,
 };
 
@@ -45,9 +47,6 @@ export interface Tally {
   crate: number;
 }
 
-/** How attractive a cell is as a spark target, given what the current step has gained so far. The game derives it from its objectives. */
-export type TargetScorer = (b: Board, i: number, tally: Tally) => number;
-
 /** What a step did: the playback script and its gains. */
 export interface Step {
   events: GameEvent[];
@@ -58,15 +57,12 @@ interface Activation {
   piece: Piece;
   i: number;
   order: number;
-  /** special a spark carries to its target */
-  carry: Special;
 }
 
 /** One clear step: everything removed at once before pieces fall. */
 interface Ctx {
   b: Board;
   tally: Tally;
-  scorer: TargetScorer;
   events: GameEvent[];
   multiplier: number;
   cascade: number;
@@ -94,25 +90,18 @@ export function newTally(): Tally {
 }
 
 /**
- * One board step: the pending player swap (combo or match) and every ready match clear together,
- * one special goes off, pieces fall.
+ * One board step: the player's pending move (a swap's combo or match, or a booster strike) and every ready match
+ * clear together, one special goes off, pieces fall.
  * Exactly one special goes off per step, so chain reactions play out one by one while the board refills:
  * a special hit by a blast is lit, stays on the board (falling with it) and is due from the next step on;
  * a matched special is due at once, but when another one goes off first it is lit and waits likewise.
  * With `specials` off, only the player's own match leaves a special behind; the others just clear.
  * Null when nothing matches and nothing is lit: the board is calm.
  */
-export function resolveStep(
-  b: Board,
-  swap: PendingSwap | null,
-  cascadeLevel: number,
-  scorer: TargetScorer,
-  fuse: number[],
-  specials = true,
-): Step | null {
+export function resolveStep(b: Board, move: PendingMove | null, cascadeLevel: number, fuse: number[], specials = true): Step | null {
   const step: Step = { events: [], tally: newTally() };
-  const ctx = newCtx(b, step, scorer, cascadeLevel, fuse, specials);
-  return stepInto(ctx, swap) ? step : null;
+  const ctx = newCtx(b, step, cascadeLevel, fuse, specials);
+  return stepInto(ctx, move) ? step : null;
 }
 
 /** Finale opening: up to `count` random plain pieces turn into line specials. */
@@ -142,10 +131,12 @@ export function lightAll(b: Board, fuse: number[]): LitPiece[] {
 }
 
 /** Appends one step to `step`; false when there is nothing to clear. */
-function stepInto(ctx: Ctx, swap: PendingSwap | null): boolean {
+function stepInto(ctx: Ctx, move: PendingMove | null): boolean {
   const b = ctx.b;
   // Only specials lit in earlier steps are due: whatever this step lights waits for the next one.
   const due = ctx.fuse.length;
+  const swap = move && !isStrike(move) ? move : null;
+  if (move && isStrike(move)) STRIKES[move.booster](ctx, move);
   if (swap && isComboPair(b.cells[swap.to].piece!, b.cells[swap.from].piece!)) runCombo(ctx, swap.to, swap.from);
   // The player's match is found before the fuse goes off, so a blast never steals it.
   const groups = findGroups(b, swap ? [swap.to, swap.from] : []);
@@ -180,11 +171,10 @@ function fireNext(ctx: Ctx, due: number): boolean {
   return true;
 }
 
-function newCtx(b: Board, step: Step, scorer: TargetScorer, cascadeLevel: number, fuse: number[], specials: boolean): Ctx {
+function newCtx(b: Board, step: Step, cascadeLevel: number, fuse: number[], specials: boolean): Ctx {
   return {
     b,
     tally: step.tally,
-    scorer,
     events: step.events,
     multiplier: Math.min(cascadeLevel + 1, MAX_MULTIPLIER),
     cascade: cascadeLevel,
@@ -268,6 +258,9 @@ function hitCratesAround(ctx: Ctx, i: number, order: number): number {
   return points;
 }
 
+/** What a blast does to one cell it takes. Returns points. */
+type Damage = (ctx: Ctx, i: number, order: number) => number;
+
 /**
  * Damages whatever is in the cell: chain first, then the piece (and its ice), or a crate. Returns points.
  * A special is lit instead of removed: it goes off in a later step.
@@ -296,6 +289,37 @@ function hit(ctx: Ctx, i: number, order: number): number {
   return 0;
 }
 
+/** A hit that also cracks the crates next to the cell, as a match would. */
+function matchHit(ctx: Ctx, i: number, order: number): number {
+  return hit(ctx, i, order) + hitCratesAround(ctx, i, order);
+}
+
+/** A meteor's hit: every layer in the cell breaks at once and the piece goes; a special is lit instead. */
+function smash(ctx: Ctx, i: number, order: number): number {
+  const cell = ctx.b.cells[i];
+  if (!cell.exists) return 0;
+  let points = 0;
+  if (cell.chain > 0 || cell.crate > 0) {
+    points += LAYER_POINTS * (cell.chain + cell.crate);
+    if (cell.crate > 0) ctx.tally.crate++;
+    cell.chain = 0;
+    cell.crate = 0;
+    markLayer(ctx, i, order);
+  }
+  if (cell.piece) {
+    if (cell.piece.special !== Special.None) light(ctx, i, order);
+    else points += removePiece(ctx, i, order, -1, false);
+  }
+  // Removing the piece took one layer of ice; the rest goes too.
+  if (cell.ice > 0) {
+    points += LAYER_POINTS * cell.ice;
+    cell.ice = 0;
+    ctx.tally.ice++;
+    markLayer(ctx, i, order);
+  }
+  return points;
+}
+
 function removePiece(ctx: Ctx, i: number, order: number, mergeInto: number, activateSpecial: boolean): number {
   const cell = ctx.b.cells[i];
   const piece = cell.piece!;
@@ -310,7 +334,7 @@ function removePiece(ctx: Ctx, i: number, order: number, mergeInto: number, acti
     points += LAYER_POINTS;
   }
   if (activateSpecial && piece.special !== Special.None) {
-    ctx.queue.push({ piece, i, order: order + 1, carry: Special.None });
+    ctx.queue.push({ piece, i, order: order + 1 });
   }
   return points;
 }
@@ -352,7 +376,6 @@ const ACTIVATORS: Record<Special, Activator> = {
   [Special.LineH]: (ctx, a) => blast(ctx, BlastKind.Row, a.i, rowCells(ctx.b, a.i), a.order),
   [Special.LineV]: (ctx, a) => blast(ctx, BlastKind.Col, a.i, colCells(ctx.b, a.i), a.order),
   [Special.Bomb]: (ctx, a) => blast(ctx, BlastKind.Bomb, a.i, squareCells(ctx.b, a.i, 1), a.order),
-  [Special.Spark]: (ctx, a) => spark(ctx, a.i, a.order, a.carry),
   [Special.Prism]: (ctx, a) => wipeColor(ctx, a.i, mostCommonColor(ctx.b), a.order),
 };
 
@@ -360,69 +383,43 @@ function activate(ctx: Ctx, a: Activation): void {
   ACTIVATORS[a.piece.special](ctx, a);
 }
 
-/** `splash`: every hit cell also damages neighboring crates, as if its piece were matched. */
-function blast(ctx: Ctx, kind: BlastKind, origin: number, cells: number[], order: number, color = NO_COLOR, splash = false): void {
+function blast(ctx: Ctx, kind: BlastKind, origin: number, cells: number[], order: number, damage: Damage = hit, color = NO_COLOR): void {
   ctx.blasts.push({
     kind,
     origin: posOf(ctx.b, origin),
     cells: cells.map((i) => posOf(ctx.b, i)),
     order,
-    target: null,
     color,
   });
   let points = 0;
-  for (const i of cells) {
-    points += hit(ctx, i, order);
-    if (splash) points += hitCratesAround(ctx, i, order);
-  }
+  for (const i of cells) points += damage(ctx, i, order);
   const o = posOf(ctx.b, origin);
   if (points > 0) ctx.popups.push({ r: o.r, c: o.c, value: points, order });
-}
-
-/** `splash`: the spark also hits the four cells around its origin; a pair of sparks splashes once, not per spark. */
-function spark(ctx: Ctx, origin: number, order: number, carry: Special, splash = true): void {
-  const around = neighbors4(ctx.b, origin);
-  const near = splash ? around : [];
-  const target = pickTarget(ctx, new Set([origin, ...around]));
-  ctx.blasts.push({
-    kind: BlastKind.Spark,
-    origin: posOf(ctx.b, origin),
-    cells: near.map((i) => posOf(ctx.b, i)),
-    order,
-    target: target === -1 ? null : posOf(ctx.b, target),
-    color: NO_COLOR,
-  });
-  let points = 0;
-  for (const i of near) points += hit(ctx, i, order);
-  if (target !== -1) {
-    if (carry === Special.None) points += hit(ctx, target, order + 1);
-    else ACTIVATORS[carry](ctx, { piece: { id: -1, color: NO_COLOR, special: carry }, i: target, order: order + 1, carry: Special.None });
-  }
-  const o = posOf(ctx.b, origin);
-  if (points > 0) ctx.popups.push({ r: o.r, c: o.c, value: points, order });
-}
-
-function pickTarget(ctx: Ctx, exclude: Set<number>): number {
-  let best = -1;
-  let bestScore = -Infinity;
-  ctx.b.cells.forEach((cell, i) => {
-    if (!cell.exists || exclude.has(i) || (!cell.piece && cell.crate === 0)) return;
-    // A lit special goes off anyway: a spark spent on it would be wasted.
-    if (cell.piece && ctx.fuse.includes(cell.piece.id)) return;
-    const score = ctx.scorer(ctx.b, i, ctx.tally) + random(ctx.b) * 0.5;
-    if (score > bestScore) {
-      bestScore = score;
-      best = i;
-    }
-  });
-  return best;
 }
 
 function wipeColor(ctx: Ctx, origin: number, color: number, order: number): void {
   if (color === NO_COLOR) return;
   const cells = ctx.b.cells.flatMap((cell, i) => (cell.piece?.color === color ? [i] : []));
   // Wiped pieces count as matched: crates next to them crack, like next to any match.
-  blast(ctx, BlastKind.Prism, origin, cells, order, color, true);
+  blast(ctx, BlastKind.Prism, origin, cells, order, matchHit, color);
+}
+
+// ---------- boosters ----------
+
+/** What a booster strike does at its cell. A new booster = one entry here + its looks. */
+const STRIKES: Record<Booster, (ctx: Ctx, s: Strike) => void> = {
+  [Booster.Star]: (ctx, s) => blast(ctx, BlastKind.Star, s.at, strikeCells(ctx.b, Booster.Star, s.at), 0),
+  [Booster.Meteor]: (ctx, s) => blast(ctx, BlastKind.Meteor, s.at, strikeCells(ctx.b, Booster.Meteor, s.at), 0, smash),
+};
+
+/** Cells a booster aimed at cell `i` takes: the star its cross, the meteor its crater (a 5×5 square without the corners). */
+export function strikeCells(b: Board, booster: Booster, i: number): number[] {
+  if (booster === Booster.Star) return [i, ...neighbors4(b, i)];
+  const { r, c } = posOf(b, i);
+  return squareCells(b, i, 2).filter((j) => {
+    const p = posOf(b, j);
+    return Math.abs(p.r - r) + Math.abs(p.c - c) < 4;
+  });
 }
 
 function mostCommonColor(b: Board): number {
@@ -434,7 +431,7 @@ function mostCommonColor(b: Board): number {
 
 // ---------- combos ----------
 
-const Kind = { Plain: 'plain', Line: 'line', Bomb: 'bomb', Spark: 'spark', Prism: 'prism' } as const;
+const Kind = { Plain: 'plain', Line: 'line', Bomb: 'bomb', Prism: 'prism' } as const;
 type Kind = (typeof Kind)[keyof typeof Kind];
 
 function kindOf(s: Special): Kind {
@@ -444,8 +441,6 @@ function kindOf(s: Special): Kind {
       return Kind.Line;
     case Special.Bomb:
       return Kind.Bomb;
-    case Special.Spark:
-      return Kind.Spark;
     case Special.Prism:
       return Kind.Prism;
     default:
@@ -453,8 +448,8 @@ function kindOf(s: Special): Kind {
   }
 }
 
-/** Combo effect at `center`; `p` and `q` are the two swapped pieces (already removed from the board). */
-type ComboFn = (ctx: Ctx, center: number, p: Piece, q: Piece) => void;
+/** Combo effect at `center`; the two swapped pieces are already removed from the board. */
+type ComboFn = (ctx: Ctx, center: number) => void;
 
 /** Keyed by the two kinds in alphabetical order. A new combo = one entry. */
 const COMBOS: Partial<Record<string, ComboFn>> = {
@@ -470,12 +465,6 @@ const COMBOS: Partial<Record<string, ComboFn>> = {
     }
   },
   'bomb+bomb': (ctx, center) => blast(ctx, BlastKind.Bomb, center, squareCells(ctx.b, center, 2), 0),
-  // Two sparks make a rare combo: twice what two separate sparks would hit.
-  'spark+spark': (ctx, center) => {
-    for (let k = 0; k < SPARK_PAIR_TARGETS; k++) spark(ctx, center, k, Special.None, k === 0);
-  },
-  'line+spark': (ctx, center, p, q) => spark(ctx, center, 0, p.special === Special.Spark ? q.special : p.special),
-  'bomb+spark': (ctx, center) => spark(ctx, center, 0, Special.Bomb),
   'prism+prism': (ctx, center) => {
     const all = ctx.b.cells.flatMap((cell, i) => (cell.exists ? [i] : []));
     blast(ctx, BlastKind.Prism, center, all, 0);
@@ -504,7 +493,7 @@ function runCombo(ctx: Ctx, center: number, otherCell: number): void {
 
   removePiece(ctx, center, 0, -1, false);
   removePiece(ctx, otherCell, 0, -1, false);
-  COMBOS[key]?.(ctx, center, p, q);
+  COMBOS[key]?.(ctx, center);
 }
 
 /** The partner's color turns into copies of it, all lit: they go off one by one, nearest to the prism first. */
@@ -531,7 +520,6 @@ function spreadSpecial(ctx: Ctx, origin: number, partner: Piece): void {
     origin: o,
     cells: targets.map((i) => posOf(ctx.b, i)),
     order: 0,
-    target: null,
     color: partner.color,
   });
   for (const i of targets) light(ctx, i, 1);

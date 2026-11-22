@@ -14,7 +14,7 @@ export const Fx = {
   Line: 'line',
   Bomb: 'bomb',
   Prism: 'prism',
-  Spark: 'spark',
+  Strike: 'strike',
   Combo: 'combo',
   Create: 'create',
   Recoil: 'recoil',

@@ -7,7 +7,7 @@ import { type Board, type GameState, ObjectiveKind, Special } from '@/core/types
  * What a player can see in a move before making it. Every move on a calm board gets one row of these;
  * a style is a weight per feature, and a move is picked with probability ∝ exp(weights · features).
  * The bots play by them and the player's style is learned from them, so both see the same game.
- * Adding a feature changes the meaning of stored weights: bump STYLE_VERSION in the player model.
+ * Changing the features changes the meaning of stored weights: bump MODEL_VERSION in the player model.
  */
 export const Feature = {
   /** cells the match clears */
@@ -25,20 +25,19 @@ export const Feature = {
   /** the special the match creates */
   Line: 6,
   Bomb: 7,
-  Spark: 8,
-  Prism: 9,
+  Prism: 8,
   /** two specials (or a prism with anything) swapped together */
-  Combo: 10,
+  Combo: 9,
   /** specials next to the one created: a combo waiting for the next move */
-  Setup: 11,
+  Setup: 10,
   /** how low the move is, 0 at the top row, 1 at the bottom */
-  Low: 12,
+  Low: 11,
   /** cells away from the previous move, capped: where the player is already looking */
-  Far: 13,
+  Far: 12,
 } as const;
 export type Feature = (typeof Feature)[keyof typeof Feature];
-export const FEATURE_COUNT = 14;
-export const FEATURE_NAMES = ['cells', 'wanted', 'ice', 'crate', 'chain', 'used', 'line', 'bomb', 'spark', 'prism', 'combo', 'setup', 'low', 'far'] as const;
+export const FEATURE_COUNT = 13;
+export const FEATURE_NAMES = ['cells', 'wanted', 'ice', 'crate', 'chain', 'used', 'line', 'bomb', 'prism', 'combo', 'setup', 'low', 'far'] as const;
 
 /** Distance cap, and the distance assumed when there is no previous move: a typical one. */
 const FAR_CAP = 8;
@@ -111,7 +110,6 @@ const MADE: Partial<Record<Special, Feature>> = {
   [Special.LineH]: Feature.Line,
   [Special.LineV]: Feature.Line,
   [Special.Bomb]: Feature.Bomb,
-  [Special.Spark]: Feature.Spark,
   [Special.Prism]: Feature.Prism,
 };
 

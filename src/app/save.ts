@@ -1,3 +1,4 @@
+import { type Charges, newCharges } from '@/app/boosters';
 import { DEFAULTS_ID, type SoundChoice } from '@/audio/sounds';
 import type { GameState } from '@/core/types';
 import type { LevelDraft } from '@/gen/generator';
@@ -10,7 +11,7 @@ import { timed } from '@/telemetry/perf';
 import type { FxChoice } from '@/view/fx/switches';
 
 const KEY = 'glimmerfall-save';
-const VERSION = 5;
+const VERSION = 6;
 
 export interface Settings {
   sound: boolean;
@@ -65,6 +66,8 @@ export interface SaveData {
   /** best stars per level, index = level - 1 */
   stars: number[];
   player: PlayerState;
+  /** boosters saved up across levels */
+  boosters: Charges;
   settings: Settings;
   current: CurrentLevel | null;
 }
@@ -76,6 +79,7 @@ export function defaultSave(): SaveData {
     level: 1,
     stars: [],
     player: { model: newModel(), pace: 0, threeStars: initialThreeStars() },
+    boosters: newCharges(),
     settings: {
       sound: true,
       haptics: true,
@@ -104,9 +108,11 @@ export async function loadSave(): Promise<SaveData> {
   if (data.version < VERSION) {
     // Before v3 the bars stayed visible by default; v3 turned fullscreen on for everyone.
     if (data.version < 3) settings.fullscreen = true;
-    // v4 built levels per player, v5 learns the player as a bot: progress, stars, settings and the player's
-    // seed stay; what was learned about the player under the old model, and the level in progress, start over.
-    return { ...defaults, seed: data.version === 4 ? data.seed : defaults.seed, level: data.level, stars: data.stars, settings };
+    // v4 built levels per player, v5 learns the player as a bot, v6 swapped the spark for boosters: progress, stars,
+    // settings and the player's seed stay. The level in progress starts over (it may hold sparks), and so does
+    // what was learned about the player: the moves it learned from are read differently now.
+    const player = data.version === 5 ? { ...defaults.player, pace: data.player.pace, threeStars: data.player.threeStars } : defaults.player;
+    return { ...defaults, seed: data.version >= 4 ? data.seed : defaults.seed, level: data.level, stars: data.stars, player, settings };
   }
   if (data.version !== VERSION) return defaults;
   // Player fields merge too: one added later starts from its default; a model of another version starts over.

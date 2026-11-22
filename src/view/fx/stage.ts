@@ -19,8 +19,12 @@ const DUST_TINTS: Record<Layer, number> = { ice: 0xe6f6ff, crate: 0xd9b48a, chai
 
 /** a beam fades out this long once it reached the edge */
 const BEAM_FADE = 220;
-/** a beam's head and a flying star leave a trail puff every this many cells */
+/** a beam's head and a falling booster leave a trail puff every this many cells */
 const TRAIL_STEP = 0.35;
+const STAR_GOLD = 0xffd25e;
+const FIRE = 0xff7a2a;
+const EMBER = 0xffc061;
+const SOOT = 0x3a2a26;
 /** a prism throws at most this many bolts: a whole-board wipe would otherwise draw a hedgehog */
 const MAX_BOLTS = 36;
 /** a hit piece swells, then breaks: particles fly at the break */
@@ -66,8 +70,11 @@ export function blastFx(kit: FxKit, b: Blast, tint: number, power: number, delay
     case BlastKind.Prism:
       prismFx(kit, b, b.color === NO_COLOR ? WHITE : tint, delay);
       break;
-    case BlastKind.Spark:
-      sparkFx(kit, b, tint);
+    case BlastKind.Star:
+      starFx(kit, b);
+      break;
+    case BlastKind.Meteor:
+      meteorFx(kit, b, power);
       break;
   }
 }
@@ -192,30 +199,123 @@ function bolt(kit: FxKit, ox: number, oy: number, tx: number, ty: number, tint: 
   flash(kit, tx, ty, 0.9, tint);
 }
 
-/** A star arcs to the target with a trail and bursts there. */
-function sparkFx(kit: FxKit, b: Blast, tint: number): void {
+// ---------- boosters ----------
+
+/**
+ * A booster falls from the sky onto the cell it was aimed at, for `ms`, speeding up as it comes:
+ * the star from up right, small and quick, trailing gold; the meteor from far up left, swelling as it nears,
+ * trailing fire, the crater it is about to open glowing ever brighter under it.
+ */
+export function strikeFall(kit: FxKit, b: Blast, ms: number): void {
+  const meteor = b.kind === BlastKind.Meteor;
+  const tx = kit.x(b.origin.c);
+  const ty = kit.y(b.origin.r);
+  // Far enough to start above the board, coming in at a steep slant.
+  const rise = ty + kit.cell * (meteor ? 5 : 3);
+  const sx = tx + rise * (meteor ? -0.62 : 0.45);
+  const sy = ty - rise;
+  const angle = Math.atan2(ty - sy, tx - sx);
+  const trail = kit.on(Fx.Strike);
+  const tint = meteor ? FIRE : STAR_GOLD;
+  const at = (k: number): [number, number] => [sx + (tx - sx) * k, sy + (ty - sy) * k];
+  if (meteor) {
+    for (const p of b.cells) {
+      light(kit, FrameName.Aim, kit.x(p.c), kit.y(p.r), FIRE, ms, (s, k) => {
+        s.alpha = 0.5 * k * k;
+        s.scale.set(1);
+      }, Ease.linear);
+    }
+  }
+  // A long tail behind the head: a streak stretched back along the fall.
+  light(kit, FrameName.Streak, sx, sy, tint, ms, (s, k) => {
+    const [x, y] = at(k);
+    const length = (meteor ? 4.5 : 3.2) * Math.min(1, k * 3);
+    s.anchor.set(1, 0.5);
+    s.position.set(x, y);
+    s.rotation = angle;
+    s.scale.set(length, meteor ? 1.3 : 0.7);
+    s.alpha = 0.9;
+  }, Ease.inQuad);
+  light(kit, FrameName.Glow, sx, sy, tint, ms, (s, k) => {
+    const [x, y] = at(k);
+    s.position.set(x, y);
+    s.scale.set(meteor ? 1.4 + 1.4 * k : 1.3);
+    s.alpha = 0.85;
+  }, Ease.inQuad);
+  let traveled = 0;
+  const head = kit.pool.acquire(kit.light, kit.texture(meteor ? FrameName.Meteor : FrameName.FallingStar), 'normal');
+  const step = (k: number): void => {
+    const [x, y] = at(k);
+    head.position.set(x, y);
+    head.rotation = meteor ? -1.2 + k * 1.6 : k * 7;
+    head.scale.set(meteor ? 0.7 + 0.9 * k : 0.75 + 0.15 * k);
+    if (!trail) return;
+    const moved = Math.hypot(x - sx, y - sy) / kit.cell;
+    for (; traveled + TRAIL_STEP <= moved; traveled += TRAIL_STEP) {
+      const [px, py] = at((traveled / moved) * k);
+      if (meteor) {
+        kit.particles.emit(Burst.fire, px, py, { color: NO_COLOR, tint: FIRE });
+        if (Math.random() < 0.35) kit.particles.emit(Burst.sparks, px, py, { color: NO_COLOR, tint: EMBER, amount: 0.4 });
+      } else {
+        kit.particles.emit(Burst.trail, px, py, { color: NO_COLOR, tint: STAR_GOLD });
+        if (Math.random() < 0.3) kit.particles.emit(Burst.glitter, px, py, { color: NO_COLOR, tint: WHITE, amount: 0.5 });
+      }
+    }
+  };
+  head.tint = WHITE;
+  step(0);
+  void kit.tweens.run(ms, step, { ease: Ease.inQuad }).then(() => kit.pool.release(head));
+}
+
+/** The star lands: a golden flash and ring, sparks and glitter thrown out of the cell. */
+function starFx(kit: FxKit, b: Blast): void {
   const ox = kit.x(b.origin.c);
   const oy = kit.y(b.origin.r);
-  flash(kit, ox, oy, 1.4, WHITE);
-  if (!b.target) return;
-  const tx = kit.x(b.target.c);
-  const ty = kit.y(b.target.r);
-  const lift = kit.cell * 1.2;
-  const trail = kit.on(Fx.Spark);
-  let last = { x: ox, y: oy };
-  light(kit, FrameName.Star, ox, oy, WHITE, Timing.sparkFlight, (s, k) => {
-    s.position.set(ox + (tx - ox) * k, oy + (ty - oy) * k - Math.sin(k * Math.PI) * lift);
-    s.rotation = k * 6;
-    s.scale.set(0.7);
-    if (trail && Math.hypot(s.x - last.x, s.y - last.y) >= TRAIL_STEP * kit.cell) {
-      last = { x: s.x, y: s.y };
-      kit.particles.emit(Burst.trail, s.x, s.y, { color: NO_COLOR, tint });
-    }
+  flash(kit, ox, oy, 2.6, WHITE);
+  flash(kit, ox, oy, 3.4, STAR_GOLD);
+  light(kit, FrameName.Shock, ox, oy, STAR_GOLD, 340, (s, k) => {
+    s.scale.set(0.4 + k * 3.4);
+    s.alpha = 1 - k;
+  }, Ease.outCubic);
+  if (kit.on(Fx.Sparks)) kit.particles.emit(Burst.sparks, ox, oy, { color: NO_COLOR, tint: STAR_GOLD, amount: 2.2 });
+  kit.particles.emit(Burst.glitter, ox, oy, { color: NO_COLOR, tint: WHITE, amount: 3 });
+}
+
+/**
+ * The meteor hits: a blinding flash, two shockwaves out past the crater, fire and rock thrown out,
+ * soot hanging over it, and the pieces around pushed back.
+ */
+function meteorFx(kit: FxKit, b: Blast, power: number): void {
+  const ox = kit.x(b.origin.c);
+  const oy = kit.y(b.origin.r);
+  flash(kit, ox, oy, 7, WHITE);
+  flash(kit, ox, oy, 9, FIRE);
+  if (!kit.on(Fx.Bomb)) return;
+  const ring = kit.on(Fx.Wave) ? 2.5 * Timing.crater : 0;
+  for (const [delay, tint, size, ms] of [
+    [0, EMBER, 7.5, 420],
+    [90, WHITE, 9.5, 520],
+  ] as const) {
+    kit.after(delay, () =>
+      light(kit, FrameName.Shock, ox, oy, tint, ring + ms, (s, k) => {
+        s.scale.set(0.5 + k * size);
+        s.alpha = 1 - k * k;
+      }, Ease.outCubic),
+    );
+  }
+  light(kit, FrameName.Glow, ox, oy, FIRE, 620, (s, k) => {
+    s.scale.set(5.5 * (0.6 + 0.4 * k));
+    s.alpha = 0.9 * (1 - k);
   });
-  kit.after(Timing.sparkFlight, () => {
-    flash(kit, tx, ty, 1.8, WHITE);
-    if (trail) kit.particles.emit(Burst.sparks, tx, ty, { color: NO_COLOR, tint });
-  });
+  if (kit.on(Fx.Sparks)) {
+    kit.particles.emit(Burst.sparks, ox, oy, { color: NO_COLOR, tint: EMBER, amount: 5 });
+    kit.particles.emit(Burst.fire, ox, oy, { color: NO_COLOR, tint: FIRE, amount: 8, radius: 1.5 });
+  }
+  if (kit.on(Fx.Debris)) {
+    kit.particles.emit(Burst.rubble, ox, oy, { color: NO_COLOR, tint: SOOT, amount: 2 });
+    kit.particles.emit(Burst.dust, ox, oy, { color: NO_COLOR, tint: SOOT, amount: 4, radius: 2 });
+  }
+  if (kit.on(Fx.Recoil)) recoil(kit, b.origin, 2, power, ring);
 }
 
 // ---------- pieces ----------

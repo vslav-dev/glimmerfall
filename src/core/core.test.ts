@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { indexOf, posOf, swapPieces } from '@/core/board';
 import { settle } from '@/core/fall';
-import { advance, canSwap, createGame, makeMove, playMove, scorerFor, startFinale } from '@/core/game';
+import { advance, canStrike, canSwap, createGame, makeMove, playMove, startFinale, strike } from '@/core/game';
 import { findGroups } from '@/core/matches';
 import { findMoves, hasAnyMatch, hasMove, isValidSwap } from '@/core/moves';
 import { resolveStep } from '@/core/resolve';
-import { BlastKind, type Board, type GameEvent, type LevelDef, LevelKind, ObjectiveKind, type PendingSwap, Special } from '@/core/types';
+import { BlastKind, type Board, Booster, type GameEvent, type LevelDef, LevelKind, ObjectiveKind, type PendingSwap, Special } from '@/core/types';
 
 /** Digits are colors, '.' is a hole, '#' a crate, '_' an empty cell. */
 function boardFrom(rows: string[], colors = 6): Board {
@@ -23,8 +23,6 @@ function boardFrom(rows: string[], colors = 6): Board {
   }
   return b;
 }
-
-const noTarget = (): number => 0;
 
 function level(overrides: Partial<LevelDef> = {}): LevelDef {
   const rows = 8;
@@ -56,7 +54,7 @@ describe('findGroups', () => {
     { name: 'line of 4 in a column', rows: ['01', '02', '01', '02'], special: Special.LineH },
     { name: 'line of 5', rows: ['00000', '12121'], special: Special.Prism },
     { name: 'L shape', rows: ['012', '012', '000'], special: Special.Bomb },
-    { name: 'square', rows: ['001', '002', '121'], special: Special.Spark },
+    { name: 'square with a tail', rows: ['000', '001', '123'], special: Special.Bomb },
   ];
   for (const t of cases) {
     it(t.name, () => {
@@ -69,6 +67,10 @@ describe('findGroups', () => {
   it('finds nothing on a calm board', () => {
     expect(findGroups(boardFrom(['012', '120', '201']), [])).toHaveLength(0);
   });
+
+  it('a square on its own is no match', () => {
+    expect(findGroups(boardFrom(['001', '002', '121']), [])).toHaveLength(0);
+  });
 });
 
 /** Swaps and resolves to rest like a whole move; null for an invalid swap. */
@@ -80,7 +82,7 @@ function resolveMove(b: Board, from: number, to: number): { events: GameEvent[];
   let swap: PendingSwap | null = { from, to };
   const fuse: number[] = [];
   for (let level = 0; ; level++) {
-    const step = resolveStep(b, swap, level, noTarget, fuse);
+    const step = resolveStep(b, swap, level, fuse);
     if (!step) break;
     events.push(...step.events);
     score += step.tally.score;
@@ -131,14 +133,14 @@ describe('fuse', () => {
     col.special = Special.LineV;
     const fuse = [row.id];
 
-    const first = resolveStep(b, null, 0, noTarget, fuse)!;
+    const first = resolveStep(b, null, 0, fuse)!;
     expect(lineBlasts(first.events).map((x) => x.kind)).toEqual([BlastKind.Row]);
     const clear = first.events.find((e) => e.type === 'clear');
     expect(clear?.type === 'clear' && clear.lit.map((x) => x.id)).toEqual([col.id]);
     expect(fuse).toEqual([col.id]);
     expect(b.cells.some((cell) => cell.piece?.id === col.id)).toBe(true);
 
-    const second = resolveStep(b, null, 1, noTarget, fuse)!;
+    const second = resolveStep(b, null, 1, fuse)!;
     expect(lineBlasts(second.events).map((x) => x.kind)).toEqual([BlastKind.Col]);
     expect(b.cells.some((cell) => cell.piece?.id === col.id)).toBe(false);
   });
@@ -151,7 +153,7 @@ describe('fuse', () => {
     high.special = Special.LineH;
     const fuse = [low.id, high.id];
 
-    const first = resolveStep(b, null, 0, noTarget, fuse)!;
+    const first = resolveStep(b, null, 0, fuse)!;
     expect(lineBlasts(first.events).map((x) => x.origin)).toEqual([{ r: 1, c: 4 }]);
     expect(fuse).toEqual([low.id]);
   });
@@ -164,12 +166,12 @@ describe('fuse', () => {
     low.special = Special.LineH;
     const fuse: number[] = [];
 
-    const first = resolveStep(b, null, 0, noTarget, fuse)!;
+    const first = resolveStep(b, null, 0, fuse)!;
     expect(lineBlasts(first.events).map((x) => x.origin)).toEqual([{ r: 0, c: 0 }]);
     expect(fuse).toEqual([low.id]);
     expect(b.cells.some((cell) => cell.piece?.id === low.id)).toBe(true);
 
-    const second = resolveStep(b, null, 1, noTarget, fuse)!;
+    const second = resolveStep(b, null, 1, fuse)!;
     expect(lineBlasts(second.events)).toHaveLength(1);
     expect(b.cells.some((cell) => cell.piece?.id === low.id)).toBe(false);
   });
@@ -182,7 +184,7 @@ describe('fuse', () => {
     matched.special = Special.LineH;
     const fuse = [litPiece.id];
 
-    const first = resolveStep(b, null, 0, noTarget, fuse)!;
+    const first = resolveStep(b, null, 0, fuse)!;
     expect(lineBlasts(first.events).map((x) => x.origin)).toEqual([{ r: 0, c: 0 }]);
     expect(fuse).toEqual([matched.id]);
   });
@@ -219,31 +221,68 @@ describe('prism wipe', () => {
   });
 });
 
-describe('spark', () => {
-  const collectRed = level({ rows: 5, cols: 5, objectives: [{ kind: ObjectiveKind.Collect, target: 10, color: 1 }] });
-  const sparkBlasts = (events: GameEvent[]) =>
-    events.flatMap((e) => (e.type === 'clear' ? e.blasts.filter((x) => x.kind === BlastKind.Spark) : []));
+describe('boosters', () => {
+  const strikeBlasts = (events: GameEvent[]) =>
+    events.flatMap((e) => (e.type === 'clear' ? e.blasts.filter((x) => x.kind === BlastKind.Star || x.kind === BlastKind.Meteor) : []));
+  const calm = (): ReturnType<typeof createGame> => {
+    const game = createGame(level({ rows: 7, cols: 7 }), 7);
+    game.board = boardFrom(['0123401', '1234012', '2340123', '3401234', '4012340', '0123401', '1234012'], 5);
+    return game;
+  };
 
-  it('flies to a wanted piece before ice that is no goal', () => {
-    const game = createGame(collectRed, 7);
-    game.board = boardFrom(['02020', '20202', '02010', '20202', '02020']);
-    game.board.cells.forEach((cell, i) => (cell.ice = i === 13 ? 0 : 2));
-    game.board.cells[0].piece!.special = Special.Spark;
-    const step = resolveStep(game.board, null, 0, scorerFor(game), [game.board.cells[0].piece!.id])!;
-    expect(sparkBlasts(step.events)[0].target).toEqual({ r: 2, c: 3 });
-    expect(step.tally.collected[1]).toBe(1);
+  it('aims only on a calm board, costs no move and plays in the next step', () => {
+    const game = calm();
+    expect(canStrike(game)).toBe(true);
+    expect(strike(game, Booster.Star, { r: 3, c: 3 })).toBe(true);
+    expect(game.movesLeft).toBe(20);
+    expect(game.strikes).toBe(1);
+    expect(canStrike(game)).toBe(false);
+    expect(strikeBlasts(advance(game)!)).toHaveLength(1);
+    while (advance(game)) continue;
+    expect(canStrike(game)).toBe(true);
   });
 
-  it('a pair of sparks sends out four, splashing around the swap only once', () => {
-    const game = createGame(collectRed, 7);
-    game.board = boardFrom(['02020', '20202', '02020', '20202', '02020']);
-    game.board.cells[11].piece!.special = Special.Spark;
-    game.board.cells[12].piece!.special = Special.Spark;
-    game.board.cells[7] = { ...game.board.cells[7], piece: null, crate: 3 };
-    expect(makeMove(game, { r: 2, c: 1 }, { r: 2, c: 2 })?.valid).toBe(true);
-    const step = advance(game)!;
-    expect(sparkBlasts(step)).toHaveLength(4);
-    expect(game.board.cells[7].crate).toBe(2);
+  it('the star takes its cell and the four around it, one layer each', () => {
+    const game = calm();
+    game.board.cells.forEach((cell) => (cell.ice = 2));
+    strike(game, Booster.Star, { r: 3, c: 3 });
+    advance(game);
+    const cracked = game.board.cells.flatMap((cell, i) => (cell.ice === 1 ? [i] : []));
+    expect(cracked.sort((a, b) => a - b)).toEqual([indexOf(game.board, 2, 3), indexOf(game.board, 3, 2), indexOf(game.board, 3, 3), indexOf(game.board, 3, 4), indexOf(game.board, 4, 3)]);
+  });
+
+  it('the meteor breaks every layer in its crater at once, and only there', () => {
+    const game = calm();
+    const b = game.board;
+    const chained = indexOf(b, 3, 3);
+    const iced = indexOf(b, 2, 4);
+    const crate = indexOf(b, 5, 3);
+    const corner = indexOf(b, 1, 1);
+    b.cells[chained].chain = 2;
+    b.cells[iced].ice = 2;
+    b.cells[corner].ice = 2;
+    b.cells[crate] = { ...b.cells[crate], piece: null, crate: 3 };
+    strike(game, Booster.Meteor, { r: 3, c: 3 });
+    const events = advance(game)!;
+    expect(strikeBlasts(events)[0].cells).toHaveLength(21);
+    expect(b.cells[chained].chain).toBe(0);
+    expect(b.cells[iced].ice).toBe(0);
+    expect(b.cells[crate].crate).toBe(0);
+    // A corner of the 5×5 square is outside the crater.
+    expect(b.cells[corner].ice).toBe(2);
+  });
+
+  it('a special in the crater is lit and goes off in a later step', () => {
+    const game = calm();
+    const special = game.board.cells[indexOf(game.board, 4, 4)].piece!;
+    special.special = Special.LineH;
+    strike(game, Booster.Meteor, { r: 3, c: 3 });
+    const first = advance(game)!;
+    const clear = first.find((e) => e.type === 'clear');
+    expect(clear?.type === 'clear' && clear.lit.map((l) => l.id)).toEqual([special.id]);
+    const later: GameEvent[] = [];
+    for (let step = advance(game); step; step = advance(game)) later.push(...step);
+    expect(later.some((e) => e.type === 'clear' && e.blasts.some((x) => x.kind === BlastKind.Row))).toBe(true);
   });
 });
 
@@ -335,7 +374,7 @@ describe('game', () => {
   it('the last chance fires only the specials left on the board and creates none', () => {
     for (const seed of [1, 2, 3, 4, 5]) {
       const game = createGame(level({ moves: 1, objectives: [{ kind: ObjectiveKind.Collect, target: 500, color: 1 }] }), seed);
-      const kinds = [Special.LineH, Special.LineV, Special.Bomb, Special.Spark];
+      const kinds = [Special.LineH, Special.LineV, Special.Bomb, Special.Prism];
       game.board.cells.forEach((cell, i) => {
         if (cell.piece && i % 7 === 0) cell.piece.special = kinds[i % kinds.length];
       });

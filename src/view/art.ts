@@ -37,8 +37,14 @@ export const FrameName = {
   Ring: 'ring',
   Beam: 'beam',
   Glow: 'glow',
-  /** soft horizontal streak, stretched along a spark's flight */
+  /** soft horizontal streak, stretched along a flight */
   Streak: 'streak',
+  /** the falling star booster: a golden star with a white-hot core */
+  FallingStar: 'falling-star',
+  /** the meteor booster: a dark rock glowing through its cracks */
+  Meteor: 'meteor',
+  /** a cell in a booster's aim: a soft rounded square with a bright rim, white to be tinted */
+  Aim: 'aim',
   /** shockwave: a bright rim fading inward */
   Shock: 'shock',
   /** wood splinter */
@@ -63,7 +69,7 @@ type Painter = (ctx: CanvasRenderingContext2D, s: number) => void;
 
 function buildPainters(): Map<string, Painter> {
   const painters = new Map<string, Painter>();
-  const specials = [Special.None, Special.LineH, Special.LineV, Special.Bomb, Special.Spark];
+  const specials = [Special.None, Special.LineH, Special.LineV, Special.Bomb];
   for (let color = 0; color < MAX_COLORS; color++) {
     for (const special of specials) {
       painters.set(FrameName.gem(color, special), (ctx, s) => drawGem(ctx, s, color, special));
@@ -86,6 +92,9 @@ function buildPainters(): Map<string, Painter> {
   painters.set(FrameName.Glow, drawGlow);
   painters.set(FrameName.Streak, drawStreak);
   painters.set(FrameName.Shock, drawShock);
+  painters.set(FrameName.FallingStar, drawFallingStar);
+  painters.set(FrameName.Meteor, drawMeteor);
+  painters.set(FrameName.Aim, drawAim);
   painters.set(FrameName.Chip, drawChip);
   for (let color = 0; color < MAX_COLORS; color++) {
     for (let k = 0; k < SHARDS; k++) painters.set(FrameName.shard(color, k), (ctx, s) => drawShard(ctx, s, color, k));
@@ -241,9 +250,6 @@ function drawSpecialMark(ctx: CanvasRenderingContext2D, r: number, special: Spec
       ctx.beginPath();
       ctx.arc(0, r * 0.05, r * 0.16, 0, Math.PI * 2);
       ctx.fill();
-      break;
-    case Special.Spark:
-      drawSparkle(ctx, 0, r * 0.05, r * 0.62, 0.95);
       break;
   }
   ctx.restore();
@@ -719,7 +725,7 @@ function drawGlow(ctx: CanvasRenderingContext2D, s: number): void {
   ctx.fillRect(0, 0, s, s);
 }
 
-/** Soft streak along x with a hot core: a spark's trail when stretched along its flight. */
+/** Soft streak along x with a hot core: a trail when stretched along a flight. */
 function drawStreak(ctx: CanvasRenderingContext2D, s: number): void {
   const g = ctx.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
   g.addColorStop(0, 'rgba(255,255,255,1)');
@@ -744,6 +750,85 @@ function drawShock(ctx: CanvasRenderingContext2D, s: number): void {
   g.addColorStop(1, 'rgba(255,255,255,0)');
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, s, s);
+}
+
+/** A five-pointed star, gold to white-hot at its heart, with a soft halo. */
+function drawFallingStar(ctx: CanvasRenderingContext2D, s: number): void {
+  const r = s * 0.36;
+  ctx.save();
+  ctx.translate(s / 2, s / 2);
+  ctx.shadowColor = 'rgba(255,214,110,0.95)';
+  ctx.shadowBlur = s * 0.12;
+  polygon(ctx, regular(5, r, -Math.PI / 2, r * 0.48), r * 0.08);
+  const body = ctx.createRadialGradient(0, 0, 0, 0, 0, r);
+  body.addColorStop(0, '#ffffff');
+  body.addColorStop(0.35, '#fff1b8');
+  body.addColorStop(0.75, '#ffd25e');
+  body.addColorStop(1, '#f0a020');
+  ctx.fillStyle = body;
+  ctx.fill();
+  ctx.shadowColor = 'transparent';
+  ctx.lineWidth = s * 0.018;
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** A lumpy dark rock lit from the hot side, molten cracks across it and an ember rim. */
+function drawMeteor(ctx: CanvasRenderingContext2D, s: number): void {
+  const r = s * 0.34;
+  const lumps = [1, 0.9, 1.04, 0.88, 0.98, 0.92, 1.02, 0.86, 0.97];
+  const rock: [number, number][] = lumps.map((k, i) => {
+    const a = (i / lumps.length) * Math.PI * 2;
+    return [Math.cos(a) * r * k, Math.sin(a) * r * k];
+  });
+  ctx.save();
+  ctx.translate(s / 2, s / 2);
+  ctx.shadowColor = 'rgba(255,110,30,0.9)';
+  ctx.shadowBlur = s * 0.14;
+  polygon(ctx, rock, r * 0.25);
+  const body = ctx.createRadialGradient(r * 0.35, r * 0.35, r * 0.1, 0, 0, r * 1.1);
+  body.addColorStop(0, '#ffb347');
+  body.addColorStop(0.3, '#c2451e');
+  body.addColorStop(0.7, '#4a2117');
+  body.addColorStop(1, '#22100c');
+  ctx.fillStyle = body;
+  ctx.fill();
+  ctx.shadowColor = 'transparent';
+  ctx.save();
+  ctx.clip();
+  ctx.strokeStyle = '#ffcf6a';
+  ctx.lineCap = 'round';
+  ctx.shadowColor = '#ff7a1a';
+  ctx.shadowBlur = s * 0.05;
+  for (const [pts, width] of [
+    [[[-0.5, -0.3], [-0.1, -0.05], [0.15, -0.35]], 0.035],
+    [[[-0.1, -0.05], [0.05, 0.3], [0.45, 0.42]], 0.03],
+    [[[0.05, 0.3], [-0.35, 0.45]], 0.022],
+  ] as [[number, number][], number][]) {
+    ctx.lineWidth = s * width;
+    ctx.beginPath();
+    pts.forEach(([x, y], k) => (k === 0 ? ctx.moveTo(x * r, y * r) : ctx.lineTo(x * r, y * r)));
+    ctx.stroke();
+  }
+  ctx.restore();
+  ctx.lineWidth = s * 0.02;
+  ctx.strokeStyle = 'rgba(255,170,80,0.7)';
+  polygon(ctx, rock, r * 0.25);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawAim(ctx: CanvasRenderingContext2D, s: number): void {
+  roundRect(ctx, s * 0.06, s * 0.06, s * 0.88, s * 0.88, s * 0.2);
+  const g = ctx.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s * 0.62);
+  g.addColorStop(0, 'rgba(255,255,255,0.05)');
+  g.addColorStop(1, 'rgba(255,255,255,0.4)');
+  ctx.fillStyle = g;
+  ctx.fill();
+  ctx.lineWidth = s * 0.05;
+  ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+  ctx.stroke();
 }
 
 /** Thin wood splinter, white to be tinted. */

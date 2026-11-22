@@ -17,7 +17,12 @@ export const Sfx = {
   Line: 'line',
   Bomb: 'bomb',
   Prism: 'prism',
-  Spark: 'spark',
+  /** the falling star booster: it falls, then strikes */
+  FallingStar: 'falling-star',
+  /** the meteor booster: a roar as it falls, then the impact */
+  Meteor: 'meteor',
+  /** a booster finished charging */
+  Charged: 'charged',
   Ice: 'ice',
   Crate: 'crate',
   Chain: 'chain',
@@ -149,13 +154,25 @@ export const RECIPES: Record<Sfx, Recipe> = {
       noise(c, { filter: 'highpass', from: 5000, duration: 0.5, gain: 0.08 });
     },
   },
-  [Sfx.Spark]: {
-    duration: 0.25,
+  // Timed with the fall on the board: the star strikes at 0.43 s, the meteor at 0.66 s.
+  [Sfx.FallingStar]: {
+    duration: 0.95,
     build: (c) => {
-      tone(c, { from: 1200, to: 2600, duration: 0.18, gain: 0.18 });
-      tone(c, { from: 1800, to: 3200, at: 0.05, duration: 0.15, gain: 0.1 });
+      tone(c, { from: 3200, to: 1400, duration: 0.42, gain: 0.07 });
+      noise(c, { filter: 'bandpass', from: 6000, to: 2500, duration: 0.42, gain: 0.08, q: 4 });
+      [1568, 2093, 2637].forEach((f, i) => tone(c, { from: f, at: 0.43 + i * 0.06, duration: 0.5, gain: 0.16 }));
     },
   },
+  [Sfx.Meteor]: {
+    duration: 1.6,
+    build: (c) => {
+      noise(c, { filter: 'lowpass', from: 300, to: 1800, duration: 0.66, gain: 0.35 });
+      noise(c, { filter: 'lowpass', from: 1600, to: 60, at: 0.66, duration: 0.9, gain: 0.8 });
+      tone(c, { from: 120, to: 32, at: 0.66, duration: 0.85, gain: 0.7 });
+      tone(c, { type: 'triangle', from: 260, to: 70, at: 0.66, duration: 0.3, gain: 0.25 });
+    },
+  },
+  [Sfx.Charged]: { duration: 0.8, build: (c) => notes(c, [784, 1175, 1568, 2349], 0.07, 0.5, 0.14) },
   [Sfx.Ice]: {
     duration: 0.2,
     build: (c) => {

@@ -1,4 +1,5 @@
 import type { Sfx } from '@/audio/synth';
+import type { Booster } from '@/core/types';
 import type { Fx } from '@/view/fx/switches';
 
 /** All player-facing text in one place, ready for localization. */
@@ -65,7 +66,9 @@ export const S = {
     line: 'Линия',
     bomb: 'Бомба',
     prism: 'Призма',
-    spark: 'Искры',
+    'falling-star': 'Падающая звезда',
+    meteor: 'Метеорит',
+    charged: 'Бонус накопился',
     ice: 'Лёд',
     crate: 'Ящик',
     chain: 'Цепь',
@@ -89,7 +92,7 @@ export const S = {
     line: 'Лучи линии',
     bomb: 'Ударная волна бомбы',
     prism: 'Молнии призмы',
-    spark: 'Шлейф искры',
+    strike: 'Падение звезды и метеорита',
     combo: 'Сбор силы комбо',
     create: 'Рождение спецфишки',
     recoil: 'Отдача соседей бомбы',
@@ -111,6 +114,10 @@ export const S = {
   retry: 'Ещё раз',
   shuffle: 'Перемешиваем!',
   lastChance: 'Последний шанс!',
+  boosterNames: { star: 'Падающая звезда', meteor: 'Метеорит' } satisfies Record<Booster, string>,
+  /** a tap on a booster not charged yet says how it charges */
+  boosterHint: { star: 'Копится из оставшихся ходов', meteor: 'Копится за три звезды' } satisfies Record<Booster, string>,
+  aim: { star: 'Куда упадёт звезда?', meteor: 'Куда ударит метеорит?' } satisfies Record<Booster, string>,
   on: 'Вкл',
   off: 'Выкл',
 } as const;

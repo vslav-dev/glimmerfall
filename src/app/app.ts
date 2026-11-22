@@ -1,11 +1,12 @@
+import { EARN, spend, stock, winGain, withGain } from '@/app/boosters';
 import { type Attempt, BoardSize, type CurrentLevel, type SaveData, defaultSave, loadSave, persist, randomSeed } from '@/app/save';
 import { AudioBus } from '@/audio/audio';
 import { chosen, VARIANTS } from '@/audio/sounds';
 import { Sfx } from '@/audio/synth';
 import { goalsOf, type MoveOptions, moveOptions } from '@/bot/features';
 import { indexOf } from '@/core/board';
-import { addExtraMoves, advance, canAct, createGame, EXTRA_MOVES, makeMove, startFinale, starsFor } from '@/core/game';
-import { BlastKind, type GameEvent, type GameState, LevelKind, type Pos } from '@/core/types';
+import { addExtraMoves, advance, canAct, canStrike, createGame, EXTRA_MOVES, makeMove, startFinale, starsFor, strike } from '@/core/game';
+import { BlastKind, Booster, type GameEvent, type GameState, LevelKind, type Pos } from '@/core/types';
 import { LevelDrafts } from '@/gen/drafts';
 import { type DraftRequest, finalizeLevel, GEN_VERSION, twinMoves } from '@/gen/generator';
 import { planLevel } from '@/gen/plan';
@@ -13,13 +14,15 @@ import { DIFFICULTIES, targetWinRate } from '@/player/difficulty';
 import { paceFactor, updatePace } from '@/player/pace';
 import { observeMove, observeOutcome, twinOf } from '@/player/model';
 import { updateThreeStars } from '@/player/stars';
-import { AttemptEnd, type AttemptRecord, newRecord, recordMiss, recordMove, recordStep, type SwapInput, trackAttempt } from '@/telemetry/attempt';
+import { AttemptEnd, type AttemptRecord, newRecord, recordMiss, recordMove, recordStep, recordStrike, type SwapInput, trackAttempt } from '@/telemetry/attempt';
 import { flushPerf, perfContext, timed } from '@/telemetry/perf';
 import { exitApp, Haptic, haptic, onBackButton, onHidden, onVisible, setFullscreen, setHapticsEnabled } from '@/platform/platform';
+import { BOOSTER_FOOTER, BoosterBar } from '@/ui/boosterBar';
 import { Action, Ui } from '@/ui/ui';
 import { S } from '@/ui/strings';
 import { BoardView, type Layer } from '@/view/boardView';
 import type { Fx } from '@/view/fx/switches';
+import { Timing } from '@/view/fx/timeline';
 import type { Scene } from '@/view/scene';
 
 const Mode = {
@@ -46,12 +49,15 @@ const chainSpeed = (cascade: number): number =>
   Math.min(CHAIN_MAX_SPEED, CHAIN_RAMP ** Math.max(0, cascade - 1));
 /** Off until there is something to pay for extra moves with (ads, coins): out of moves means a plain loss. */
 const OFFER_EXTRA_MOVES = false;
+/** An outcome eased by boosters teaches the player's strength this much: the twin plays without them. */
+const BOOSTED_WEIGHT = 0.5;
 
 const LAYER_SFX: Record<Layer, Sfx> = { ice: Sfx.Ice, crate: Sfx.Crate, chain: Sfx.Chain };
 
 /** Game flow: screens, moves, results, persistence. Owns no rules (core) and draws nothing itself (view, ui). */
 export class GameApp {
   private readonly ui: Ui;
+  private readonly boosters: BoosterBar;
   private readonly view: BoardView;
   private readonly audio = new AudioBus();
   private readonly drafts = new LevelDrafts();
@@ -72,7 +78,11 @@ export class GameApp {
   private thinkFrom = 0;
   /** where the player's last move landed in this attempt, or -1: where they are looking */
   private lastTo = -1;
-  /** `?debug` in the URL shows level and difficulty numbers for tuning */
+  /** the booster being aimed, or null */
+  private aiming: Booster | null = null;
+  /** moves left when the level was won: what the star charges from once the finale used them up */
+  private winMoves: number | null = null;
+  /** `?debug` in the URL shows level and difficulty numbers for tuning, and fills the boosters at each level */
   private readonly debugEl = new URLSearchParams(location.search).has('debug') ? createDebugEl() : null;
 
   public constructor(
@@ -81,10 +91,14 @@ export class GameApp {
     canvas: HTMLCanvasElement,
   ) {
     this.ui = new Ui(root, (action, item) => void this.onAction(action, item));
+    this.boosters = new BoosterBar(root.querySelector<HTMLElement>('#boosters')!, () => this.audio.play(Sfx.Charged));
     this.view = new BoardView(scene, canvas, {
       onSwap: (a, b, input) => void this.onSwap(a, b, input),
+      onStrike: (at) => this.onStrike(at),
       onLayerHit: (layer) => this.audio.play(LAYER_SFX[layer]),
+      onLayout: (rect) => this.boosters.place(rect),
     });
+    this.view.setFooter(BOOSTER_FOOTER);
 
     const stage = root.querySelector<HTMLElement>('#stage')!;
     new ResizeObserver(() => this.resize(stage)).observe(stage);
@@ -116,9 +130,11 @@ export class GameApp {
     perfContext({ level: null, board: null });
     this.mode = Mode.Title;
     this.game = null;
+    this.aiming = null;
     this.view.inputEnabled = false;
     this.view.clear();
     this.ui.hideHud();
+    this.boosters.hide();
     this.ui.showTitle(this.save.level, this.save.current?.attempt != null);
   }
 
@@ -167,6 +183,9 @@ export class GameApp {
       this.game = game;
       this.rest = null;
       this.lastTo = -1;
+      this.aiming = null;
+      this.winMoves = null;
+      if (this.debugEl) for (const b of Object.values(Booster)) this.save.boosters[b] = EARN[b].unit * EARN[b].max;
       perfContext({ level: game.level.number, board: `${game.board.cols}x${game.board.rows}` });
       this.view.inputEnabled = false;
       this.persist();
@@ -174,6 +193,7 @@ export class GameApp {
       this.ui.hideOverlay();
       this.ui.showHud(game.level);
       this.ui.updateHud(game);
+      this.boosters.show(this.save.boosters);
       this.view.setBoard(game.board);
       this.showDebug();
     }));
@@ -231,6 +251,62 @@ export class GameApp {
     this.ui.updateHud(game);
     this.updateInput();
     void this.run(game);
+  }
+
+  /** The aimed booster was let go over a cell: it strikes in the next step, and is spent. */
+  private onStrike(at: Pos): void {
+    const game = this.game;
+    const booster = this.aiming;
+    if (this.mode !== Mode.Play || !game || !booster || this.running === game) return;
+    if (stock(this.save.boosters, booster) < 1 || !strike(game, booster, at)) return;
+    spend(this.save.boosters, booster);
+    const record = this.recordOf(game);
+    if (record) recordStrike(record, game.board, booster, at);
+    // The moves valued at rest no longer stand: the next swap is not read against them.
+    this.rest = null;
+    this.thinkFrom = performance.now();
+    this.aiming = null;
+    this.view.aim(null);
+    this.persist();
+    this.updateInput();
+    void this.run(game);
+  }
+
+  /** A tap on a booster: aims it, or stops aiming it. One not charged yet says how it charges. */
+  private toggleAim(booster: Booster): void {
+    const game = this.game;
+    if (this.mode !== Mode.Play || !game) return;
+    if (this.aiming === booster) {
+      this.stopAim();
+    } else if (stock(this.save.boosters, booster) < 1) {
+      this.ui.flashText(S.boosterHint[booster]);
+      return;
+    } else if (canStrike(game) && this.running !== game) {
+      this.aiming = booster;
+      this.view.aim(booster);
+      this.ui.flashText(S.aim[booster]);
+    }
+    this.updateBoosters();
+  }
+
+  private stopAim(): void {
+    if (!this.aiming) return;
+    this.aiming = null;
+    this.view.aim(null);
+    if (this.game && this.running !== this.game && this.mode === Mode.Play) this.view.armHint();
+  }
+
+  /**
+   * The bar follows the saved charges; from the moment the level is won it shows what the win earns too,
+   * before the finale even starts: the star fills from the moves left, the meteor once the third star is in.
+   */
+  private updateBoosters(): void {
+    const game = this.game;
+    if (!game) return;
+    const usable = this.mode === Mode.Play && canStrike(game) && this.running !== game;
+    if (!usable) this.stopAim();
+    const gain = game.status === 'won' ? winGain(this.winMoves ?? game.movesLeft, starsFor(game)) : null;
+    this.boosters.update(gain ? withGain(this.save.boosters, gain) : this.save.boosters, usable, this.aiming);
   }
 
   /** Plays board steps one by one until the board rests, then ends the level or waits for the player. */
@@ -305,7 +381,8 @@ export class GameApp {
     const { record, target, threeStars } = attempt;
     trackAttempt({ draft: current.draft, game, record, end, left, stars, fails: current.fails, difficulty: settings.difficulty, target, threeStars, model: player.model });
     // An abandoned attempt has no outcome: it teaches neither strength nor stars.
-    if (end !== AttemptEnd.Restart) observeOutcome(player.model, end === AttemptEnd.Won, game.level.targetWinRate);
+    const weight = game.strikes > 0 ? BOOSTED_WEIGHT : 1;
+    if (end !== AttemptEnd.Restart) observeOutcome(player.model, end === AttemptEnd.Won, game.level.targetWinRate, weight);
     if (end === AttemptEnd.Won) player.threeStars = updateThreeStars(player.threeStars, stars === 3);
     const progress = Math.min(...game.level.objectives.map((o, k) => game.progress[k] / o.target));
     player.pace = updatePace(player.pace, twinMoves(current.draft, game.level), game.movesMade, progress);
@@ -314,6 +391,8 @@ export class GameApp {
   private async finishWin(game: GameState): Promise<void> {
     this.mode = Mode.Finale;
     const movesAtWin = game.movesLeft;
+    this.winMoves = movesAtWin;
+    this.updateBoosters();
     haptic(Haptic.Success);
     this.ui.flashText(S.win);
     if (game.movesLeft > 0) {
@@ -327,6 +406,10 @@ export class GameApp {
 
     const def = game.level;
     const stars = starsFor(game);
+    // The bar shows the win's gain as it fills; it is saved once the fill has played out.
+    this.updateBoosters();
+    await this.boosters.settled();
+    this.save.boosters = withGain(this.save.boosters, winGain(movesAtWin, stars));
     this.endAttempt(game, AttemptEnd.Won, movesAtWin, stars);
     this.save.stars[def.number - 1] = Math.max(this.save.stars[def.number - 1] ?? 0, stars);
     this.save.level = def.number + 1;
@@ -337,6 +420,7 @@ export class GameApp {
     await this.view.vanish();
     this.mode = Mode.Won;
     this.ui.hideHud();
+    this.boosters.hide();
     this.ui.showWin(stars, game.score);
     this.audio.play(Sfx.Win);
     for (let k = 0; k < stars; k++) setTimeout(() => this.audio.play(Sfx.Star, 1 + k * 0.12), 150 + k * 120);
@@ -362,6 +446,7 @@ export class GameApp {
   }
 
   private pause(): void {
+    this.stopAim();
     const record = this.game && this.recordOf(this.game);
     if (record) record.pauses++;
     this.mode = Mode.Pause;
@@ -379,6 +464,7 @@ export class GameApp {
 
   private updateInput(): void {
     this.view.inputEnabled = this.mode === Mode.Play && this.game !== null && canAct(this.game);
+    this.updateBoosters();
   }
 
   // ---------- actions ----------
@@ -413,6 +499,12 @@ export class GameApp {
         break;
       case Action.Goals:
         if (this.mode === Mode.Play) this.showGoals();
+        break;
+      case Action.Star:
+        this.toggleAim(Booster.Star);
+        break;
+      case Action.Meteor:
+        this.toggleAim(Booster.Meteor);
         break;
       case Action.Pause:
         if (this.mode === Mode.Play) this.pause();
@@ -585,10 +677,14 @@ export class GameApp {
         if (ev.created.length > 0) this.audio.play(Sfx.Create);
         const kinds = new Set(ev.blasts.map((b) => b.kind));
         if (kinds.has(BlastKind.Row) || kinds.has(BlastKind.Col)) this.audio.play(Sfx.Line);
-        if (kinds.has(BlastKind.Spark)) this.audio.play(Sfx.Spark);
+        if (kinds.has(BlastKind.Star)) this.audio.play(Sfx.FallingStar);
+        if (kinds.has(BlastKind.Meteor)) this.audio.play(Sfx.Meteor);
         if (kinds.has(BlastKind.Bomb)) this.audio.play(Sfx.Bomb);
         if (kinds.has(BlastKind.Prism)) this.audio.play(Sfx.Prism);
-        if (kinds.has(BlastKind.Bomb) || kinds.has(BlastKind.Prism)) haptic(Haptic.Heavy);
+        // A booster is felt as it strikes, after its fall.
+        if (kinds.has(BlastKind.Meteor)) setTimeout(() => haptic(Haptic.Heavy), Timing.meteorFall);
+        else if (kinds.has(BlastKind.Star)) setTimeout(() => haptic(Haptic.Medium), Timing.starFall);
+        else if (kinds.has(BlastKind.Bomb) || kinds.has(BlastKind.Prism)) haptic(Haptic.Heavy);
         else if (kinds.size > 0) haptic(Haptic.Medium);
         else haptic(Haptic.Light);
         if (ev.cascade >= 2) this.ui.praise(ev.cascade - 2);

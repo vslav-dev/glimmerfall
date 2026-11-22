@@ -1,8 +1,9 @@
 import { cellAt, indexOf, isAdjacent, isMovable, newPiece, randomFreeColor, swapPieces } from '@/core/board';
 import { hasMove, isValidSwap, shuffleBoard } from '@/core/moves';
-import { convertForFinale, lightAll, resolveStep, type Tally, type TargetScorer } from '@/core/resolve';
+import { convertForFinale, lightAll, resolveStep, type Tally } from '@/core/resolve';
 import {
   type Board,
+  type Booster,
   type Cell,
   type GameEvent,
   type GameState,
@@ -64,6 +65,7 @@ export function createGame(level: LevelDef, seed: number): GameState {
     extraMovesUsed: false,
     status: 'playing',
     pending: null,
+    strikes: 0,
     cascade: 0,
     finale: 0,
     fuse: [],
@@ -81,6 +83,22 @@ export function canSwap(state: GameState, a: Pos, b: Pos): boolean {
   const ca = cellAt(state.board, a.r, a.c);
   const cb = cellAt(state.board, b.r, b.c);
   return ca !== null && cb !== null && isMovable(ca) && isMovable(cb);
+}
+
+/** A booster can be aimed: the player may act and the board is calm, no cascade running. */
+export function canStrike(state: GameState): boolean {
+  return canAct(state) && state.cascade === 0;
+}
+
+/**
+ * Aims a booster at cell `at`: it goes off in the next step and costs no move.
+ * Whether the player has one is up to the caller: the saved stock lives outside the level.
+ */
+export function strike(state: GameState, booster: Booster, at: Pos): boolean {
+  if (!canStrike(state) || !cellAt(state.board, at.r, at.c)) return false;
+  state.pending = { booster, at: indexOf(state.board, at.r, at.c) };
+  state.strikes++;
+  return true;
 }
 
 /**
@@ -112,11 +130,10 @@ export function advance(state: GameState): GameEvent[] | null {
   const fuse = (state.fuse ??= []);
   const level = pending ? 0 : state.cascade;
   state.pending = null;
-  const scorer = scorerFor(state);
   // Once the moves are spent, nothing new appears: cascades, the last chance and the finale clear matches
   // without leaving specials. Only the player's own swap still makes one.
   const specials = state.movesLeft > 0;
-  let step = resolveStep(board, pending, level, scorer, fuse, specials);
+  let step = resolveStep(board, pending, level, fuse, specials);
   const events: GameEvent[] = [];
   if (!step && state.finale > 0) {
     // Finale and last chance: every special left on the calm board is lit; they go off one per step.
@@ -124,7 +141,7 @@ export function advance(state: GameState): GameEvent[] | null {
     const pieces = lightAll(board, fuse);
     if (pieces.length > 0) {
       events.push({ type: 'light', pieces });
-      step = resolveStep(board, null, level, scorer, fuse, specials);
+      step = resolveStep(board, null, level, fuse, specials);
     } else {
       state.finale = 0;
     }
@@ -221,28 +238,4 @@ function objectiveGain(o: Objective, tally: Tally): number {
     case ObjectiveKind.Crate:
       return tally.crate;
   }
-}
-
-/** Spark target value of one unit of work an open goal still needs. */
-const GOAL_HIT = 10;
-
-/**
- * Sparks fly to what the goals still need right now, counting what this step already gained.
- * Every hit on a goal layer is one unit of required work, so all goal hits weigh the same; among them
- * deeper stacks come first, as matches rarely reach those. Layers that are no goal are worth only
- * a little (they still open the board), so a wanted piece always beats them.
- */
-export function scorerFor(state: GameState): TargetScorer {
-  const { objectives } = state.level;
-  return (b, i, tally) => {
-    const cell = b.cells[i];
-    let value = cell.chain > 0 || cell.crate > 0 || cell.ice > 0 ? 1 : 0;
-    objectives.forEach((o, k) => {
-      if (state.progress[k] + objectiveGain(o, tally) >= o.target) return;
-      if (o.kind === ObjectiveKind.Collect && cell.piece?.color === o.color && cell.chain === 0) value += GOAL_HIT;
-      if (o.kind === ObjectiveKind.Ice && cell.piece && cell.ice > 0) value += GOAL_HIT + cell.ice + cell.chain;
-      if (o.kind === ObjectiveKind.Crate && cell.crate > 0) value += GOAL_HIT + cell.crate;
-    });
-    return value;
-  };
 }

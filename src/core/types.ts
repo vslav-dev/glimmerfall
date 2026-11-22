@@ -3,8 +3,7 @@ export const Special = {
   LineH: 1,
   LineV: 2,
   Bomb: 3,
-  Spark: 4,
-  Prism: 5,
+  Prism: 4,
 } as const;
 export type Special = (typeof Special)[keyof typeof Special];
 
@@ -101,7 +100,10 @@ export const BlastKind = {
   Col: 'col',
   Bomb: 'bomb',
   Prism: 'prism',
-  Spark: 'spark',
+  /** a falling star the player aimed: the cell and the four around it, one layer each */
+  Star: 'star',
+  /** a meteor the player aimed: every layer in its crater breaks at once */
+  Meteor: 'meteor',
 } as const;
 export type BlastKind = (typeof BlastKind)[keyof typeof BlastKind];
 
@@ -111,8 +113,6 @@ export interface Blast {
   cells: Pos[];
   /** playback order inside a clear step */
   order: number;
-  /** spark flight target */
-  target: Pos | null;
   /** prism: color it wipes */
   color: number;
 }
@@ -195,6 +195,26 @@ export interface PendingSwap {
   to: number;
 }
 
+/** Rare strikes the player saves up across levels and aims at a cell. */
+export const Booster = {
+  Star: 'star',
+  Meteor: 'meteor',
+} as const;
+export type Booster = (typeof Booster)[keyof typeof Booster];
+
+/** A booster aimed at a cell (index), waiting for the next step like a swap. */
+export interface Strike {
+  booster: Booster;
+  at: number;
+}
+
+/** What the player did that the next step plays: a swap or a strike. */
+export type PendingMove = PendingSwap | Strike;
+
+export function isStrike(move: PendingMove): move is Strike {
+  return 'booster' in move;
+}
+
 /** Everything that changes during a level. JSON-serializable for save/resume. */
 export interface GameState {
   level: LevelDef;
@@ -206,7 +226,9 @@ export interface GameState {
   progress: number[];
   extraMovesUsed: boolean;
   status: GameStatus;
-  pending: PendingSwap | null;
+  pending: PendingMove | null;
+  /** boosters the player used in this attempt: a win with them is an easier win */
+  strikes: number;
   /** cascade depth of the next step: drives the score multiplier and praise */
   cascade: number;
   /** finale lighting rounds left; 0 outside the finale and the last chance */

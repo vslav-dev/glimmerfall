@@ -69,20 +69,12 @@ export function isAdjacent(a: Pos, b: Pos): boolean {
   return Math.abs(a.r - b.r) + Math.abs(a.c - b.c) === 1;
 }
 
-/** Whether a piece of color k at (r, c) would complete a line of 3 or a 2x2 square with its neighbors. */
+/** Whether a piece of color k at (r, c) would complete a line of 3 with its neighbors. */
 export function wouldMatch(b: Board, r: number, c: number, k: number): boolean {
   const at = (dr: number, dc: number): boolean => colorAt(b, r + dr, c + dc) === k;
-  if ((at(0, -1) && (at(0, -2) || at(0, 1))) || (at(0, 1) && at(0, 2))) return true;
-  if ((at(-1, 0) && (at(-2, 0) || at(1, 0))) || (at(1, 0) && at(2, 0))) return true;
-  for (const [dr, dc] of [
-    [-1, -1],
-    [-1, 1],
-    [1, -1],
-    [1, 1],
-  ]) {
-    if (at(dr, 0) && at(0, dc) && at(dr, dc)) return true;
-  }
-  return false;
+  const row = (at(0, -1) && (at(0, -2) || at(0, 1))) || (at(0, 1) && at(0, 2));
+  const col = (at(-1, 0) && (at(-2, 0) || at(1, 0))) || (at(1, 0) && at(2, 0));
+  return row || col;
 }
 
 /** Random color that creates no match at (r, c), if one exists. */

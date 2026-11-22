@@ -1,6 +1,6 @@
 import { indexOf, posOf } from '@/core/board';
-import { advance, createGame, makeMove, startFinale } from '@/core/game';
-import type { Board, GameState, LevelDef, Pos } from '@/core/types';
+import { advance, createGame, makeMove, startFinale, strike } from '@/core/game';
+import { type Board, Booster, type GameState, type LevelDef, type Pos } from '@/core/types';
 import { GEN_VERSION, type LevelDraft } from '@/gen/generator';
 import type { Difficulty } from '@/player/difficulty';
 import type { PlayerModel } from '@/player/model';
@@ -19,12 +19,13 @@ export interface AttemptRecord {
   board: number;
   /**
    * one packed move each: cell 7 bits, direction 2, hint 1, board steps before it 8, think time 8 (0.1 s),
-   * dragged (else two taps) 1, pieces picked and dropped before it 2
+   * dragged (else two taps) 1, pieces picked and dropped before it 2.
+   * A booster strike is an entry too, with STRIKE_BIT set: cell 7 bits, booster 1 (BOOSTER_BITS), board steps before it 8.
    */
   moves: number[];
   /** board steps played since the last move */
   steps: number;
-  /** swaps tried that matched nothing, packed: cell 7 bits, direction 2, board steps since the last move 8, moves made before it 15 */
+  /** swaps tried that matched nothing, packed: cell 7 bits, direction 2, board steps since the last move 8, entries in `moves` before it 15 */
   misses: number[];
   /** when the attempt started, epoch ms: with the report time it gives the attempt's wall time */
   started: number;
@@ -50,6 +51,8 @@ const REPLAY_PERCENT = 100;
 const BYTE = 255;
 const MAX_REPICKS = 3;
 const MAX_MOVE_INDEX = 2 ** 15 - 1;
+const STRIKE_BIT = 1 << 29;
+const BOOSTER_BITS: readonly Booster[] = [Booster.Star, Booster.Meteor];
 /** right, down, left, up */
 const DIRECTIONS: readonly Pos[] = [
   { r: 0, c: 1 },
@@ -75,6 +78,12 @@ export function recordMove(rec: AttemptRecord, board: Board, a: Pos, b: Pos, hin
   rec.steps = 0;
 }
 
+/** A booster aimed at cell `at`. */
+export function recordStrike(rec: AttemptRecord, board: Board, booster: Booster, at: Pos): void {
+  rec.moves.push(STRIKE_BIT | indexOf(board, at.r, at.c) | (BOOSTER_BITS.indexOf(booster) << 7) | (rec.steps << 10));
+  rec.steps = 0;
+}
+
 /** A swap of `a` onto `b` that matched nothing. */
 export function recordMiss(rec: AttemptRecord, board: Board, a: Pos, b: Pos): void {
   rec.misses.push(swapBits(board, a, b) | (rec.steps << 9) | (Math.min(MAX_MOVE_INDEX, rec.moves.length) << 17));
@@ -92,6 +101,12 @@ export function replayAttempt(level: LevelDef, rec: Pick<AttemptRecord, 'board' 
     const steps = (packed >>> 10) & BYTE;
     for (let k = 0; k < steps; k++) advance(game);
     const a = posOf(game.board, packed & 127);
+    if (packed & STRIKE_BIT) {
+      // A booster is aimed only at rest: the app ran the board until it said so.
+      while (advance(game)) continue;
+      strike(game, BOOSTER_BITS[(packed >>> 7) & 1], a);
+      continue;
+    }
     const d = DIRECTIONS[(packed >>> 7) & 3];
     makeMove(game, a, { r: a.r + d.r, c: a.c + d.c });
   }
@@ -162,6 +177,7 @@ export function trackAttempt(r: AttemptReport): void {
     board: r.record.board,
     end: r.end,
     made: game.movesMade,
+    strikes: game.strikes,
     left: r.left,
     score: game.score,
     stars: r.stars,

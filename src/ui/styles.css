@@ -654,6 +654,190 @@ body {
 
 /* ---------- feedback ---------- */
 
+/* ---------- boosters ---------- */
+
+/* right under the board, buttons at its right edge; placed from the board's layout */
+#boosters {
+  position: absolute;
+  height: 74px;
+  padding-top: 10px;
+  display: flex;
+  justify-content: flex-end;
+  align-items: flex-start;
+  gap: 14px;
+  transition: opacity 0.25s;
+}
+
+#boosters.off {
+  visibility: hidden;
+  opacity: 0;
+}
+
+.booster {
+  --c: #ffd25e;
+  --glow: rgba(255, 210, 94, 0.55);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  transition: opacity 0.25s, transform 0.2s;
+}
+
+.booster.meteor {
+  --c: #ff7a2a;
+  --glow: rgba(255, 110, 40, 0.6);
+}
+
+.orb {
+  position: relative;
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.2), rgba(0, 0, 0, 0.25));
+  border: 2px solid var(--panel-border);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.45);
+  transition: border-color 0.3s, box-shadow 0.4s;
+}
+
+.orb .layer {
+  position: absolute;
+  inset: 0;
+}
+
+.orb svg {
+  position: absolute;
+  inset: 6px;
+  width: calc(100% - 12px);
+  height: calc(100% - 12px);
+}
+
+/* what is not charged yet: a dim silhouette the color fills into */
+.orb .empty svg {
+  filter: grayscale(1) brightness(0.55);
+  opacity: 0.45;
+}
+
+.orb .fill {
+  clip-path: inset(100% 0 0 0);
+  transition: clip-path 0.9s cubic-bezier(0.3, 0.7, 0.3, 1);
+}
+
+.orb .liquid {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(120% 90% at 50% 100%, var(--glow), transparent 75%);
+}
+
+.orb .fill svg {
+  filter: drop-shadow(0 0 4px var(--glow));
+}
+
+/* the bright edge of the rising color */
+.orb .surface {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  transition: transform 0.9s cubic-bezier(0.3, 0.7, 0.3, 1), opacity 0.3s;
+}
+
+.orb .surface::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  top: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--c);
+  box-shadow: 0 0 8px 1px var(--c);
+}
+
+.orb .surface.hidden {
+  opacity: 0;
+}
+
+.booster.instant .fill,
+.booster.instant .surface {
+  transition: none;
+}
+
+/* ready to use: lit through, breathing light */
+.booster.ready .orb {
+  border-color: var(--c);
+  animation: booster-breathe 2.4s ease-in-out infinite;
+}
+
+.booster.ready .fill svg {
+  animation: booster-bob 2.4s ease-in-out infinite;
+}
+
+/* ready but the board is busy: waits, dimmed */
+.booster.ready:not(.usable) {
+  opacity: 0.6;
+}
+
+.booster:active {
+  transform: scale(0.94);
+}
+
+/* aiming: a ring of light runs around */
+.booster.aiming .orb {
+  animation: none;
+  box-shadow: 0 0 0 3px var(--c), 0 0 22px 4px var(--glow);
+}
+
+.booster.aiming {
+  transform: translateY(-3px) scale(1.06);
+}
+
+.booster::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 54px;
+  height: 54px;
+  margin-left: -27px;
+  border-radius: 50%;
+  border: 3px solid var(--c);
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* a booster finished charging: a ring of light bursts out, the button pops */
+.booster.burst::after {
+  animation: booster-burst 0.52s ease-out;
+}
+
+.booster.burst .orb {
+  animation: booster-pop 0.52s cubic-bezier(0.2, 1.6, 0.4, 1);
+}
+
+.pips {
+  display: flex;
+  gap: 5px;
+}
+
+.pips i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.18);
+  transition: background 0.3s, box-shadow 0.3s;
+}
+
+.pips i.on {
+  background: var(--c);
+  box-shadow: 0 0 6px var(--glow);
+  animation: mark-pop 0.45s cubic-bezier(0.2, 1.6, 0.4, 1);
+}
+
 #praise {
   position: absolute;
   left: 50%;
@@ -738,6 +922,25 @@ body {
 
 @keyframes outline-out {
   to { opacity: 0; }
+}
+
+@keyframes booster-breathe {
+  0%, 100% { box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.35), 0 0 10px 1px var(--glow); }
+  50% { box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.35), 0 0 20px 5px var(--glow); }
+}
+
+@keyframes booster-bob {
+  0%, 100% { transform: translateY(0) rotate(0); }
+  50% { transform: translateY(-1.5px) rotate(-4deg); }
+}
+
+@keyframes booster-burst {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(1.9); }
+}
+
+@keyframes booster-pop {
+  40% { transform: scale(1.22); }
 }
 
 @keyframes star-in {

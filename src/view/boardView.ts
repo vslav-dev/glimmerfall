@@ -2,17 +2,18 @@ import 'pixi.js/text-bitmap';
 import { BitmapFont, BitmapText, Container, Sprite, type Texture } from 'pixi.js';
 import { isAdjacent } from '@/core/board';
 import { findMoves } from '@/core/moves';
-import { type Board, type GameEvent, NO_COLOR, type Piece, type Pos, Special, type SwapEvent } from '@/core/types';
+import { strikeCells } from '@/core/resolve';
+import { BlastKind, type Board, Booster, type GameEvent, NO_COLOR, type Piece, type Pos, Special, type SwapEvent } from '@/core/types';
 import type { SwapInput } from '@/telemetry/attempt';
 import { perfContext, timed } from '@/telemetry/perf';
 import { FrameName, GEM_TINTS } from '@/view/art';
 import { Atlas } from '@/view/atlas';
 import { Camera } from '@/view/fx/camera';
-import { blastPower, cascadeBoost, feel } from '@/view/fx/impact';
+import { blastPower, cascadeBoost, feel, METEOR_HITS } from '@/view/fx/impact';
 import { SpritePool } from '@/view/fx/pool';
-import { blastFx, comboCharge, createFx, flash, type FxKit, land, type Layer, layerFx, popPiece, WHITE } from '@/view/fx/stage';
+import { blastFx, comboCharge, createFx, flash, type FxKit, land, type Layer, layerFx, popPiece, strikeFall, WHITE } from '@/view/fx/stage';
 import { Fx, FxSwitches } from '@/view/fx/switches';
-import { planClear } from '@/view/fx/timeline';
+import { planClear, strikeOf } from '@/view/fx/timeline';
 import { Particles } from '@/view/particles';
 import type { Scene } from '@/view/scene';
 import { Ease, type EaseFn } from '@/view/tween';
@@ -53,11 +54,26 @@ const FULL_BURSTS = 14;
 /** a swapped piece passes over the other: this much bigger, the other this much smaller */
 const SWAP_OVER = 0.1;
 const SWAP_UNDER = 0.08;
+/** the aim's tint per booster, and the period of its pulse, ms per radian */
+const AIM_TINTS: Record<Booster, number> = { [Booster.Star]: 0xffd25e, [Booster.Meteor]: 0xff7a2a };
+const AIM_PULSE = 110;
+
+/** Where the board sits in the canvas area, CSS pixels. */
+export interface BoardRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
 
 export interface BoardListener {
   onSwap(a: Pos, b: Pos, input: SwapInput): void;
+  /** the player released an aimed booster over this cell */
+  onStrike(at: Pos): void;
   /** a blocker layer visibly took a hit (for sound) */
   onLayerHit(layer: Layer): void;
+  /** the board was fitted anew: what sits under it follows */
+  onLayout(rect: BoardRect): void;
 }
 
 interface LayerSprite {
@@ -89,6 +105,8 @@ export class BoardView {
   /** additive light: beams, rings, flashes, sparks */
   private readonly lightLayer = new Container();
   private readonly textLayer = new Container();
+  /** a booster's aim: the cells it would take */
+  private readonly aimLayer = new Container();
   /** shakes and punches the board; between the glide and the board, so neither fights the other */
   private readonly camera = new Camera();
   private readonly pool = new SpritePool();
@@ -126,13 +144,20 @@ export class BoardView {
   private epoch = 0;
   /** special hits so far in the script being played: each next one shakes harder */
   private hits = 0;
+  /** room kept free under the board (the booster bar), CSS pixels */
+  private footer = 0;
+  /** the booster being aimed, the cell it points at, and whether a finger is down on the board */
+  private aiming: Booster | null = null;
+  private aimAt: Pos | null = null;
+  private aimDown = false;
+  private aimClock = 0;
 
   public constructor(
     private readonly scene: Scene,
     private readonly canvas: HTMLCanvasElement,
     private readonly input: BoardListener,
   ) {
-    this.boardRoot.addChild(this.tiles, this.iceLayer, this.litLayer, this.pieceLayer, this.crateLayer, this.chainLayer, this.matterLayer, this.lightLayer, this.textLayer);
+    this.boardRoot.addChild(this.tiles, this.iceLayer, this.litLayer, this.pieceLayer, this.crateLayer, this.chainLayer, this.matterLayer, this.lightLayer, this.aimLayer, this.textLayer);
     this.camera.view.addChild(this.boardRoot);
     this.glide.addChild(this.camera.view);
     scene.root.addChild(this.glide);
@@ -142,6 +167,7 @@ export class BoardView {
     scene.addUpdater((dt) => this.settleGlide(dt), true);
     scene.addUpdater((dt) => this.camera.update(dt), true);
     scene.addUpdater((dt) => this.pulseLit(dt));
+    scene.addUpdater((dt) => this.pulseAim(dt));
     scene.onQualityChange = () => this.layout(this.width, this.height);
 
     BitmapFont.install({
@@ -159,8 +185,11 @@ export class BoardView {
 
     canvas.addEventListener('pointerdown', (e) => this.onDown(e));
     canvas.addEventListener('pointermove', (e) => this.onMove(e));
-    canvas.addEventListener('pointerup', () => (this.drag = null));
-    canvas.addEventListener('pointercancel', () => (this.drag = null));
+    canvas.addEventListener('pointerup', (e) => this.onUp(e));
+    canvas.addEventListener('pointercancel', () => {
+      this.drag = null;
+      this.aimDown = false;
+    });
   }
 
   // ---------- setup ----------
@@ -185,6 +214,12 @@ export class BoardView {
     };
   }
 
+  /** Keeps `px` free under the board: the board and what sits under it are centered together. */
+  public setFooter(px: number): void {
+    this.footer = px;
+    this.layout(this.width, this.height);
+  }
+
   /** The atlas is repainted for the new cell size, so a smaller board stays sharp. */
   public setScale(scale: number): void {
     if (scale === this.scale) return;
@@ -201,6 +236,7 @@ export class BoardView {
     this.grid = board.cells.map((c) => c.piece);
     this.camera.reset();
     this.deselect();
+    this.aim(null);
     this.picks = 0;
     this.layout(this.width, this.height, true);
   }
@@ -213,6 +249,7 @@ export class BoardView {
     this.lit.clear();
     this.wipe();
     this.camera.reset();
+    this.aim(null);
     this.board = null;
     this.grid = [];
     this.scene.request();
@@ -256,10 +293,11 @@ export class BoardView {
     this.height = height;
     const b = this.board;
     if (!b) return;
-    const cell = Math.max(16, Math.floor(Math.min(width / b.cols, height / b.rows, MAX_CELL) * this.scale));
+    const cell = Math.max(16, Math.floor(Math.min(width / b.cols, (height - this.footer) / b.rows, MAX_CELL) * this.scale));
     this.cell = cell;
     this.originX = Math.round((width - cell * b.cols) / 2);
-    this.originY = Math.round((height - cell * b.rows) / 2);
+    this.originY = Math.round((height - this.footer - cell * b.rows) / 2);
+    this.input.onLayout({ x: this.originX, y: this.originY, width: cell * b.cols, height: cell * b.rows });
     this.boardRoot.position.set(this.originX, this.originY);
     this.camera.frame(this.originX + (cell * b.cols) / 2, this.originY + (cell * b.rows) / 2, cell);
     this.particles.density = this.scene.particleDensity;
@@ -267,6 +305,7 @@ export class BoardView {
     Object.assign(this.kit, { cell, cols: b.cols, rows: b.rows });
     perfContext({ cell });
     if (this.atlas.build(cell, this.scene.resolution) || forceRebuild) timed('rebuild', () => this.rebuild());
+    this.drawAim();
     this.scene.request();
   }
 
@@ -435,6 +474,10 @@ export class BoardView {
     // One freeze per step at most: a freeze on every blast of a chain would drag.
     const step = { frozen: false };
 
+    // An aimed booster falls from the sky first: the lead is its fall.
+    const strike = strikeOf(ev);
+    if (strike) strikeFall(this.kit, strike, plan.lead);
+
     if (ev.combo) {
       const center = ev.combo;
       const pair = ev.removed
@@ -451,8 +494,8 @@ export class BoardView {
       const tint = blast.color !== NO_COLOR ? GEM_TINTS[blast.color] : tintOf(colorAt(ev, blast.origin));
       this.after(start, () => {
         blastFx(this.kit, blast, tint, powers[i], (p) => plan.at(p, blast.order) - start);
-        // A combo's own blasts hit as one, at its center.
-        if (!ev.combo || blast.order > 0) this.impact(step);
+        // A combo's own blasts hit as one, at its center; a meteor lands as a whole chain's worth.
+        if (!ev.combo || blast.order > 0) this.impact(step, blast.kind === BlastKind.Meteor ? METEOR_HITS : 1);
       });
       end = Math.max(end, start + 120);
     });
@@ -702,6 +745,54 @@ export class BoardView {
     void this.scene.tweens.run(200, (k) => sprite.scale.set(1.15 - 0.15 * k), { ease: Ease.outQuad });
   }
 
+  // ---------- aim ----------
+
+  /** Aims a booster: touching the board shows what it would take, letting go there strikes. Null stops aiming. */
+  public aim(booster: Booster | null): void {
+    this.aiming = booster;
+    this.aimAt = null;
+    this.aimDown = false;
+    this.drag = null;
+    if (booster) {
+      this.deselect();
+      this.cancelHint();
+    }
+    this.drawAim();
+  }
+
+  private pointAim(pos: Pos | null): void {
+    if (pos?.r === this.aimAt?.r && pos?.c === this.aimAt?.c) return;
+    this.aimAt = pos;
+    this.drawAim();
+  }
+
+  /** The cells the booster would take, the aimed one brightest. */
+  private drawAim(): void {
+    for (const child of this.aimLayer.removeChildren()) child.destroy();
+    const b = this.board;
+    if (!b || !this.aiming || !this.aimAt) {
+      this.scene.request();
+      return;
+    }
+    const at = this.indexOf(this.aimAt);
+    for (const i of strikeCells(b, this.aiming, at)) {
+      const { r, c } = this.posOf(i);
+      const s = this.sprite(FrameName.Aim, r, c);
+      s.tint = AIM_TINTS[this.aiming];
+      s.blendMode = 'add';
+      s.alpha = i === at ? 1 : 0.6;
+      this.aimLayer.addChild(s);
+    }
+    this.scene.request();
+  }
+
+  private pulseAim(dt: number): boolean {
+    if (this.aimLayer.children.length === 0) return false;
+    this.aimClock += dt;
+    this.aimLayer.alpha = 0.8 + 0.2 * Math.sin(this.aimClock / AIM_PULSE);
+    return true;
+  }
+
   // ---------- hints ----------
 
   /**
@@ -756,6 +847,12 @@ export class BoardView {
   private onDown(e: PointerEvent): void {
     if (!this.inputEnabled) return;
     const pos = this.pointToCell(e);
+    if (this.aiming) {
+      this.aimDown = true;
+      this.pointAim(pos);
+      this.canvas.setPointerCapture(e.pointerId);
+      return;
+    }
     if (!pos || !this.isFree(pos)) {
       this.deselect();
       return;
@@ -773,6 +870,8 @@ export class BoardView {
   }
 
   private onMove(e: PointerEvent): void {
+    // A mouse aims by hovering; a finger by touching and sliding.
+    if (this.aiming && this.inputEnabled && (this.aimDown || e.pointerType === 'mouse')) this.pointAim(this.pointToCell(e));
     if (!this.drag || !this.inputEnabled) return;
     const dx = e.clientX - this.drag.x;
     const dy = e.clientY - this.drag.y;
@@ -782,6 +881,16 @@ export class BoardView {
     this.drag = null;
     this.deselect();
     this.swap(from, to, true);
+  }
+
+  /** Letting go over a cell strikes it; anywhere else the aim just waits. */
+  private onUp(e: PointerEvent): void {
+    this.drag = null;
+    if (!this.aiming || !this.aimDown) return;
+    this.aimDown = false;
+    const pos = this.pointToCell(e);
+    if (pos && this.inputEnabled) this.input.onStrike(pos);
+    else this.pointAim(null);
   }
 
   /** Both cells must still be calm: a selection or a drag may have started before a cascade reached them. */

@@ -23,7 +23,7 @@ export interface BotStyle {
  * Takes the best move by a hand-made sense of value every time, and loves specials and combos:
  * the ceiling a level is checked against. Order: see Feature.
  */
-export const EXPERT_BOT: BotStyle = { weights: [1, 2, 3, 3, 1, 7, 9, 12, 7.5, 21, 40, 6, 1.5, 0], greedy: true };
+export const EXPERT_BOT: BotStyle = { weights: [1, 2, 3, 3, 1, 7, 9, 12, 21, 40, 6, 1.5, 0], greedy: true };
 /** Taps any valid move. */
 export const RANDOM_BOT: BotStyle = { weights: new Array<number>(FEATURE_COUNT).fill(0) };
 

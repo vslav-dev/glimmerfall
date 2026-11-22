@@ -2,7 +2,7 @@ import { type Blast, BlastKind } from '@/core/types';
 
 /**
  * How hard a blast hits, for its own looks (a bomb's recoil). How it shakes the board is up to `feel`.
- * ~0.1 a spark, ~0.3 a line, ~0.4 a bomb, ~0.75 a big bomb or a whole-color prism.
+ * ~0.25 a falling star, ~0.3 a line, ~0.4 a bomb, ~0.75 a big bomb or a whole-color prism, 1 a meteor.
  */
 export function blastPower(b: Blast): number {
   switch (b.kind) {
@@ -13,8 +13,10 @@ export function blastPower(b: Blast): number {
       return bombRadius(b) >= 2 ? 0.75 : 0.42;
     case BlastKind.Prism:
       return Math.min(0.9, 0.3 + 0.012 * b.cells.length);
-    case BlastKind.Spark:
-      return 0.1;
+    case BlastKind.Star:
+      return 0.25;
+    case BlastKind.Meteor:
+      return 1;
   }
 }
 
@@ -45,6 +47,9 @@ export function feel(hit: number): Feel {
     stopMs: hit < STOP_FROM ? 0 : Math.min(80, 35 + 10 * (hit - STOP_FROM)),
   };
 }
+
+/** A meteor lands as this many special hits at once: the board trembles as after a long chain, and freezes. */
+export const METEOR_HITS = 6;
 
 /** Rings out as far as the farthest cell it took. */
 export function bombRadius(b: Blast): number {

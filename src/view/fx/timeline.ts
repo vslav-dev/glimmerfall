@@ -15,8 +15,11 @@ export const Timing = {
   splash: 30,
   /** a prism wave spans at most this long, whatever the board */
   prismMax: 240,
-  /** the spark's star flies this long to its target */
-  sparkFlight: 260,
+  /** a meteor's crater opens out at this speed */
+  crater: 32,
+  /** a booster falls from the sky this long before it strikes */
+  starFall: 430,
+  meteorFall: 660,
   /** a combo gathers its power this long before it goes off */
   comboCharge: 150,
   /** a layer next to a reached cell cracks this long after it */
@@ -34,35 +37,38 @@ export interface ClearPlan {
   popup(popup: ScorePopup): number;
 }
 
+/** The booster strike of a clear step, if the player aimed one: it falls from the sky before anything goes. */
+export function strikeOf(ev: ClearEvent): Blast | undefined {
+  return ev.blasts.find((b) => b.kind === BlastKind.Star || b.kind === BlastKind.Meteor);
+}
+
 /**
  * When everything in a clear step happens. A blast's wave runs out from its origin, so each piece goes
- * the moment the beam, ring or bolt reaches it; a special hit by a wave goes off once the wave got to it;
- * a spark's target goes when the star lands. Without the wave a whole blast lands at once; without the
- * charge a combo goes off at once.
+ * the moment the beam, ring or bolt reaches it; a special hit by a wave goes off once the wave got to it.
+ * Without the wave a whole blast lands at once; without the charge a combo goes off at once.
+ * A booster strike always takes its fall first: the fall is what the player aimed.
  */
 export function planClear(ev: ClearEvent, { wave, charge }: { wave: boolean; charge: boolean }): ClearPlan {
-  const lead = ev.combo && charge ? Timing.comboCharge : 0;
+  const strike = strikeOf(ev);
+  const lead = strike ? (strike.kind === BlastKind.Meteor ? Timing.meteorFall : Timing.starFall) : ev.combo && charge ? Timing.comboCharge : 0;
   const base = (order: number): number => lead + order * Timing.orderStep;
   const hits = new Map<string, number>();
-  const arrivals = new Map<string, number>();
-  const note = (map: Map<string, number>, k: string, t: number): void => {
-    const prev = map.get(k);
-    if (prev === undefined || t < prev) map.set(k, t);
+  const note = (k: string, t: number): void => {
+    const prev = hits.get(k);
+    if (prev === undefined || t < prev) hits.set(k, t);
   };
 
   const blasts = ev.blasts.map(() => 0);
   const byOrder = ev.blasts.map((_, i) => i).sort((a, b) => ev.blasts[a].order - ev.blasts[b].order);
   for (const i of byOrder) {
     const b = ev.blasts[i];
-    const landed = arrivals.get(key(b.order, b.origin));
     const reached = hits.get(key(b.order - 1, b.origin));
-    const start = landed ?? (reached === undefined ? base(b.order) : reached + Timing.fuse);
+    const start = reached === undefined ? base(b.order) : reached + Timing.fuse;
     blasts[i] = start;
-    for (const p of b.cells) note(hits, key(b.order, p), start + (wave ? waveDelay(b, p) : 0));
-    if (b.kind === BlastKind.Spark && b.target) note(arrivals, key(b.order + 1, b.target), start + Timing.sparkFlight);
+    for (const p of b.cells) note(key(b.order, p), start + (wave ? waveDelay(b, p) : 0));
   }
 
-  const reachedAt = (pos: Pos, order: number): number | undefined => hits.get(key(order, pos)) ?? arrivals.get(key(order, pos));
+  const reachedAt = (pos: Pos, order: number): number | undefined => hits.get(key(order, pos));
 
   return {
     lead,
@@ -100,7 +106,9 @@ function waveDelay(b: Blast, p: Pos): number {
       return Math.max(dr, dc) * Timing.bomb;
     case BlastKind.Prism:
       return Math.min(Math.hypot(dr, dc) * Timing.prism, Timing.prismMax);
-    case BlastKind.Spark:
-      return Timing.splash;
+    case BlastKind.Star:
+      return (dr + dc) * Timing.splash;
+    case BlastKind.Meteor:
+      return Math.hypot(dr, dc) * Timing.crater;
   }
 }

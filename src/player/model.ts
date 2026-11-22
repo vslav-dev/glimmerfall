@@ -13,12 +13,15 @@ import { FEATURE_COUNT, type MoveOptions, score } from '@/bot/features';
  */
 
 /** Changes when the feature set or the meaning of the numbers changes: a stored model of another version is dropped. */
-export const MODEL_VERSION = 1;
+export const MODEL_VERSION = 2;
 
-/** Population weights, fitted offline on recorded moves (plans/06). Order: see Feature. */
-const PRIOR: readonly number[] = [0.205, 0.044, 0.394, 0.529, 0.296, 0.563, 1.282, 1.909, -1.411, 2.135, 0.243, 0.257, 0.649, -0.35];
+/**
+ * Population weights, fitted offline on recorded moves (plans/06). Order: see Feature.
+ * Version 2 dropped the spark (squares make bombs now, plans/09): the rest kept their fitted values.
+ */
+const PRIOR: readonly number[] = [0.205, 0.044, 0.394, 0.529, 0.296, 0.563, 1.282, 1.909, 2.135, 0.243, 0.257, 0.649, -0.35];
 /** Spread of each feature across options: learning steps are taken in these units, so every feature learns alike. */
-const SCALE: readonly number[] = [1.138, 0.924, 0.567, 0.539, 0.159, 0.502, 0.25, 0.12, 0.236, 0.068, 0.215, 0.108, 0.281, 2.044];
+const SCALE: readonly number[] = [1.138, 0.924, 0.567, 0.539, 0.159, 0.502, 0.25, 0.12, 0.068, 0.215, 0.108, 0.281, 2.044];
 /** Best prequential fit on recorded moves, learning from scratch (plans/06). */
 const TASTE_RATE = 0.01;
 const PULL = 0.01;
@@ -73,10 +76,11 @@ export function observeMove(model: PlayerModel, o: MoveOptions, chosen: number, 
 
 /**
  * Learns strength from one finished attempt: `predicted` is the twin's own win rate on it, as calibrated.
- * Attempts the player abandoned say nothing and are not passed in.
+ * Attempts the player abandoned say nothing and are not passed in. `weight` < 1 for an attempt eased by boosters:
+ * the twin plays without them, so such an outcome says less about the player.
  */
-export function observeOutcome(model: PlayerModel, won: boolean, predicted: number): void {
-  model.strength = Math.min(1, Math.max(-1, model.strength + STRENGTH_RATE * ((won ? 1 : 0) - predicted)));
+export function observeOutcome(model: PlayerModel, won: boolean, predicted: number, weight = 1): void {
+  model.strength = Math.min(1, Math.max(-1, model.strength + weight * STRENGTH_RATE * ((won ? 1 : 0) - predicted)));
 }
 
 /** Probability the model's taste gives the chosen move: how well it predicts the player. */

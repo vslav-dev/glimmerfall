@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { EXPERT_BOT, pickMove, simulate } from '@/bot/bot';
-import { goalsOf, moveOptions } from '@/bot/features';
+import { FEATURE_COUNT, goalsOf, moveOptions } from '@/bot/features';
 import { posOf } from '@/core/board';
 import { advance, createGame, playMove, startFinale, starsFor } from '@/core/game';
 import { hasAnyMatch, hasMove } from '@/core/moves';
@@ -10,7 +10,7 @@ import { planLevel } from '@/gen/plan';
 import { newModel, type TwinStyle, twinOf } from '@/player/model';
 
 const AVERAGE: TwinStyle = { ...twinOf(newModel()), strength: 0.3 };
-const TAPPER: TwinStyle = { weights: new Array<number>(14).fill(0), strength: 0, craft: 0 };
+const TAPPER: TwinStyle = { weights: new Array<number>(FEATURE_COUNT).fill(0), strength: 0, craft: 0 };
 const PLANNER: TwinStyle = { weights: [...EXPERT_BOT.weights], strength: 0.8, craft: 1 };
 const req = (number: number, seed = 12345, style = AVERAGE, pace = 1): DraftRequest => ({ seed, number, style, pace });
 

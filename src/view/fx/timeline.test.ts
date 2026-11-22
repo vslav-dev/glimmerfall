@@ -5,8 +5,8 @@ import { planClear, Timing } from '@/view/fx/timeline';
 
 type ClearEvent = Extract<GameEvent, { type: 'clear' }>;
 
-function blast(kind: BlastKind, origin: Pos, cells: Pos[], order = 0, target: Pos | null = null): Blast {
-  return { kind, origin, cells, order, target, color: NO_COLOR };
+function blast(kind: BlastKind, origin: Pos, cells: Pos[], order = 0): Blast {
+  return { kind, origin, cells, order, color: NO_COLOR };
 }
 
 function clear(blasts: Blast[], combo: Pos | null = null): ClearEvent {
@@ -37,10 +37,13 @@ describe('planClear', () => {
     expect(plan.at({ r: 1, c: 5 }, 1)).toBe(plan.blasts[0] + Timing.bomb);
   });
 
-  it('takes the spark target when the star lands', () => {
-    const spark = blast(BlastKind.Spark, { r: 0, c: 0 }, [], 0, { r: 5, c: 5 });
-    const plan = planClear(clear([spark]), ON);
-    expect(plan.at({ r: 5, c: 5 }, 1)).toBe(Timing.sparkFlight);
+  it('holds everything back while a booster falls, the meteor longest', () => {
+    const star = planClear(clear([blast(BlastKind.Star, { r: 2, c: 2 }, [{ r: 2, c: 2 }])]), ON);
+    const meteor = planClear(clear([blast(BlastKind.Meteor, { r: 2, c: 2 }, [{ r: 2, c: 2 }, { r: 2, c: 4 }])]), ON);
+    expect(star.at({ r: 2, c: 2 }, 0)).toBe(Timing.starFall);
+    expect(meteor.at({ r: 2, c: 2 }, 0)).toBe(Timing.meteorFall);
+    expect(meteor.at({ r: 2, c: 4 }, 0)).toBe(Timing.meteorFall + 2 * Timing.crater);
+    expect(Timing.meteorFall).toBeGreaterThan(Timing.starFall);
   });
 
   it('holds everything back for a combo charge', () => {
@@ -62,15 +65,16 @@ describe('planClear', () => {
 });
 
 describe('impact', () => {
-  it('ranks hits: spark < line < bomb < big bomb', () => {
+  it('ranks hits: star < line < bomb < big bomb < meteor', () => {
     const p = (b: Blast): number => blastPower(b);
     const small = blast(BlastKind.Bomb, { r: 2, c: 2 }, [{ r: 1, c: 1 }, { r: 3, c: 3 }]);
     const big = blast(BlastKind.Bomb, { r: 2, c: 2 }, [{ r: 0, c: 0 }, { r: 4, c: 4 }]);
     expect(bombRadius(small)).toBe(1);
     expect(bombRadius(big)).toBe(2);
-    expect(p(blast(BlastKind.Spark, { r: 0, c: 0 }, []))).toBeLessThan(p(blast(BlastKind.Row, { r: 0, c: 0 }, [])));
+    expect(p(blast(BlastKind.Star, { r: 0, c: 0 }, []))).toBeLessThan(p(blast(BlastKind.Row, { r: 0, c: 0 }, [])));
     expect(p(blast(BlastKind.Row, { r: 0, c: 0 }, []))).toBeLessThan(p(small));
     expect(p(small)).toBeLessThan(p(big));
+    expect(p(big)).toBeLessThan(p(blast(BlastKind.Meteor, { r: 0, c: 0 }, [])));
   });
 
   it('builds up along the move: trembles first, freezes only deep into a chain', () => {

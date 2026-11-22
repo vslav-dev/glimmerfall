@@ -17,7 +17,7 @@ interface Shape {
   cells: number[];
 }
 
-/** Whether the piece at index i is part of a line of 3+ or a 2x2 square. Used for quick move checks. */
+/** Whether the piece at index i is part of a line of 3+: a square alone is no match. Used for quick move checks. */
 export function matchesAt(b: Board, i: number): boolean {
   const { r, c } = posOf(b, i);
   const k = colorAt(b, r, c);
@@ -33,26 +33,7 @@ export function matchesAt(b: Board, i: number): boolean {
   while (colorAt(b, up - 1, c) === k) up--;
   let down = r;
   while (colorAt(b, down + 1, c) === k) down++;
-  if (down - up >= 2) return true;
-
-  for (const [dr, dc] of [
-    [-1, -1],
-    [-1, 0],
-    [0, -1],
-    [0, 0],
-  ]) {
-    const tr = r + dr;
-    const tc = c + dc;
-    if (
-      colorAt(b, tr, tc) === k &&
-      colorAt(b, tr + 1, tc) === k &&
-      colorAt(b, tr, tc + 1) === k &&
-      colorAt(b, tr + 1, tc + 1) === k
-    ) {
-      return true;
-    }
-  }
-  return false;
+  return down - up >= 2;
 }
 
 /** Reusable result of `scanGroup`, so hot loops (bots, move estimates) allocate nothing. */
@@ -63,9 +44,11 @@ export interface GroupScan {
   special: Special;
 }
 
+/** A group holds each cell once, so it is never bigger than the board: boards stay well below this. */
+const MAX_SCAN = 128;
+
 export function newGroupScan(): GroupScan {
-  // A row, a column and four squares through one cell: at most 9 + 9 + 4 * 4 cells.
-  return { cells: new Int32Array(34), count: 0, special: Special.None };
+  return { cells: new Int32Array(MAX_SCAN), count: 0, special: Special.None };
 }
 
 const SQUARE_CORNERS = [
@@ -76,9 +59,9 @@ const SQUARE_CORNERS = [
 ] as const;
 
 /**
- * The group through cell x on a board where only x changed since it was calm: every new line or square
- * passes through x, so this local scan finds exactly what `findGroups` would, without scanning the board.
- * Returns whether there is a match.
+ * The group through cell x on a board where only x changed since it was calm: every new line passes through x
+ * and squares join the group only by touching it, so this local scan finds exactly what `findGroups` would,
+ * without scanning the board. Returns whether there is a match.
  */
 export function scanGroup(b: Board, x: number, scan: GroupScan): boolean {
   scan.count = 0;
@@ -101,12 +84,30 @@ export function scanGroup(b: Board, x: number, scan: GroupScan): boolean {
 
   if (h >= 3) for (let col = left; col <= right; col++) addCell(scan, r * b.cols + col);
   if (v >= 3) for (let row = up; row <= down; row++) addCell(scan, row * b.cols + c);
+  if (scan.count === 0) return false;
+  // Squares touching the group join it, and so do squares touching those: `count` grows as they are added.
   let square = false;
+  for (let n = 0; n < scan.count; n++) if (addSquares(b, scan.cells[n], k, scan)) square = true;
+
+  // Same rules as buildGroup: the longest line first, then a crossing, a line of four, a square.
+  const longest = Math.max(h >= 3 ? h : 0, v >= 3 ? v : 0);
+  if (longest >= 5) scan.special = Special.Prism;
+  else if (h >= 3 && v >= 3) scan.special = Special.Bomb;
+  else if (longest === 4) scan.special = h === 4 ? Special.LineV : Special.LineH;
+  else if (square) scan.special = Special.Bomb;
+  return true;
+}
+
+/** Adds every square of color k through cell i; returns whether there is one. */
+function addSquares(b: Board, i: number, k: number, scan: GroupScan): boolean {
+  const r = Math.floor(i / b.cols);
+  const c = i % b.cols;
+  let found = false;
   for (const [dr, dc] of SQUARE_CORNERS) {
     const tr = r + dr;
     const tc = c + dc;
     if (colorAt(b, tr, tc) === k && colorAt(b, tr + 1, tc) === k && colorAt(b, tr, tc + 1) === k && colorAt(b, tr + 1, tc + 1) === k) {
-      square = true;
+      found = true;
       const top = tr * b.cols + tc;
       addCell(scan, top);
       addCell(scan, top + 1);
@@ -114,15 +115,7 @@ export function scanGroup(b: Board, x: number, scan: GroupScan): boolean {
       addCell(scan, top + b.cols + 1);
     }
   }
-  if (scan.count === 0) return false;
-
-  // Same rules as buildGroup: the longest line first, then a crossing, a line of four, a square.
-  const longest = Math.max(h >= 3 ? h : 0, v >= 3 ? v : 0);
-  if (longest >= 5) scan.special = Special.Prism;
-  else if (h >= 3 && v >= 3) scan.special = Special.Bomb;
-  else if (longest === 4) scan.special = h === 4 ? Special.LineV : Special.LineH;
-  else if (square) scan.special = Special.Spark;
-  return true;
+  return found;
 }
 
 function addCell(scan: GroupScan, i: number): void {
@@ -132,7 +125,7 @@ function addCell(scan: GroupScan, i: number): void {
 
 /**
  * All match groups on the board. Lines and squares that share cells merge into one group;
- * the group's shape decides which special piece it creates.
+ * a square on its own is no match. The group's shape decides which special piece it creates.
  * `preferred` cells (the swapped pair) get the special when they belong to the group.
  */
 export function findGroups(b: Board, preferred: readonly number[]): MatchGroup[] {
@@ -161,7 +154,7 @@ export function findGroups(b: Board, preferred: readonly number[]): MatchGroup[]
     else components.set(key, [shape]);
   });
 
-  return [...components.values()].map((parts) => buildGroup(b, parts, preferred));
+  return [...components.values()].filter((parts) => parts.some((p) => p.kind !== ShapeKind.Square)).map((parts) => buildGroup(b, parts, preferred));
 }
 
 function collectShapes(b: Board): Shape[] {
@@ -217,7 +210,7 @@ function buildGroup(b: Board, parts: Shape[], preferred: readonly number[]): Mat
   if (longestLength >= 5) special = Special.Prism;
   else if (rows.length > 0 && cols.length > 0) special = Special.Bomb;
   else if (longestLength === 4) special = longest!.kind === ShapeKind.Row ? Special.LineV : Special.LineH;
-  else if (parts.some((p) => p.kind === ShapeKind.Square)) special = Special.Spark;
+  else if (parts.some((p) => p.kind === ShapeKind.Square)) special = Special.Bomb;
 
   if (special === Special.None) return { cells, color, special, at: -1 };
 

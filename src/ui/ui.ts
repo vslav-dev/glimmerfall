@@ -36,6 +36,8 @@ export const Action = {
   SoundPlay: 'sound-play',
   Effects: 'effects',
   ToggleEffect: 'toggle-effect',
+  Star: 'use-star',
+  Meteor: 'use-meteor',
 } as const;
 export type Action = (typeof Action)[keyof typeof Action];
 
