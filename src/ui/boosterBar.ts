@@ -1,5 +1,6 @@
 import { type Charges, EARN, progress, stock } from '@/app/boosters';
 import { Booster } from '@/core/types';
+import { perfFlag } from '@/telemetry/perf';
 import { Glide } from '@/ui/glide';
 import { Action } from '@/ui/ui';
 import { S } from '@/ui/strings';
@@ -45,7 +46,7 @@ const METEOR_ICON = `<svg viewBox="0 0 48 48" aria-hidden="true">
   <path d="M8 25C17 13 31 6 46 2 40 14 32 28 23 40Z" fill="url(#bt-flame-out)"/>
   <path d="M12 26C20 16 29 11 40 7 35 16 29 26 22 35Z" fill="url(#bt-flame-in)"/>
   <path d="M28.5 30 25.2 36.1 19.9 40.8 13.4 38 8.3 33.5 8.9 26.7 12.7 20.7 19.6 21.1 25.8 23.5Z" fill="url(#bt-rock)" stroke="#ff9a4a" stroke-width="1" stroke-linejoin="round"/>
-  <path d="M12 27 17 30 15 35M17 30 23 28 24 33" fill="none" stroke="#ffd27a" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path class="line" d="M12 27 17 30 15 35M17 30 23 28 24 33" fill="none" stroke="#ffd27a" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>`;
 
 const ICONS: Record<Booster, string> = { [Booster.Star]: STAR_ICON, [Booster.Meteor]: METEOR_ICON };
@@ -89,10 +90,16 @@ export class BoosterBar {
 
   public hide(): void {
     this.el.classList.add('off');
+    perfFlag('boosterReady', false);
+    perfFlag('boosterGlow', false);
   }
 
   /** Follows the charges (gains animate), whether a booster can be aimed now, and which one is being aimed. */
   public update(charges: Charges, usable: boolean, aiming: Booster | null): void {
+    const ready = Object.values(Booster).some((b) => stock(charges, b) > 0);
+    // A ready button breathes while the board is calm: frames drawn meanwhile tell what that costs.
+    perfFlag('boosterReady', ready);
+    perfFlag('boosterGlow', ready && usable);
     for (const b of Object.values(Booster)) {
       const button = this.buttons[b];
       button.set(stock(charges, b), progress(charges, b));

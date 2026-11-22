@@ -9,6 +9,10 @@ import { track } from '@/telemetry/telemetry';
  * A frame splits into the JS update (tweens, particles), the Pixi render submit (CPU) and the rest
  * of the interval (GPU, compositor, other main-thread work). Long frames and slow taps come from
  * the browser's own timing APIs (Chromium only); `ops` time the known heavy operations.
+ * What else was going on: `flags` count the frames each state was on in (a booster glowing, the phone charging),
+ * `counts` tally what the board played (blasts by kind, popped pieces), `peaks` the most of something at once
+ * (live particles), and the battery says how charged the phone is and whether it charges: a warm, charging phone
+ * may be throttled.
  */
 
 type Data = Record<string, unknown>;
@@ -19,6 +23,12 @@ const SLOW_INTERVALS = [20, 33, 50, 100];
 const MIN_FRAMES = 30;
 /** Taps that take longer than this to show their result are reported (the API rounds to 8 ms). */
 const SLOW_INPUT_MS = 40;
+
+/** Battery Status API (Chromium), not in the DOM typings. */
+interface BatteryManager extends EventTarget {
+  level: number;
+  charging: boolean;
+}
 
 interface LoafScript {
   invoker: string;
@@ -82,6 +92,9 @@ function newWindow() {
     loaf: { n: 0, ms: 0, blockMs: 0, layoutMs: 0, maxMs: 0, worst: '' },
     input: { n: 0, maxMs: 0, worst: null as Data | null },
     ops: new Map<string, { n: number; ms: number; max: number }>(),
+    flags: new Map<string, number>(),
+    counts: new Map<string, number>(),
+    peaks: new Map<string, number>(),
   };
 }
 
@@ -92,6 +105,9 @@ let frameDraws = 0;
 let scriptAt = 0;
 let loafSupported = false;
 let eventsSupported = false;
+let battery: BatteryManager | null = null;
+/** states on right now: each frame counts toward them */
+const flagsOn = new Set<string>();
 
 /** Call first thing at startup. Hiding the app sends the open window. */
 export function startPerf(): void {
@@ -103,6 +119,31 @@ export function startPerf(): void {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') flushPerf('hidden');
   });
+  const nav = navigator as Navigator & { getBattery?: () => Promise<BatteryManager> };
+  nav.getBattery?.().then(
+    (b) => {
+      battery = b;
+      perfFlag('charging', b.charging);
+      b.addEventListener('chargingchange', () => perfFlag('charging', b.charging));
+    },
+    () => undefined,
+  );
+}
+
+/** A state frames are counted in while it is on. */
+export function perfFlag(name: string, on: boolean): void {
+  if (on) flagsOn.add(name);
+  else flagsOn.delete(name);
+}
+
+/** Adds `n` to a tally of the open window. */
+export function perfCount(name: string, n = 1): void {
+  win.counts.set(name, (win.counts.get(name) ?? 0) + n);
+}
+
+/** Keeps the most of something seen at once in the open window. */
+export function perfPeak(name: string, value: number): void {
+  if (value > (win.peaks.get(name) ?? 0)) win.peaks.set(name, value);
 }
 
 /** Startup timeline, ms since navigation start. */
@@ -117,6 +158,7 @@ export function trackBoot(sceneAt: number): void {
     ready: round(performance.now()),
     loaf: loafSupported,
     events: eventsSupported,
+    battery: batteryState(),
     heapMb: heapMb(),
   });
 }
@@ -138,6 +180,7 @@ export function recordFrame(interval: number, updateMs: number, renderMs: number
   win.draws += frameDraws;
   win.drawsMax = Math.max(win.drawsMax, frameDraws);
   frameDraws = 0;
+  for (const name of flagsOn) win.flags.set(name, (win.flags.get(name) ?? 0) + 1);
 }
 
 /** Times `fn`; a returned promise is timed until it settles. */
@@ -185,9 +228,18 @@ export function flushPerf(reason: string): void {
     loaf: loafSupported ? { ...w.loaf, ms: Math.round(w.loaf.ms), blockMs: Math.round(w.loaf.blockMs), layoutMs: Math.round(w.loaf.layoutMs) } : null,
     input: eventsSupported ? w.input : null,
     ops: Object.fromEntries([...w.ops].map(([name, o]) => [name, { n: o.n, ms: round(o.ms), max: round(o.max) }])),
+    flags: Object.fromEntries(w.flags),
+    counts: Object.fromEntries(w.counts),
+    peaks: Object.fromEntries(w.peaks),
+    battery: batteryState(),
     heapMb: heapMb(),
   });
   win = newWindow();
+}
+
+/** Percent charged and whether it charges, or null where the browser does not tell. */
+function batteryState(): Data | null {
+  return battery ? { level: Math.round(battery.level * 100), charging: battery.charging } : null;
 }
 
 function op(name: string, ms: number): void {

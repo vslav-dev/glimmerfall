@@ -1,4 +1,5 @@
 import type { Container, Sprite, Texture } from 'pixi.js';
+import { perfPeak } from '@/telemetry/perf';
 import type { SpritePool } from '@/view/fx/pool';
 
 /** A kind of particle. Lengths are in cells, times in ms, so a preset looks the same on any board. */
@@ -115,6 +116,7 @@ export class Particles {
       this.live.push(p);
     }
     if (count > 0) this.onStart();
+    perfPeak('particles', this.live.length);
   }
 
   /** Returns whether particles are still alive. */

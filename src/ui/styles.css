@@ -685,7 +685,7 @@ body {
   border: 0;
   background: none;
   cursor: pointer;
-  transition: opacity 0.25s, transform 0.2s;
+  transition: transform 0.2s;
 }
 
 .booster.meteor {
@@ -717,10 +717,14 @@ body {
   height: calc(100% - 12px);
 }
 
-/* what is not charged yet: a dim silhouette the color fills into */
-.orb .empty svg {
-  filter: grayscale(1) brightness(0.55);
-  opacity: 0.45;
+/* what is not charged yet: a flat silhouette the color fills into; flat fills, no filter to render */
+.orb .empty path {
+  fill: rgba(255, 255, 255, 0.16);
+  stroke: none;
+}
+
+.orb .empty path.line {
+  fill: none;
 }
 
 .orb .fill {
@@ -732,10 +736,6 @@ body {
   position: absolute;
   inset: 0;
   background: radial-gradient(120% 90% at 50% 100%, var(--glow), transparent 75%);
-}
-
-.orb .fill svg {
-  filter: drop-shadow(0 0 4px var(--glow));
 }
 
 /* the bright edge of the rising color */
@@ -767,20 +767,43 @@ body {
   transition: none;
 }
 
-/* ready to use: lit through, breathing light */
+/* ready to use: lit through, a halo breathing behind it */
 .booster.ready .orb {
   border-color: var(--c);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.35), 0 0 12px 2px var(--glow);
+}
+
+/*
+ * The halo animates only opacity and transform on a layer of its own: the compositor runs it without
+ * repainting the orb. A painted animation (box-shadow, a filtered icon) repainted it every frame at 120 Hz
+ * and dragged the board's frames down on Mali (plans/10).
+ */
+.booster::before {
+  content: '';
+  position: absolute;
+  top: -8px;
+  left: 50%;
+  width: 70px;
+  height: 70px;
+  margin-left: -35px;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--glow) 35%, transparent 70%);
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* The layer stays while the booster is ready; only the breathing stops while the board is busy. */
+.booster.ready::before {
+  will-change: opacity, transform;
+  opacity: 0.35;
+  transform: scale(0.9);
+}
+
+.booster.ready.usable::before {
   animation: booster-breathe 2.4s ease-in-out infinite;
 }
 
-.booster.ready .fill svg {
-  animation: booster-bob 2.4s ease-in-out infinite;
-}
-
-/* ready but the board is busy: waits, dimmed */
-.booster.ready:not(.usable) {
-  opacity: 0.6;
-}
+/* While the board is busy the halo rests: nothing in the DOM changes or animates beside a cascade. */
 
 .booster:active {
   transform: scale(0.94);
@@ -925,13 +948,8 @@ body {
 }
 
 @keyframes booster-breathe {
-  0%, 100% { box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.35), 0 0 10px 1px var(--glow); }
-  50% { box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.35), 0 0 20px 5px var(--glow); }
-}
-
-@keyframes booster-bob {
-  0%, 100% { transform: translateY(0) rotate(0); }
-  50% { transform: translateY(-1.5px) rotate(-4deg); }
+  0%, 100% { opacity: 0.35; transform: scale(0.9); }
+  50% { opacity: 0.9; transform: scale(1.06); }
 }
 
 @keyframes booster-burst {

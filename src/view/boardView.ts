@@ -5,7 +5,7 @@ import { findMoves } from '@/core/moves';
 import { strikeCells } from '@/core/resolve';
 import { BlastKind, type Board, Booster, type GameEvent, NO_COLOR, type Piece, type Pos, Special, type SwapEvent } from '@/core/types';
 import type { SwapInput } from '@/telemetry/attempt';
-import { perfContext, timed } from '@/telemetry/perf';
+import { perfContext, perfCount, perfFlag, timed } from '@/telemetry/perf';
 import { FrameName, GEM_TINTS } from '@/view/art';
 import { Atlas } from '@/view/atlas';
 import { Camera } from '@/view/fx/camera';
@@ -466,6 +466,8 @@ export class BoardView {
    */
   private async playClear(ev: ClearEvent): Promise<void> {
     const plan = planClear(ev, { wave: this.fx.on(Fx.Wave), charge: this.fx.on(Fx.Combo) });
+    perfCount('pops', ev.removed.length);
+    for (const b of ev.blasts) perfCount(`blast-${b.kind}`);
     const createdAt = new Map(ev.created.map((c) => [c.piece.id, c.pos]));
     const boost = cascadeBoost(ev.cascade);
     // A crowded clear shares one budget of particles, so the last pieces are not left without any.
@@ -750,6 +752,7 @@ export class BoardView {
   /** Aims a booster: touching the board shows what it would take, letting go there strikes. Null stops aiming. */
   public aim(booster: Booster | null): void {
     this.aiming = booster;
+    perfFlag('aiming', booster !== null);
     this.aimAt = null;
     this.aimDown = false;
     this.drag = null;
