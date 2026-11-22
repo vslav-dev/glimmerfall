@@ -6,6 +6,13 @@ import pkg from './package.json' with { type: 'json' };
 
 /** Releases the update notice lists at most: enough for anyone who skipped a few. */
 const NOTICE_RELEASES = 20;
+/**
+ * How often a running game asks for `version.json`, minutes. Games follow it from their next ask, so a deploy
+ * that changes it reaches every open game within one old period. Each game asks once per period:
+ * requests per second ≈ players online / (60 × minutes). At 1 minute, 100 requests/s is ~6 000 players at once;
+ * raise it as the audience grows (10 → ~60 000, 30 → ~180 000 at the same 100/s).
+ */
+const CHECK_EVERY_MINUTES = 1;
 
 /**
  * Serves `version.json`: the live version and what the latest releases changed. The game polls it to notice
@@ -13,7 +20,8 @@ const NOTICE_RELEASES = 20;
  * The build fails when the version has no changelog entry, so every release says what it changed.
  */
 function versionFile(): Plugin {
-  const source = (): string => JSON.stringify({ version: pkg.version, releases: changelog.slice(0, NOTICE_RELEASES) });
+  const source = (): string =>
+    JSON.stringify({ version: pkg.version, checkEveryMinutes: CHECK_EVERY_MINUTES, releases: changelog.slice(0, NOTICE_RELEASES) });
   return {
     name: 'version-file',
     buildStart() {

@@ -12,16 +12,29 @@ export interface Update {
   releases: Release[];
 }
 
-/** How often a running game looks again, and the least time between two looks when it comes back to the front. */
-const CHECK_EVERY_MS = 30 * 60_000;
-const RECHECK_AFTER_MS = 10 * 60_000;
+/** What `version.json` holds: the live version, how often to ask again, and the latest releases. */
+interface VersionFile {
+  version: string;
+  checkEveryMinutes: number;
+  releases: Release[];
+}
+
+/** Until the first answer comes, and the bounds an answer's period is kept within, minutes. */
+const DEFAULT_MINUTES = 1;
+const MIN_MINUTES = 0.5;
+const MAX_MINUTES = 240;
+/** each wait is spread by ±this share, so games opened together do not ask together */
+const JITTER = 0.2;
 
 /**
  * Notices a new build without bothering the server: `version.json` is a static file, asked with a conditional GET
- * (a few hundred bytes, answered 304 while nothing changed), at start, every half hour while the game is open,
- * and when it returns to the front after a while. No open connection is kept. Once an update is found it stops asking.
+ * (a few hundred bytes, answered 304 while nothing changed; the browser then hands over its cached copy).
+ * How often to ask comes in the file itself, so a deploy can slow every open game down as the audience grows.
+ * It asks at start, then once per period while the game is in front, and at once on return to the front when
+ * a period has passed. No connection is kept open. Once an update is found it stops asking.
  */
 export class UpdateWatch {
+  private minutes = DEFAULT_MINUTES;
   private last = 0;
   private timer = 0;
   private found = false;
@@ -33,27 +46,36 @@ export class UpdateWatch {
 
   public start(): void {
     void this.check();
-    this.timer = window.setInterval(() => void this.check(), CHECK_EVERY_MS);
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible' && performance.now() - this.last > RECHECK_AFTER_MS) void this.check();
+      if (document.visibilityState === 'visible' && performance.now() - this.last > this.periodMs()) void this.check();
     });
   }
 
   private async check(): Promise<void> {
-    if (this.found || document.visibilityState !== 'visible') return;
+    window.clearTimeout(this.timer);
+    if (this.found) return;
+    // A game in the background does not ask; it asks on return instead.
+    if (document.visibilityState !== 'visible') return;
     this.last = performance.now();
     try {
       // `no-cache` revalidates: the browser sends its ETag and the server answers 304 while the file is the same.
       const response = await fetch('./version.json', { cache: 'no-cache' });
-      if (!response.ok) return;
-      const live = (await response.json()) as { version: string; releases: Release[] };
-      if (compareVersions(live.version, this.current) <= 0) return;
-      this.found = true;
-      window.clearInterval(this.timer);
-      this.onUpdate({ version: live.version, releases: live.releases.filter((r) => compareVersions(r.version, this.current) > 0) });
+      if (response.ok) this.read((await response.json()) as VersionFile);
     } catch {
       // Offline or a deploy mid-way: the next look tries again.
     }
+    if (!this.found) this.timer = window.setTimeout(() => void this.check(), this.periodMs() * (1 + JITTER * (2 * Math.random() - 1)));
+  }
+
+  private read(live: VersionFile): void {
+    if (Number.isFinite(live.checkEveryMinutes)) this.minutes = Math.min(MAX_MINUTES, Math.max(MIN_MINUTES, live.checkEveryMinutes));
+    if (compareVersions(live.version, this.current) <= 0) return;
+    this.found = true;
+    this.onUpdate({ version: live.version, releases: live.releases.filter((r) => compareVersions(r.version, this.current) > 0) });
+  }
+
+  private periodMs(): number {
+    return this.minutes * 60_000;
   }
 }
 
