@@ -5,7 +5,6 @@ import { BoardSize, type Settings } from '@/app/save';
 import type { Update } from '@/app/updates';
 import { DIFFICULTIES } from '@/player/difficulty';
 import { FrameName, frameDataUrl } from '@/view/art';
-import { perfFlag } from '@/telemetry/perf';
 import { Fx, type FxChoice } from '@/view/fx/switches';
 import { Counter } from '@/ui/counter';
 import { Glide } from '@/ui/glide';
@@ -405,12 +404,7 @@ export class Ui {
     // Long phrases shrink to fit the screen width.
     this.praiseEl.style.setProperty('--chars', String(text.length));
     this.flash?.cancel();
-    const flash = this.praiseEl.animate(FLASH_FRAMES, FLASH_MS);
-    this.flash = flash;
-    perfFlag('flashText', true);
-    flash.onfinish = flash.oncancel = () => {
-      if (this.flash === flash) perfFlag('flashText', false);
-    };
+    this.flash = this.praiseEl.animate(FLASH_FRAMES, FLASH_MS);
   }
 
   /** Fades to the curtain, runs the change behind it, fades back. */

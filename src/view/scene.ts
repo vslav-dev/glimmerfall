@@ -1,4 +1,4 @@
-import { autoDetectRenderer, Container, type Renderer, Sprite } from 'pixi.js';
+import { autoDetectRenderer, Container, type Renderer } from 'pixi.js';
 import { countDraws, perfContext, perfCount, perfFlag, recordFrame, recordIdleFrame } from '@/telemetry/perf';
 import { track } from '@/telemetry/telemetry';
 import { Tweens } from '@/view/tween';
@@ -175,10 +175,9 @@ export class Scene {
     const updated = performance.now();
     if (draw) {
       this.lastDrawn = now;
-      perfFlag('calm', calm);
       this.renderer.render(this.root);
       const rendered = performance.now();
-      recordFrame({ interval, updateMs: updated - start, renderMs: rendered - updated, lateMs: Math.max(0, start - now), ...coverage(this.root, this.width * this.height) });
+      recordFrame({ interval, updateMs: updated - start, renderMs: rendered - updated });
     } else {
       recordIdleFrame();
     }
@@ -242,24 +241,6 @@ export class Scene {
       px: [Math.round(this.width * res), Math.round(this.height * res)],
     });
   }
-}
-
-/** Pixels the frame fills, in canvases (every visible sprite, plus the clear), and the sprites drawn. */
-function coverage(root: Container, canvasArea: number): { fill: number; sprites: number } {
-  let area = 0;
-  let sprites = 0;
-  const visit = (node: Container): void => {
-    if (!node.visible || node.alpha <= 0) return;
-    if (node instanceof Sprite) {
-      const t = node.worldTransform;
-      const frame = node.texture.frame;
-      area += Math.abs(t.a * t.d - t.b * t.c) * frame.width * frame.height;
-      sprites++;
-    }
-    for (const child of node.children) visit(child);
-  };
-  visit(root);
-  return { fill: 1 + area / Math.max(1, canvasArea), sprites };
 }
 
 function glInfo(renderer: Renderer): Record<string, unknown> {

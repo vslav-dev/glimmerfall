@@ -780,13 +780,12 @@ export class GameApp {
     perfContext({ boardSize: s.boardSize });
   }
 
-  /** The board, the HUD and the bar follow the effects menu; perf windows say what was off, for A/B on a device. */
+  /** The board, the HUD and the bar follow the effects menu. */
   private applyEffects(): void {
     const effects = this.save.settings.effects;
     this.view.fx.set(effects);
     this.ui.setEffects(effects);
     this.boosters.setGlow(effects[Fx.BoosterGlow] !== false);
-    perfContext({ fxOff: Object.keys(effects).sort() });
   }
 
   /** Viewport changes (system bars sliding in, rotation) glide instead of jumping. */

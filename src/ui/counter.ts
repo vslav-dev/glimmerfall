@@ -1,13 +1,8 @@
-import { perfFlag } from '@/telemetry/perf';
-
 const ROLL_MS = 450;
 const POP_MS = 420;
 const POP_EASE = 'cubic-bezier(0.2, 1.8, 0.4, 1)';
 /** a rolling number is written at most this often (~60 times a second): a 120 Hz screen gains nothing from more */
 const WRITE_MS = 15;
-
-/** counters rolling right now, for the perf flag */
-let rolling = 0;
 
 /**
  * A HUD number that rolls to each new value and pops as it changes. The first value shows at once.
@@ -39,8 +34,6 @@ export class Counter {
     this.bump();
     const start = performance.now();
     let written = start;
-    rolling++;
-    perfFlag('hudRoll', true);
     const tick = (now: number): void => {
       const k = Math.min(1, (now - start) / ROLL_MS);
       // ease-out cubic: big jumps race first, then settle on the exact value
@@ -57,8 +50,6 @@ export class Counter {
   private stopRolling(): void {
     cancelAnimationFrame(this.frame);
     this.frame = 0;
-    rolling--;
-    perfFlag('hudRoll', rolling > 0);
   }
 
   private render(value: number): void {

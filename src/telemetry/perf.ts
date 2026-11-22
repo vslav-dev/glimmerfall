@@ -9,32 +9,22 @@ import { track } from '@/telemetry/telemetry';
  * A frame splits into the JS update (tweens, particles), the Pixi render submit (CPU) and the rest
  * of the interval (GPU, compositor, other main-thread work). Long frames and slow taps come from
  * the browser's own timing APIs (Chromium only); `ops` time the known heavy operations.
- * Where a slow frame's time went: `profile` compares slow frames (>20 ms) with the rest by our JS (update, render),
- * how late the frame started (the main thread busy before it), the pixels filled (sprites plus the canvas clear,
- * in canvases) and the sprites drawn; `idle` counts frames left undrawn (nothing changed, or held to a frame rate).
- * What else was going on: `flags` count the frames (and slow frames) each state was on in (a booster glowing, the phone charging),
- * `counts` tally what the board played (blasts by kind, popped pieces), `peaks` the most of something at once
- * (live particles), and the battery says how charged the phone is and whether it charges: a warm, charging phone
- * may be throttled.
- * Who made a frame late: `work` is the main thread's busy time in the gap before the frame (the previous frame's
- * update and render, plus `after`: what ran after it until the thread was free — the code awaiting finished
- * tweens, other frame callbacks, style, layout and paint of the DOM). A slow frame with little work waited on the
- * GPU or the compositor. `phases` split frames by what the board played (a combo of which specials, a fall,
- * a strike), with each phase's longest frame.
+ * `idle` counts frames left undrawn (nothing changed, or held to a frame rate). `flags` count the frames (and slow
+ * frames) a state was on in (the phone charging, the frame rate paced to 60), `counts` tally events (pacing turned
+ * on and off), and the battery says how charged the phone is and whether it charges: a warm, charging phone may be
+ * throttled. Deeper probes for a hunt (a frame profile, board phases, spikes) live in git history: plans/11.
  */
 
 type Data = Record<string, unknown>;
 
 /** Frame intervals above these (ms) are counted: ~1.2, 2, 3 and 6 frames at 60 Hz. */
 const SLOW_INTERVALS = [20, 33, 50, 100];
-/** a frame this long is slow for the profile and the flags */
+/** a frame this long is slow for the flags */
 const SLOW_MS = SLOW_INTERVALS[0];
 /** A window with less play than this carries over into the next one instead of being sent. */
 const MIN_FRAMES = 30;
 /** Taps that take longer than this to show their result are reported (the API rounds to 8 ms). */
 const SLOW_INPUT_MS = 40;
-/** the phase of frames while the board plays nothing */
-const NO_PHASE = 'none';
 
 /** Battery Status API (Chromium), not in the DOM typings. */
 interface BatteryManager extends EventTarget {
@@ -98,56 +88,6 @@ export interface FrameSample {
   interval: number;
   updateMs: number;
   renderMs: number;
-  /** how late the frame callback started after the frame began */
-  lateMs: number;
-  /** pixels filled, in canvases: every visible sprite plus the clear */
-  fill: number;
-  sprites: number;
-}
-
-/** A frame as recorded: the sample plus the main thread's work in the gap before it. */
-interface Frame extends FrameSample {
-  /** the previous frame's update and render plus `after` */
-  work: number;
-  /** main-thread time after the previous frame until the thread was free */
-  after: number;
-}
-
-/** Sums of a group of frames, averaged in the report. */
-class Profile {
-  public n = 0;
-  private update = 0;
-  private render = 0;
-  private late = 0;
-  private fill = 0;
-  private sprites = 0;
-  private work = 0;
-  private after = 0;
-
-  public add(f: Frame): void {
-    this.n++;
-    this.update += f.updateMs;
-    this.render += f.renderMs;
-    this.late += f.lateMs;
-    this.fill += f.fill;
-    this.sprites += f.sprites;
-    this.work += f.work;
-    this.after += f.after;
-  }
-
-  public summary(): Data {
-    const avg = (v: number): number => round(this.n ? v / this.n : 0);
-    return {
-      n: this.n,
-      update: avg(this.update),
-      render: avg(this.render),
-      late: avg(this.late),
-      work: avg(this.work),
-      after: avg(this.after),
-      fill: avg(this.fill),
-      sprites: avg(this.sprites),
-    };
-  }
 }
 
 function newWindow() {
@@ -162,15 +102,9 @@ function newWindow() {
     loaf: { n: 0, ms: 0, blockMs: 0, layoutMs: 0, maxMs: 0, worst: '' },
     input: { n: 0, maxMs: 0, worst: null as Data | null },
     ops: new Map<string, { n: number; ms: number; max: number }>(),
-    slowProfile: new Profile(),
-    fastProfile: new Profile(),
-    late: new Histogram(0.5, 50),
-    fill: new Histogram(0.25, 20),
     idle: 0,
     flags: new Map<string, { frames: number; slow: number }>(),
-    phases: new Map<string, { frames: number; slow: number; worst: number }>(),
     counts: new Map<string, number>(),
-    peaks: new Map<string, number>(),
   };
 }
 
@@ -184,20 +118,6 @@ let eventsSupported = false;
 let battery: BatteryManager | null = null;
 /** states on right now: each frame counts toward them */
 const flagsOn = new Set<string>();
-/** what the board plays right now */
-let phase = NO_PHASE;
-/** main-thread work since the previous drawn frame began: its update and render, then `after` once measured */
-let gapWork = 0;
-let gapAfter = 0;
-let afterStart = 0;
-/** a message posted at the end of a frame arrives once the main thread is free: the time in between is `after` */
-const afterChannel = new MessageChannel();
-afterChannel.port1.onmessage = () => {
-  const ms = performance.now() - afterStart;
-  gapAfter = ms;
-  gapWork += ms;
-};
-
 /** Call first thing at startup. Hiding the app sends the open window. */
 export function startPerf(): void {
   scriptAt = performance.now();
@@ -225,19 +145,9 @@ export function perfFlag(name: string, on: boolean): void {
   else flagsOn.delete(name);
 }
 
-/** What the board plays from now on (`null`: nothing); frames are split by it. */
-export function perfPhase(name: string | null): void {
-  phase = name ?? NO_PHASE;
-}
-
 /** Adds `n` to a tally of the open window. */
 export function perfCount(name: string, n = 1): void {
   win.counts.set(name, (win.counts.get(name) ?? 0) + n);
-}
-
-/** Keeps the most of something seen at once in the open window. */
-export function perfPeak(name: string, value: number): void {
-  if (value > (win.peaks.get(name) ?? 0)) win.peaks.set(name, value);
 }
 
 /** Startup timeline, ms since navigation start. */
@@ -261,30 +171,17 @@ export function perfContext(data: Data): void {
   Object.assign(context, data);
 }
 
-export function recordFrame(sample: FrameSample): void {
-  const f: Frame = { ...sample, work: gapWork, after: gapAfter };
-  gapWork = sample.updateMs + sample.renderMs;
-  gapAfter = 0;
-  afterStart = performance.now();
-  afterChannel.port2.postMessage(0);
+export function recordFrame(f: FrameSample): void {
   const { interval } = f;
   const slow = interval > SLOW_MS;
-  const p = win.phases.get(phase) ?? { frames: 0, slow: 0, worst: 0 };
-  p.frames++;
-  if (slow) p.slow++;
-  p.worst = Math.max(p.worst, round(interval));
-  win.phases.set(phase, p);
   if (interval > 0) {
     win.interval.add(interval);
     SLOW_INTERVALS.forEach((limit, k) => {
       if (interval > limit) win.slow[k]++;
     });
-    (slow ? win.slowProfile : win.fastProfile).add(f);
   }
   win.update.add(f.updateMs);
   win.render.add(f.renderMs);
-  win.late.add(f.lateMs);
-  win.fill.add(f.fill);
   win.draws += frameDraws;
   win.drawsMax = Math.max(win.drawsMax, frameDraws);
   frameDraws = 0;
@@ -299,9 +196,6 @@ export function recordFrame(sample: FrameSample): void {
 /** A frame the loop ran but did not draw: only pauses were running, nothing on screen changed. */
 export function recordIdleFrame(): void {
   win.idle++;
-  // The gap before the next drawn frame starts here: an undrawn frame costs next to nothing.
-  gapWork = 0;
-  gapAfter = 0;
 }
 
 /** Times `fn`; a returned promise is timed until it settles. */
@@ -346,17 +240,12 @@ export function flushPerf(reason: string): void {
     update: w.update.summary(),
     render: w.render.summary(),
     draws: { avg: round(w.update.count ? w.draws / w.update.count : 0), max: w.drawsMax },
-    late: w.late.summary(),
-    fill: w.fill.summary(),
-    profile: { slow: w.slowProfile.summary(), fast: w.fastProfile.summary() },
     idle: w.idle,
     loaf: loafSupported ? { ...w.loaf, ms: Math.round(w.loaf.ms), blockMs: Math.round(w.loaf.blockMs), layoutMs: Math.round(w.loaf.layoutMs) } : null,
     input: eventsSupported ? w.input : null,
     ops: Object.fromEntries([...w.ops].map(([name, o]) => [name, { n: o.n, ms: round(o.ms), max: round(o.max) }])),
     flags: Object.fromEntries(w.flags),
-    phases: Object.fromEntries(w.phases),
     counts: Object.fromEntries(w.counts),
-    peaks: Object.fromEntries(w.peaks),
     battery: batteryState(),
     heapMb: heapMb(),
   });

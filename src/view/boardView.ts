@@ -5,7 +5,7 @@ import { findMoves } from '@/core/moves';
 import { strikeCells } from '@/core/resolve';
 import { BlastKind, type Board, Booster, type GameEvent, NO_COLOR, type Piece, type Pos, Special, type SwapEvent } from '@/core/types';
 import type { SwapInput } from '@/telemetry/attempt';
-import { perfContext, perfCount, perfFlag, perfPhase, timed } from '@/telemetry/perf';
+import { perfContext, timed } from '@/telemetry/perf';
 import { FrameName, GEM_TINTS } from '@/view/art';
 import { Atlas } from '@/view/atlas';
 import { Camera } from '@/view/fx/camera';
@@ -341,21 +341,9 @@ export class BoardView {
     for (const i of cells) this.locked.add(i);
     this.hits = 0;
     if (this.selected && cells.has(this.indexOf(this.selected))) this.deselect();
-    // Frames while the board plays out a move: the perf window tells their cost from the calm ones.
-    perfFlag('cascade', true);
-    try {
-      await this.playEvents(events, onEvent, epoch);
-    } finally {
-      perfFlag('cascade', false);
-      perfPhase(null);
-    }
-    if (epoch === this.epoch) for (const i of cells) this.locked.delete(i);
-  }
 
-  private async playEvents(events: GameEvent[], onEvent: (ev: GameEvent) => void, epoch: number): Promise<void> {
     for (const ev of events) {
       if (epoch !== this.epoch) return;
-      perfPhase(phaseOf(ev));
       onEvent(ev);
       switch (ev.type) {
         case 'swap':
@@ -382,6 +370,7 @@ export class BoardView {
           break;
       }
     }
+    if (epoch === this.epoch) for (const i of cells) this.locked.delete(i);
   }
 
   private cellsOf(events: GameEvent[]): Set<number> {
@@ -481,8 +470,6 @@ export class BoardView {
    */
   private async playClear(ev: ClearEvent): Promise<void> {
     const plan = planClear(ev, { wave: this.fx.on(Fx.Wave), charge: this.fx.on(Fx.Combo) });
-    perfCount('pops', ev.removed.length);
-    for (const b of ev.blasts) perfCount(`blast-${b.kind}`);
     const createdAt = new Map(ev.created.map((c) => [c.piece.id, c.pos]));
     const boost = cascadeBoost(ev.cascade);
     // A crowded clear shares one budget of particles, so the last pieces are not left without any.
@@ -767,7 +754,6 @@ export class BoardView {
   /** Aims a booster: touching the board shows what it would take, letting go there strikes. Null stops aiming. */
   public aim(booster: Booster | null): void {
     this.aiming = booster;
-    perfFlag('aiming', booster !== null);
     this.aimAt = null;
     this.aimDown = false;
     this.drag = null;
@@ -1027,13 +1013,4 @@ function tintOf(color: number): number {
 /** Color of the piece that left `pos` in this step: a blast takes the color of the special that went off. */
 function colorAt(ev: ClearEvent, pos: Pos): number {
   return ev.removed.find((rm) => rm.pos.r === pos.r && rm.pos.c === pos.c)?.color ?? NO_COLOR;
-}
-
-/** What a played event is, for the perf windows: a clear names its specials ("combo:bomb+row", "blast:col"). */
-function phaseOf(ev: GameEvent): string {
-  if (ev.type !== 'clear') return ev.type;
-  const kinds = [...new Set(ev.blasts.map((b) => b.kind))].sort().join('+');
-  if (strikeOf(ev)) return `strike:${kinds}`;
-  if (ev.combo) return `combo:${kinds}`;
-  return kinds ? `blast:${kinds}` : ev.created.length > 0 ? 'create' : 'match';
 }

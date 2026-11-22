@@ -1,6 +1,5 @@
 import { type Charges, EARN, progress, stock } from '@/app/boosters';
 import { Booster } from '@/core/types';
-import { perfFlag } from '@/telemetry/perf';
 import { Glide } from '@/ui/glide';
 import { Action } from '@/ui/ui';
 import { S } from '@/ui/strings';
@@ -100,16 +99,10 @@ export class BoosterBar {
 
   public hide(): void {
     this.el.classList.add('off');
-    perfFlag('boosterReady', false);
-    perfFlag('boosterGlow', false);
   }
 
   /** Follows the charges (gains animate), whether a booster can be aimed now, and which one is being aimed. */
   public update(charges: Charges, usable: boolean, aiming: Booster | null): void {
-    const ready = Object.values(Booster).some((b) => stock(charges, b) > 0);
-    // A ready button breathes while the board is calm: frames drawn meanwhile tell what that costs.
-    perfFlag('boosterReady', ready);
-    perfFlag('boosterGlow', ready && usable);
     for (const b of Object.values(Booster)) {
       const button = this.buttons[b];
       button.set(stock(charges, b), progress(charges, b));
