@@ -8,6 +8,7 @@ import { FrameName, frameDataUrl } from '@/view/art';
 import { Fx, type FxChoice } from '@/view/fx/switches';
 import { Counter } from '@/ui/counter';
 import { Glide } from '@/ui/glide';
+import { helpHtml, playHelp } from '@/ui/help';
 import { PraisePicker } from '@/ui/praise';
 import { S } from '@/ui/strings';
 
@@ -43,6 +44,7 @@ export const Action = {
   UpdateLater: 'update-later',
   ApplyUpdate: 'apply-update',
   GiveUp: 'give-up',
+  Help: 'help',
 } as const;
 export type Action = (typeof Action)[keyof typeof Action];
 
@@ -88,6 +90,8 @@ export class Ui {
   private flash: Animation | null = null;
   /** DOM effects switched off in the debug menu */
   private effects: FxChoice = {};
+  /** stops the guide's demos once its card is gone */
+  private stopHelp: (() => void) | null = null;
 
   public constructor(
     root: HTMLElement,
@@ -138,6 +142,7 @@ export class Ui {
         <p class="sub">${S.level(level)}</p>
         <p class="version">${S.version(__APP_VERSION__)}</p>
         ${update ? `<button class="btn ghost update-link" data-action="${Action.Update}">✨ ${S.update.button}</button>` : ''}
+        <button class="btn ghost" data-action="${Action.Help}">${S.help.button}</button>
         <button class="btn icon corner" data-action="${Action.Settings}" aria-label="${S.settings}">⚙</button>
       </div>`,
       'title',
@@ -193,10 +198,23 @@ export class Ui {
         <h2>${S.paused}</h2>
         <button class="btn primary big" data-action="${Action.Resume}">${S.resume}</button>
         <button class="btn" data-action="${Action.Restart}">${S.restart}</button>
+        <button class="btn" data-action="${Action.Help}">${S.help.button}</button>
         <button class="btn" data-action="${Action.Settings}">${S.settings}</button>
         <button class="btn ghost" data-action="${Action.Menu}">${S.menu}</button>
       </div>`,
     );
+  }
+
+  /** The guide: every rule played out on little boards, from the pause menu or the title. */
+  public showHelp(): void {
+    this.show(
+      `<div class="card help">
+        <h2>${S.help.button}</h2>
+        ${helpHtml((frame) => this.icon(frame))}
+        <button class="btn primary big" data-action="${Action.Back}">${S.gotIt}</button>
+      </div>`,
+    );
+    this.stopHelp = playHelp(this.overlay.querySelector('.card')!, (frame) => this.icon(frame));
   }
 
   public showWin(stars: number, score: number): void {
@@ -335,13 +353,20 @@ export class Ui {
   }
 
   public hideOverlay(): void {
+    this.endHelp();
     this.overlay.className = '';
     this.overlay.innerHTML = '';
   }
 
   private show(html: string, variant = ''): void {
+    this.endHelp();
     this.overlay.innerHTML = html;
     this.overlay.className = `visible ${variant}`;
+  }
+
+  private endHelp(): void {
+    this.stopHelp?.();
+    this.stopHelp = null;
   }
 
   // ---------- HUD ----------

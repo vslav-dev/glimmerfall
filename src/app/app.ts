@@ -39,6 +39,7 @@ const Mode = {
   Lost: 'lost',
   /** the update notice is open */
   Update: 'update',
+  Help: 'help',
 } as const;
 type Mode = (typeof Mode)[keyof typeof Mode];
 
@@ -68,7 +69,8 @@ export class GameApp {
   private save: SaveData = defaultSave();
   private game: GameState | null = null;
   private mode: Mode = Mode.Title;
-  private settingsReturn: Mode = Mode.Title;
+  /** where a menu opened from the pause or the title (settings, the guide) goes back to */
+  private menuReturn: Mode = Mode.Title;
   /** game whose board steps are being played back; the player may keep swapping meanwhile */
   private running: GameState | null = null;
   /** swap animations in flight; the next board step waits for them */
@@ -613,8 +615,13 @@ export class GameApp {
         if (this.mode === Mode.Lost) this.failLevel(AttemptEnd.Lost);
         await this.ui.curtain(() => this.showTitle());
         break;
+      case Action.Help:
+        this.menuReturn = this.mode;
+        this.mode = Mode.Help;
+        this.ui.showHelp();
+        break;
       case Action.Settings:
-        this.settingsReturn = this.mode;
+        this.menuReturn = this.mode;
         this.mode = Mode.Settings;
         this.ui.showSettings(this.save.settings);
         break;
@@ -632,7 +639,7 @@ export class GameApp {
           this.ui.showSettings(this.save.settings);
           break;
         }
-        this.mode = this.settingsReturn;
+        this.mode = this.menuReturn;
         if (this.mode === Mode.Pause) this.ui.showPause();
         else this.showTitle();
         break;
@@ -728,6 +735,7 @@ export class GameApp {
       case Mode.Settings:
       case Mode.Sounds:
       case Mode.Effects:
+      case Mode.Help:
         await this.onAction(Action.Back);
         break;
       case Mode.Won:
