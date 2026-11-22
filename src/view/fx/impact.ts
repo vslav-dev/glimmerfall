@@ -2,13 +2,13 @@ import { type Blast, BlastKind } from '@/core/types';
 
 /**
  * How hard an event hits, one scale for every effect: shake, hitstop, the board's punch, particle counts.
- * ~0.1 a spark, ~0.2 a line, ~0.4 a bomb, ~0.75 a big bomb or a whole-color prism, 1+ the biggest combos.
+ * ~0.1 a spark, ~0.3 a line, ~0.4 a bomb, ~0.75 a big bomb or a whole-color prism, 1+ the biggest combos.
  */
 export function blastPower(b: Blast): number {
   switch (b.kind) {
     case BlastKind.Row:
     case BlastKind.Col:
-      return 0.2;
+      return 0.3;
     case BlastKind.Bomb:
       return bombRadius(b) >= 2 ? 0.75 : 0.42;
     case BlastKind.Prism:
