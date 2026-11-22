@@ -3,7 +3,7 @@ import { indexOf, posOf, swapPieces } from '@/core/board';
 import { settle } from '@/core/fall';
 import { advance, canStrike, canSwap, createGame, makeMove, playMove, startFinale, strike } from '@/core/game';
 import { findGroups } from '@/core/matches';
-import { findMoves, hasAnyMatch, hasMove, isValidSwap } from '@/core/moves';
+import { canReachBlockers, findMoves, hasAnyMatch, hasMove, isValidSwap } from '@/core/moves';
 import { resolveStep } from '@/core/resolve';
 import { BlastKind, type Board, Booster, type GameEvent, type LevelDef, LevelKind, ObjectiveKind, type PendingSwap, Special } from '@/core/types';
 
@@ -501,5 +501,37 @@ describe('game', () => {
     expect(game.score).toBeGreaterThan(0);
     expect(game.finale).toBe(0);
     expect(game.board.cells.some((c) => c.piece !== null && c.piece.special !== Special.None)).toBe(false);
+  });
+});
+
+describe('blockers', () => {
+  const chain = (b: Board, cols: number[]): Board => {
+    for (const c of cols) b.cells[indexOf(b, 1, c)].chain = 1;
+    return b;
+  };
+
+  it('a row of chains in clashing colors over crates walls the board shut', () => {
+    // No line through the chains can be completed: their colors differ, and the crates cut every column.
+    expect(canReachBlockers(chain(boardFrom(['01201', '34543', '#####']), [1, 2, 3]))).toBe(false);
+    // Two chains of one color next to a free cell open it all up, crates included.
+    expect(canReachBlockers(chain(boardFrom(['01201', '34413', '#####']), [1, 2, 3]))).toBe(true);
+  });
+
+  it('a free pocket cut off from the refill completes no line', () => {
+    // The chain's only line runs down into a pocket under it, whose pieces never change.
+    expect(canReachBlockers(chain(boardFrom(['012', '.3.', '.4.', '.4.']), [1]))).toBe(false);
+  });
+
+  it('a fresh board always opens up when a coloring can', () => {
+    const lv = level({ colors: 6 });
+    for (let c = 0; c < lv.cols; c++) {
+      if (c > 0 && c < lv.cols - 1) lv.chain[lv.cols + c] = 1;
+      for (let r = 2; r < lv.rows; r++) lv.crate[r * lv.cols + c] = 1;
+    }
+    for (let seed = 1; seed <= 30; seed++) {
+      const { board } = createGame(lv, seed);
+      expect(canReachBlockers(board), `seed ${seed}`).toBe(true);
+      expect(hasMove(board)).toBe(true);
+    }
   });
 });

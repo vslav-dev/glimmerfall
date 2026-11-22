@@ -1,5 +1,5 @@
 import { cellAt, indexOf, isAdjacent, isMovable, newPiece, randomFreeColor, swapPieces } from '@/core/board';
-import { hasMove, isValidSwap, shuffleBoard } from '@/core/moves';
+import { canReachBlockers, hasMove, isValidSwap, shuffleBoard } from '@/core/moves';
 import { convertForFinale, lightAll, resolveStep, type Tally } from '@/core/resolve';
 import {
   type Board,
@@ -18,6 +18,8 @@ import {
 export const EXTRA_MOVES = 5;
 /** cap on finale and last-chance lighting rounds: cascades can keep creating specials */
 const FINALE_ROUNDS = 20;
+/** fills tried for a board that opens up, then as many for one with a move at least */
+const FILL_TRIES = 50;
 
 export function createBoard(level: LevelDef, seed: number): Board {
   const cells: Cell[] = level.mask.map((m, i) => ({
@@ -39,9 +41,12 @@ export function createBoard(level: LevelDef, seed: number): Board {
   return b;
 }
 
-/** Fills every free cell without ready matches; refills until at least one move exists. */
+/**
+ * Fills every free cell without ready matches; refills until a move exists and matches can reach every chain,
+ * crate and ice. A layout no coloring opens up still gets a board with a move.
+ */
 function fillBoard(b: Board): void {
-  for (let attempt = 0; attempt < 50; attempt++) {
+  for (let attempt = 0; attempt < 2 * FILL_TRIES; attempt++) {
     for (const cell of b.cells) cell.piece = null;
     for (let r = 0; r < b.rows; r++) {
       for (let c = 0; c < b.cols; c++) {
@@ -49,7 +54,7 @@ function fillBoard(b: Board): void {
         if (cell.exists && cell.crate === 0) cell.piece = newPiece(b, randomFreeColor(b, r, c));
       }
     }
-    if (hasMove(b)) return;
+    if (hasMove(b) && (attempt >= FILL_TRIES || canReachBlockers(b))) return;
   }
 }
 
