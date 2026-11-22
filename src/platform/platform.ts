@@ -2,7 +2,6 @@ import { App } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { Haptics, ImpactStyle, NotificationType } from '@capacitor/haptics';
 import { Preferences } from '@capacitor/preferences';
-import { debug } from '@/telemetry/telemetry';
 
 /**
  * Everything that differs between the browser and the native shells.
@@ -61,19 +60,16 @@ const VIBRATION: Record<Haptic, number[]> = {
   [Haptic.Confirm]: [250],
 };
 
-let hapticReported = false;
-
 export function haptic(kind: Haptic): void {
-  const accepted = hapticsEnabled && vibrate(kind);
-  if (hapticReported) return;
-  hapticReported = true;
-  // Once per session: tells a refused call (no API, no tap yet) from one the phone drops itself (silent mode).
-  debug('haptics', { enabled: hapticsEnabled, api: 'vibrate' in navigator, accepted, activated: navigator.userActivation?.hasBeenActive ?? null });
+  if (hapticsEnabled) vibrate(kind);
 }
 
-/** False when the browser refused the call. */
-function vibrate(kind: Haptic): boolean {
-  if (!isNative) return 'vibrate' in navigator && navigator.vibrate(VIBRATION[kind]);
+function vibrate(kind: Haptic): void {
+  if (!isNative) {
+    // A browser may refuse (no API, no tap yet): vibration is a nicety.
+    if ('vibrate' in navigator) navigator.vibrate(VIBRATION[kind]);
+    return;
+  }
   // Vibration is a nicety, so native failures are ignored.
   const done =
     kind === Haptic.Confirm
@@ -82,7 +78,6 @@ function vibrate(kind: Haptic): boolean {
         ? Haptics.notification({ type: NotificationType.Success })
         : Haptics.impact({ style: kind === Haptic.Light ? ImpactStyle.Light : kind === Haptic.Medium ? ImpactStyle.Medium : ImpactStyle.Heavy });
   done.catch(() => undefined);
-  return true;
 }
 
 export async function loadJson<T>(key: string): Promise<T | null> {

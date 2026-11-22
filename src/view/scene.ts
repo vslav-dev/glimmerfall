@@ -1,21 +1,27 @@
 import { autoDetectRenderer, Container, type Renderer, Sprite } from 'pixi.js';
-import { countDraws, perfContext, perfFlag, recordFrame, recordGpuLag, recordIdleFrame } from '@/telemetry/perf';
+import { countDraws, perfContext, perfCount, perfFlag, recordFrame, recordIdleFrame } from '@/telemetry/perf';
 import { track } from '@/telemetry/telemetry';
 import { Tweens } from '@/view/tween';
 
-/**
- * Quality steps the scene falls back through when frames get slow. `frameMs` is the least time between drawn
- * frames: a 120 Hz screen that cannot keep up first draws every other frame (a steady 60 fps), keeping the
- * resolution sharp; only then does the resolution drop. A screen of 60 Hz or less skips that step.
- */
+/** Quality steps the scene falls back through for good when frames stay slow. */
 const QUALITY = [
-  { maxResolution: 2, particles: 1, frameMs: 0 },
-  { maxResolution: 2, particles: 1, frameMs: 1000 / 60 },
-  { maxResolution: 1.5, particles: 0.6, frameMs: 1000 / 60 },
-  { maxResolution: 1, particles: 0.35, frameMs: 1000 / 60 },
+  { maxResolution: 2, particles: 1 },
+  { maxResolution: 1.5, particles: 0.6 },
+  { maxResolution: 1, particles: 0.35 },
 ];
-/** A screen whose frames come faster than this is a high-refresh one, worth the 60 fps step. */
+/**
+ * Pacing, before any quality step and undone once the phone keeps up: a high-refresh screen whose frames slip
+ * (a warm, throttled phone) draws every other frame, a steady 60 fps instead of a jittery 120 at half the GPU
+ * work. It is judged over blocks of drawn moving frames: a block with a few slow ones turns it on; a run of
+ * clean blocks turns it off, a run twice as long after each next time it came back.
+ */
 const HIGH_REFRESH_MS = 12;
+const PACED_FRAME_MS = 1000 / 60;
+const PACE_BLOCK = 120;
+const PACE_SLOW_MS = 20;
+const PACE_ON_SLOW = 4;
+const PACE_OFF_SLOW = 1;
+const PACE_OFF_BLOCKS = 10;
 /**
  * Slow, calm motion alone on screen (a hinted move breathing, the aim pulsing) is drawn at ~30 fps:
  * it looks the same, and the GPU and the compositor rest while the player thinks.
@@ -59,21 +65,17 @@ export class Scene {
   /** an updater animated in the previous frame (a calm one, apart): its last change still needs drawing */
   private animated = false;
   private calmAnimated = false;
-  /** WebGL2 only: a fence after a drawn frame, to see how many frames behind the GPU runs */
-  private readonly gl2: WebGL2RenderingContext | null;
-  private fence: { sync: WebGLSync; frame: number } | null = null;
-  private drawn = 0;
   private last = 0;
   /** when the last frame was drawn, to keep the calm and the paced frame rates */
   private lastDrawn = 0;
   /** the shortest frame interval seen: tells a high-refresh screen */
   private fastest = Infinity;
+  private paced = false;
+  private pace = { frames: 0, slow: 0, clean: 0, offAfter: PACE_OFF_BLOCKS };
   private width = 1;
   private height = 1;
 
-  private constructor(private readonly renderer: Renderer) {
-    this.gl2 = 'gl' in renderer && renderer.context.webGLVersion === 2 ? renderer.gl : null;
-  }
+  private constructor(private readonly renderer: Renderer) {}
 
   public static async create(canvas: HTMLCanvasElement): Promise<Scene> {
     const renderer = await autoDetectRenderer({
@@ -157,7 +159,7 @@ export class Scene {
     const moving = this.dirty || finished > 0 || animating || this.animated || this.tweens.moving;
     const changed = moving || calmAnimating || this.calmAnimated || this.tweens.visual;
     const calm = changed && !moving;
-    const gap = calm ? CALM_FRAME_MS : QUALITY[this.quality].frameMs;
+    const gap = calm ? CALM_FRAME_MS : this.paced ? PACED_FRAME_MS : 0;
     const draw = changed && now - this.lastDrawn >= gap - FRAME_SLACK_MS;
     if (draw) {
       // What awaited the finished tweens runs after this frame: whatever it changes is drawn in the next one.
@@ -176,50 +178,56 @@ export class Scene {
       perfFlag('calm', calm);
       this.renderer.render(this.root);
       const rendered = performance.now();
-      this.watchGpu();
       recordFrame({ interval, updateMs: updated - start, renderMs: rendered - updated, lateMs: Math.max(0, start - now), ...coverage(this.root, this.width * this.height) });
     } else {
       recordIdleFrame();
     }
 
     if (this.tweens.active || this.stopLeft > 0 || animating || calmAnimating || this.dirty || this.animated || this.calmAnimated) {
-      if (draw && !calm) this.trackSpeed(dt);
+      if (draw && !calm) {
+        this.trackPace(interval);
+        this.trackSpeed(dt);
+      }
       this.schedule();
     } else {
       this.last = 0;
-      this.dropFence();
     }
   };
 
-  /** After each drawn frame: how many drawn frames ago did the GPU finish the fenced one. */
-  private watchGpu(): void {
-    const gl = this.gl2;
-    if (!gl) return;
-    this.drawn++;
-    if (this.fence) {
-      if (gl.getSyncParameter(this.fence.sync, gl.SYNC_STATUS) !== gl.SIGNALED) return;
-      recordGpuLag(this.drawn - this.fence.frame - 1);
-      this.dropFence();
+  private trackPace(interval: number): void {
+    if (this.fastest >= HIGH_REFRESH_MS || interval === 0) return;
+    const p = this.pace;
+    p.frames++;
+    if (interval > PACE_SLOW_MS) p.slow++;
+    if (p.frames < PACE_BLOCK) return;
+    if (!this.paced && p.slow >= PACE_ON_SLOW) {
+      this.setPaced(true);
+    } else if (this.paced) {
+      p.clean = p.slow <= PACE_OFF_SLOW ? p.clean + 1 : 0;
+      if (p.clean >= p.offAfter) {
+        this.setPaced(false);
+        p.offAfter *= 2;
+      }
     }
-    const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
-    if (sync) this.fence = { sync, frame: this.drawn };
+    p.frames = 0;
+    p.slow = 0;
   }
 
-  /** A fence left over a pause would read as a long lag: it is dropped when the loop stops. */
-  private dropFence(): void {
-    if (this.fence) this.gl2?.deleteSync(this.fence.sync);
-    this.fence = null;
+  private setPaced(on: boolean): void {
+    this.paced = on;
+    this.pace.clean = 0;
+    perfFlag('paced', on);
+    perfCount(on ? 'pace-on' : 'pace-off');
   }
 
   private trackSpeed(dt: number): void {
     this.slowFrames = dt > SLOW_FRAME_MS ? this.slowFrames + 1 : Math.max(0, this.slowFrames - 2);
     if (this.slowFrames < SLOW_FRAMES_TO_DOWNGRADE || this.quality === QUALITY.length - 1) return;
     this.quality++;
-    if (this.quality === 1 && this.fastest >= HIGH_REFRESH_MS) this.quality++;
     this.slowFrames = 0;
     this.renderer.resize(this.width, this.height, this.resolution);
     this.reportSize();
-    track('perf', { kind: 'quality', quality: this.quality, res: this.resolution, frameMs: QUALITY[this.quality].frameMs, t: Math.round(performance.now() / 1000) });
+    track('perf', { kind: 'quality', quality: this.quality, res: this.resolution, t: Math.round(performance.now() / 1000) });
     this.onQualityChange?.();
   }
 
@@ -228,7 +236,6 @@ export class Scene {
     const res = this.resolution;
     perfContext({
       quality: this.quality,
-      frameMs: Math.round(QUALITY[this.quality].frameMs),
       dpr: window.devicePixelRatio,
       res,
       css: [Math.round(this.width), Math.round(this.height)],
