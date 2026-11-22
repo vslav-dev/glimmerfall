@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { type Blast, BlastKind, type GameEvent, NO_COLOR, type Pos } from '@/core/types';
-import { blastPower, bombRadius, hitstopMs, shakeOf } from '@/view/fx/impact';
+import { blastPower, bombRadius, feel } from '@/view/fx/impact';
 import { planClear, Timing } from '@/view/fx/timeline';
 
 type ClearEvent = Extract<GameEvent, { type: 'clear' }>;
@@ -73,14 +73,11 @@ describe('impact', () => {
     expect(p(small)).toBeLessThan(p(big));
   });
 
-  it('freezes only big hits, longer for bigger', () => {
-    expect(hitstopMs(0.42)).toBe(0);
-    expect(hitstopMs(0.75)).toBeGreaterThan(0);
-    expect(hitstopMs(1.5)).toBeGreaterThan(hitstopMs(0.75));
-  });
-
-  it('shakes every hit alike, harder along the move', () => {
-    expect(shakeOf(1)).toBeGreaterThan(shakeOf(0));
-    expect(shakeOf(5)).toBeGreaterThan(shakeOf(4));
+  it('builds up along the move: trembles first, freezes only deep into a chain', () => {
+    expect(feel(1).shake).toBeGreaterThan(feel(0).shake);
+    expect(feel(3).punch).toBeGreaterThan(feel(0).punch);
+    expect(feel(0).stopMs).toBe(0);
+    expect(feel(4).stopMs).toBe(0);
+    expect(feel(8).stopMs).toBeGreaterThan(feel(5).stopMs);
   });
 });

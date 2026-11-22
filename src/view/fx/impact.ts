@@ -1,8 +1,8 @@
 import { type Blast, BlastKind } from '@/core/types';
 
 /**
- * How hard an event hits, one scale for hitstop, the board's punch and the bomb's recoil (not the shake: see shakeOf).
- * ~0.1 a spark, ~0.3 a line, ~0.4 a bomb, ~0.75 a big bomb or a whole-color prism, 1+ the biggest combos.
+ * How hard a blast hits, for its own looks (a bomb's recoil). How it shakes the board is up to `feel`.
+ * ~0.1 a spark, ~0.3 a line, ~0.4 a bomb, ~0.75 a big bomb or a whole-color prism.
  */
 export function blastPower(b: Blast): number {
   switch (b.kind) {
@@ -18,27 +18,32 @@ export function blastPower(b: Blast): number {
   }
 }
 
-/** Two specials going off together hit harder than both apart. */
-export const COMBO_POWER = 0.35;
-
-/** Deeper cascades hit a little harder each step. */
+/** Deeper cascades throw a little more each step. */
 export function cascadeBoost(cascade: number): number {
   return 1 + 0.08 * Math.min(cascade, 6);
 }
 
-/** Trauma of a special's hit, any kind: barely there on its own. */
-const SHAKE_HIT = 0.15;
-/** each next hit of a move shakes this much more of it, so a long chain builds up */
-const SHAKE_GROWTH = 0.25;
-
-/** Shake of the move's `hit`-th special hit (from 0): the same for every kind, growing along the move. */
-export function shakeOf(hit: number): number {
-  return SHAKE_HIT * (1 + SHAKE_GROWTH * hit);
+/** How a hit lands: trauma of the shake, swell of the board's punch, length of the freeze (ms). */
+export interface Feel {
+  shake: number;
+  punch: number;
+  stopMs: number;
 }
 
-/** Freeze length for a hit: only big hits freeze, so the freeze itself tells how big. */
-export function hitstopMs(power: number): number {
-  return power < 0.6 ? 0 : Math.round(40 + 50 * Math.min(1, (power - 0.6) / 0.6));
+/** first hit of a move that freezes the game: the climax of a chain, not every bomb */
+const STOP_FROM = 5;
+
+/**
+ * How the move's `hit`-th special hit (from 0) lands: every kind alike, building up along the move.
+ * The first hits only tremble the board; the punch swells with each next one; from the fifth on each
+ * hit also freezes the game a moment, longer and longer, so a long chain plays as a crescendo.
+ */
+export function feel(hit: number): Feel {
+  return {
+    shake: 0.15 * (1 + 0.25 * hit),
+    punch: Math.min(0.03, 0.003 * (1 + 0.6 * hit)),
+    stopMs: hit < STOP_FROM ? 0 : Math.min(80, 35 + 10 * (hit - STOP_FROM)),
+  };
 }
 
 /** Rings out as far as the farthest cell it took. */

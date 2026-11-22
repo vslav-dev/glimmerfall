@@ -8,7 +8,7 @@ import { perfContext, timed } from '@/telemetry/perf';
 import { FrameName, GEM_TINTS } from '@/view/art';
 import { Atlas } from '@/view/atlas';
 import { Camera } from '@/view/fx/camera';
-import { blastPower, COMBO_POWER, cascadeBoost, hitstopMs, shakeOf } from '@/view/fx/impact';
+import { blastPower, cascadeBoost, feel } from '@/view/fx/impact';
 import { SpritePool } from '@/view/fx/pool';
 import { blastFx, comboCharge, createFx, flash, type FxKit, land, type Layer, layerFx, popPiece, WHITE } from '@/view/fx/stage';
 import { Fx, FxSwitches } from '@/view/fx/switches';
@@ -432,6 +432,8 @@ export class BoardView {
     // A crowded clear shares one budget of particles, so the last pieces are not left without any.
     const amount = boost * Math.sqrt(Math.min(1, FULL_BURSTS / Math.max(1, ev.removed.length)));
     let end = plan.lead;
+    // One freeze per step at most: a freeze on every blast of a chain would drag.
+    const step = { frozen: false };
 
     if (ev.combo) {
       const center = ev.combo;
@@ -439,20 +441,18 @@ export class BoardView {
         .filter((rm) => rm.order === 0 && Math.max(Math.abs(rm.pos.r - center.r), Math.abs(rm.pos.c - center.c)) <= 1)
         .flatMap((rm) => this.sprites.get(rm.id) ?? []);
       if (plan.lead > 0) comboCharge(this.kit, center, pair, plan.lead);
-      const power = COMBO_POWER + ev.blasts.filter((b) => b.order === 0).reduce((sum, b) => sum + blastPower(b), 0);
-      this.after(plan.lead, () => this.impact(power * boost, true));
+      // Two specials at once: lands as two hits.
+      this.after(plan.lead, () => this.impact(step, 2));
     }
 
-    // One hitstop per step, on its biggest hit: a freeze on every blast of a chain would drag.
     const powers = ev.blasts.map((b) => blastPower(b) * boost);
-    const biggest = ev.combo ? -1 : powers.indexOf(Math.max(...powers));
     ev.blasts.forEach((blast, i) => {
       const start = plan.blasts[i];
       const tint = blast.color !== NO_COLOR ? GEM_TINTS[blast.color] : tintOf(colorAt(ev, blast.origin));
       this.after(start, () => {
         blastFx(this.kit, blast, tint, powers[i], (p) => plan.at(p, blast.order) - start);
         // A combo's own blasts hit as one, at its center.
-        if (!ev.combo || blast.order > 0) this.impact(powers[i], i === biggest);
+        if (!ev.combo || blast.order > 0) this.impact(step);
       });
       end = Math.max(end, start + 120);
     });
@@ -512,13 +512,16 @@ export class BoardView {
     await this.scene.tweens.wait(Math.max(0, end - FALL_OVERLAP));
   }
 
-  /** A hit of `power`: shakes the board (harder with each hit of the move), punches it when big, freezes the game for the biggest. */
-  private impact(power: number, stop: boolean): void {
-    if (this.fx.on(Fx.Shake)) this.camera.shake(shakeOf(this.hits));
-    this.hits++;
-    if (this.fx.on(Fx.Punch) && power >= 0.4) this.camera.punch(0.008 + 0.022 * Math.min(1, power));
-    const ms = stop && this.fx.on(Fx.Hitstop) ? hitstopMs(power) : 0;
-    if (ms > 0) this.scene.hitstop(ms);
+  /** A special's hit, worth `count` hits: lands harder the further the move got (see `feel`). */
+  private impact(step: { frozen: boolean }, count = 1): void {
+    const f = feel(this.hits + count - 1);
+    this.hits += count;
+    if (this.fx.on(Fx.Shake)) this.camera.shake(f.shake);
+    if (this.fx.on(Fx.Punch)) this.camera.punch(f.punch);
+    if (this.fx.on(Fx.Hitstop) && f.stopMs > 0 && !step.frozen) {
+      step.frozen = true;
+      this.scene.hitstop(f.stopMs);
+    }
   }
 
   private async playFall(ev: FallEvent): Promise<void> {
