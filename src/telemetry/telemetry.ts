@@ -1,14 +1,15 @@
 import { Capacitor } from '@capacitor/core';
 
 /**
- * Diagnostics sent to the MegaApp ingest (source `glimmerfall`) through gf.vslav.dev, whose nginx adds
+ * Diagnostics sent to the MegaApp ingest (source `glimmerfall`) through games.vslav.dev, whose nginx adds
  * the ingest key: the game ships no secret. Streams: `session` (device, missing features), `gl` (renderer),
  * `error` (uncaught errors), `debug` (targeted logs, added per investigation and removed after it).
  * Dev builds print to the console instead of sending.
  */
 // Asked here, not taken from platform: platform reports through telemetry, so it must not be imported back.
 const isNative = Capacitor.isNativePlatform();
-const ENDPOINT = isNative ? 'https://gf.vslav.dev/api/ingest/glimmerfall' : '/api/ingest/glimmerfall';
+// Relative on the web: the game lives under its own path (games.vslav.dev/glimmerfall/), and so does the ingest.
+const ENDPOINT = isNative ? 'https://games.vslav.dev/glimmerfall/api/ingest/glimmerfall' : './api/ingest/glimmerfall';
 const SENDING = import.meta.env.PROD;
 const FLUSH_DELAY = 2000;
 const RETRY_DELAY = 30_000;

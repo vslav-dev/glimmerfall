@@ -53,3 +53,10 @@
 - ✅ Репозиторий на GitHub, push
 - ✅ Ключ деплоя и secrets окружения `VPS_31`
 - ✅ Папка, сертификат, nginx на сервере
+
+## Переезд на games.vslav.dev/glimmerfall (22.11.2026)
+- Новый адрес: `https://games.vslav.dev/glimmerfall/`. `gf.vslav.dev` удалён без редиректа: игроков мало, установят заново (прогресс — в хранилище старого домена, не переносится).
+- DNS: `games.vslav.dev` → A `31.58.137.7`, DNS only. Сертификат: `certbot certonly --nginx -d games.vslav.dev`.
+- nginx: сайт `games` (`deploy/nginx/games.vslav.dev.conf`), `root /var/www/games`; каждая игра — симлинк `/var/www/games/<игра>` → её `current`. Сайт `glimmerfall` отключён.
+- Деплой не менялся: CI пишет в `/var/www/glimmerfall`, симлинк `current` переключается так же.
+- Телеметрия: веб шлёт на относительный `./api/ingest/glimmerfall` (= `/glimmerfall/api/ingest/glimmerfall`), натив — на полный адрес нового домена; nginx проксирует в `/api/ingest/glimmerfall` megaback.
