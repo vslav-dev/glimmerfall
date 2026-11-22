@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Builds the sound variants in src/audio/sfx from Kenney's CC0 audio packs (kenney.nl/assets, category Audio).
-# Usage: tools/sfx.sh <dir with the packs unzipped, one folder per pack: impact-sounds, interface-sounds, ...>
-# Each line below: slot, variant name, pack/file, target peak in dBFS (the slot's loudness).
+# Builds the sound variants in src/audio/sfx from Kenney's CC0 audio packs (kenney.nl/assets, category Audio)
+# and a few CC0 sounds from Freesound, saved as freesound/<id>.mp3: the sound's HQ preview, freesound.org/s/<id>.
+# Usage: tools/sfx.sh <dir with the packs unzipped, one folder per pack: impact-sounds, interface-sounds, ..., freesound>
+# Each line below: slot, variant name, pack/file, target peak in dBFS (the slot's loudness), optional extra ffmpeg filters (cut, tempo).
 # Every file is trimmed of leading and trailing silence, made mono and normalized to its peak, then encoded as AAC in m4a (very short mp3s fail format probing).
 set -euo pipefail
 
@@ -183,6 +184,7 @@ win hit-2 music-jingles/jingles_HIT04.ogg -3
 win nes music-jingles/jingles_NES00.ogg -6
 win nes-2 music-jingles/jingles_NES04.ogg -6
 win confirm interface-sounds/confirmation_002.ogg -3
+win tadaa freesound/626950.mp3 -3
 lose steel music-jingles/jingles_STEEL16.ogg -4
 lose steel-2 music-jingles/jingles_STEEL10.ogg -4
 lose pizzicato music-jingles/jingles_PIZZI16.ogg -4
@@ -193,13 +195,14 @@ lose nes music-jingles/jingles_NES16.ogg -7
 lose nes-2 music-jingles/jingles_NES10.ogg -7
 lose low-down digital-audio/lowDown.ogg -7
 lose error interface-sounds/error_005.ogg -4
+lose trombone freesound/175409.mp3 -4 atrim=start=0.72,asetpts=PTS-STARTPTS,atempo=1.7
 EOF
 )
 
 rm -rf "$OUT"
 last=''
 n=0
-while read -r slot name source peak; do
+while read -r slot name source peak extra; do
   pack=${source%%/*}
   file=$(find "$SRC/$pack" -name "${source#*/}" -print -quit)
   [ -n "$file" ] || { echo "missing: $source" >&2; exit 1; }
@@ -208,9 +211,9 @@ while read -r slot name source peak; do
   n=$((n + 1))
   dest=$(printf '%s/%s/%02d-%s.m4a' "$OUT" "$slot" "$n" "$name")
   mkdir -p "$(dirname "$dest")"
-  trim="silenceremove=start_periods=1:start_threshold=-55dB,areverse,silenceremove=start_periods=1:start_threshold=-60dB,areverse,atrim=0:$MAX_SECONDS"
-  max=$(ffmpeg -hide_banner -nostats -i "$file" -af "$trim,volumedetect" -ac 1 -f null - 2>&1 | sed -n 's/.*max_volume: \(-*[0-9.]*\) dB.*/\1/p')
+  trim="silenceremove=start_periods=1:start_threshold=-55dB,areverse,silenceremove=start_periods=1:start_threshold=-60dB,areverse,${extra:+$extra,}atrim=0:$MAX_SECONDS"
+  max=$(ffmpeg -nostdin -hide_banner -nostats -i "$file" -af "$trim,volumedetect" -ac 1 -f null - 2>&1 | sed -n 's/.*max_volume: \(-*[0-9.]*\) dB.*/\1/p')
   gain=$(echo "$peak - $max" | bc -l)
-  ffmpeg -hide_banner -loglevel error -y -i "$file" -af "$trim,volume=${gain}dB" -ac 1 -ar 44100 -c:a aac -b:a 96k "$dest"
+  ffmpeg -nostdin -hide_banner -loglevel error -y -i "$file" -af "$trim,volume=${gain}dB" -ac 1 -ar 44100 -c:a aac -b:a 96k "$dest"
 done <<< "$PICKS"
 du -sh "$OUT"

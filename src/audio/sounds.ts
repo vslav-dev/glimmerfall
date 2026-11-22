@@ -47,8 +47,8 @@ const DEFAULTS: Record<Sfx, string> = {
   [Sfx.Chain]: '04-metal-heavy',
   [Sfx.Shuffle]: '01-card-fan',
   [Sfx.Star]: '02-glass',
-  [Sfx.Win]: '10-confirm',
-  [Sfx.Lose]: '10-error',
+  [Sfx.Win]: '11-tadaa',
+  [Sfx.Lose]: '11-trombone',
 };
 
 /** Changes with any default: picks a save made over other defaults start over from these. */
