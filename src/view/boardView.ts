@@ -2,22 +2,30 @@ import 'pixi.js/text-bitmap';
 import { BitmapFont, BitmapText, Container, Sprite, type Texture } from 'pixi.js';
 import { isAdjacent } from '@/core/board';
 import { findMoves } from '@/core/moves';
-import { type Blast, BlastKind, type Board, type GameEvent, NO_COLOR, type Piece, type Pos, Special, type SwapEvent } from '@/core/types';
+import { type Board, type GameEvent, NO_COLOR, type Piece, type Pos, Special, type SwapEvent } from '@/core/types';
 import type { SwapInput } from '@/telemetry/attempt';
 import { perfContext, timed } from '@/telemetry/perf';
 import { FrameName, GEM_TINTS } from '@/view/art';
 import { Atlas } from '@/view/atlas';
+import { Camera } from '@/view/fx/camera';
+import { blastPower, COMBO_POWER, cascadeBoost, hitstopMs } from '@/view/fx/impact';
+import { SpritePool } from '@/view/fx/pool';
+import { blastFx, comboCharge, createFx, flash, type FxKit, land, type Layer, layerFx, popPiece, WHITE } from '@/view/fx/stage';
+import { Fx, FxSwitches } from '@/view/fx/switches';
+import { planClear } from '@/view/fx/timeline';
 import { Particles } from '@/view/particles';
 import type { Scene } from '@/view/scene';
 import { Ease, type EaseFn } from '@/view/tween';
+
+export type { Layer } from '@/view/fx/stage';
+
+type Writable<T> = { -readonly [K in keyof T]: T[K] };
 
 type ClearEvent = Extract<GameEvent, { type: 'clear' }>;
 type FallEvent = Extract<GameEvent, { type: 'fall' }>;
 type PiecesEvent = Extract<GameEvent, { type: 'transform' | 'shuffle' }>;
 type LightEvent = Extract<GameEvent, { type: 'light' }>;
 
-/** Delay between playback "waves" inside one clear step (special chains fire one after another). */
-const ORDER_STEP = 70;
 const MAX_CELL = 84;
 /** Time constant of the drift after a viewport change: ~95% of the way in three of these. */
 const GLIDE_TAU = 90;
@@ -34,12 +42,17 @@ const FALL_OVERLAP = 50;
 const FALL_START_SPEED = 0.35;
 const FALL_EASE: EaseFn = (t) => t * (FALL_START_SPEED + (1 - FALL_START_SPEED) * t);
 const SCORE_FONT = 'gf-score';
-const WHITE = 0xffffff;
-const ICE_TINT = 0xbfe8ff;
-const CRATE_TINT = 0xc98a4b;
-const CHAIN_TINT = 0xd7dde8;
-
-export type Layer = 'ice' | 'crate' | 'chain';
+/** a removed piece pops this long, a merging one slides this long into its special */
+const POP_END = 140;
+const MERGE_MS = 140;
+/** a created special appears once the pieces merged into it */
+const CREATE_DELAY = 140;
+const CREATE_MS = 220;
+/** a clear with this many pieces throws a full burst for each; more pieces share it */
+const FULL_BURSTS = 14;
+/** a swapped piece passes over the other: this much bigger, the other this much smaller */
+const SWAP_OVER = 0.1;
+const SWAP_UNDER = 0.08;
 
 export interface BoardListener {
   onSwap(a: Pos, b: Pos, input: SwapInput): void;
@@ -71,9 +84,18 @@ export class BoardView {
   private readonly pieceLayer = new Container();
   private readonly crateLayer = new Container();
   private readonly chainLayer = new Container();
-  private readonly fxLayer = new Container();
+  /** particles that cover: shards, splinters, dust */
+  private readonly matterLayer = new Container();
+  /** additive light: beams, rings, flashes, sparks */
+  private readonly lightLayer = new Container();
   private readonly textLayer = new Container();
+  /** shakes and punches the board; between the glide and the board, so neither fights the other */
+  private readonly camera = new Camera();
+  private readonly pool = new SpritePool();
   private readonly particles: Particles;
+  /** effects switched on and off in the debug menu */
+  public readonly fx = new FxSwitches();
+  private readonly kit: Writable<FxKit>;
   private readonly sprites = new Map<number, Sprite>();
   private readonly ice = new Map<number, LayerSprite>();
   private readonly crates = new Map<number, LayerSprite>();
@@ -108,12 +130,15 @@ export class BoardView {
     private readonly canvas: HTMLCanvasElement,
     private readonly input: BoardListener,
   ) {
-    this.boardRoot.addChild(this.tiles, this.iceLayer, this.litLayer, this.pieceLayer, this.crateLayer, this.chainLayer, this.fxLayer, this.textLayer);
-    this.glide.addChild(this.boardRoot);
+    this.boardRoot.addChild(this.tiles, this.iceLayer, this.litLayer, this.pieceLayer, this.crateLayer, this.chainLayer, this.matterLayer, this.lightLayer, this.textLayer);
+    this.camera.view.addChild(this.boardRoot);
+    this.glide.addChild(this.camera.view);
     scene.root.addChild(this.glide);
-    this.particles = new Particles(this.fxLayer, () => scene.request());
+    this.particles = new Particles(this.matterLayer, this.lightLayer, this.pool, (name) => this.atlas.get(name), () => scene.request());
+    this.kit = this.makeKit();
     scene.addUpdater((dt) => this.particles.update(dt));
-    scene.addUpdater((dt) => this.settleGlide(dt));
+    scene.addUpdater((dt) => this.settleGlide(dt), true);
+    scene.addUpdater((dt) => this.camera.update(dt), true);
     scene.addUpdater((dt) => this.pulseLit(dt));
     scene.onQualityChange = () => this.layout(this.width, this.height);
 
@@ -138,6 +163,26 @@ export class BoardView {
 
   // ---------- setup ----------
 
+  /** What the effects may use of the board; its sizes follow the layout. */
+  private makeKit(): Writable<FxKit> {
+    return {
+      cell: this.cell,
+      cols: 1,
+      rows: 1,
+      x: (c) => this.x(c),
+      y: (r) => this.y(r),
+      texture: (name) => this.atlas.get(name),
+      light: this.lightLayer,
+      pool: this.pool,
+      particles: this.particles,
+      camera: this.camera,
+      tweens: this.scene.tweens,
+      on: (fx) => this.fx.on(fx),
+      after: (ms, fn) => this.after(ms, fn),
+      pieceAt: (p) => (this.board && p.r >= 0 && p.r < this.board.rows && p.c >= 0 && p.c < this.board.cols ? this.spriteAt(this.indexOf(p)) : undefined),
+    };
+  }
+
   /** The atlas is repainted for the new cell size, so a smaller board stays sharp. */
   public setScale(scale: number): void {
     if (scale === this.scale) return;
@@ -152,6 +197,7 @@ export class BoardView {
     this.board = board;
     this.lit.clear();
     this.grid = board.cells.map((c) => c.piece);
+    this.camera.reset();
     this.deselect();
     this.picks = 0;
     this.layout(this.width, this.height, true);
@@ -164,6 +210,7 @@ export class BoardView {
     this.locked.clear();
     this.lit.clear();
     this.wipe();
+    this.camera.reset();
     this.board = null;
     this.grid = [];
     this.scene.request();
@@ -173,7 +220,7 @@ export class BoardView {
   private wipe(): void {
     this.scene.tweens.finishAll();
     this.particles.clear();
-    for (const layer of [this.tiles, this.iceLayer, this.litLayer, this.pieceLayer, this.crateLayer, this.chainLayer, this.fxLayer]) {
+    for (const layer of [this.tiles, this.iceLayer, this.litLayer, this.pieceLayer, this.crateLayer, this.chainLayer, this.matterLayer, this.lightLayer]) {
       for (const child of layer.removeChildren()) child.destroy();
     }
     this.sprites.clear();
@@ -212,7 +259,10 @@ export class BoardView {
     this.originX = Math.round((width - cell * b.cols) / 2);
     this.originY = Math.round((height - cell * b.rows) / 2);
     this.boardRoot.position.set(this.originX, this.originY);
+    this.camera.frame(this.originX + (cell * b.cols) / 2, this.originY + (cell * b.rows) / 2, cell);
     this.particles.density = this.scene.particleDensity;
+    this.particles.cell = cell;
+    Object.assign(this.kit, { cell, cols: b.cols, rows: b.rows });
     perfContext({ cell });
     if (this.atlas.build(cell, this.scene.resolution) || forceRebuild) timed('rebuild', () => this.rebuild());
     this.scene.request();
@@ -319,7 +369,7 @@ export class BoardView {
       jobs.push(
         this.scene.tweens
           .run(380, (k) => (sprite.y = startY + (targetY - startY) * k), { delay, ease: Ease.inQuad })
-          .then(() => this.land(sprite)),
+          .then(() => land(this.kit, sprite, b.rows + 1)),
       );
     });
     await Promise.all(jobs);
@@ -348,9 +398,16 @@ export class BoardView {
     const sb = this.spriteAt(ib);
     if (!sa || !sb) return;
     const [ax, ay, bx, by] = [this.x(ev.a.c), this.y(ev.a.r), this.x(ev.b.c), this.y(ev.b.r)];
+    const depth = this.fx.on(Fx.SwapDepth);
+    // The moved piece passes over the other one.
+    if (depth) this.pieceLayer.addChild(sa);
     const move = (k: number): void => {
       sa.position.set(ax + (bx - ax) * k, ay + (by - ay) * k);
       sb.position.set(bx + (ax - bx) * k, by + (ay - by) * k);
+      if (!depth) return;
+      const d = Math.sin(Math.PI * Math.min(1, Math.max(0, k)));
+      sa.scale.set(1 + SWAP_OVER * d);
+      sb.scale.set(1 - SWAP_UNDER * d);
     };
     if (ev.valid) {
       [this.grid[ia], this.grid[ib]] = [this.grid[ib], this.grid[ia]];
@@ -361,15 +418,41 @@ export class BoardView {
     await this.scene.tweens.run(170, (k) => move(1 - k), { ease: Ease.outBack });
   }
 
+  /**
+   * A clear step, timed by its plan: every piece pops as its blast's wave reaches it, a chained special
+   * goes off once the wave got to it, a combo gathers its power first. Hits shake the board by their power.
+   */
   private async playClear(ev: ClearEvent): Promise<void> {
+    const plan = planClear(ev, { wave: this.fx.on(Fx.Wave), charge: this.fx.on(Fx.Combo) });
     const createdAt = new Map(ev.created.map((c) => [c.piece.id, c.pos]));
-    let end = 0;
+    const boost = cascadeBoost(ev.cascade);
+    // A crowded clear shares one budget of particles, so the last pieces are not left without any.
+    const amount = boost * Math.sqrt(Math.min(1, FULL_BURSTS / Math.max(1, ev.removed.length)));
+    let end = plan.lead;
 
-    for (const blast of ev.blasts) {
-      const delay = blast.order * ORDER_STEP;
-      this.after(delay, () => this.blastFx(blast));
-      end = Math.max(end, delay + 180);
+    if (ev.combo) {
+      const center = ev.combo;
+      const pair = ev.removed
+        .filter((rm) => rm.order === 0 && Math.max(Math.abs(rm.pos.r - center.r), Math.abs(rm.pos.c - center.c)) <= 1)
+        .flatMap((rm) => this.sprites.get(rm.id) ?? []);
+      if (plan.lead > 0) comboCharge(this.kit, center, pair, plan.lead);
+      const power = COMBO_POWER + ev.blasts.filter((b) => b.order === 0).reduce((sum, b) => sum + blastPower(b), 0);
+      this.after(plan.lead, () => this.impact(power * boost, true));
     }
+
+    // One hitstop per step, on its biggest hit: a freeze on every blast of a chain would drag.
+    const powers = ev.blasts.map((b) => blastPower(b) * boost);
+    const biggest = ev.combo ? -1 : powers.indexOf(Math.max(...powers));
+    ev.blasts.forEach((blast, i) => {
+      const start = plan.blasts[i];
+      const tint = blast.color !== NO_COLOR ? GEM_TINTS[blast.color] : tintOf(colorAt(ev, blast.origin));
+      this.after(start, () => {
+        blastFx(this.kit, blast, tint, powers[i], (p) => plan.at(p, blast.order) - start);
+        // A combo's own blasts hit as one, at its center.
+        if (!ev.combo || blast.order > 0) this.impact(powers[i], i === biggest);
+      });
+      end = Math.max(end, start + 120);
+    });
 
     for (const rm of ev.removed) {
       const i = this.indexOf(rm.pos);
@@ -377,24 +460,24 @@ export class BoardView {
       const sprite = this.sprites.get(rm.id);
       if (!sprite) continue;
       this.sprites.delete(rm.id);
-      const delay = rm.order * ORDER_STEP;
+      const at = plan.at(rm.pos, rm.order);
       const target = rm.mergeInto >= 0 ? createdAt.get(rm.mergeInto) : undefined;
       if (target) {
         const [sx, sy, tx, ty] = [sprite.x, sprite.y, this.x(target.c), this.y(target.r)];
         void this.scene.tweens
           .run(
-            140,
+            MERGE_MS,
             (k) => {
               sprite.position.set(sx + (tx - sx) * k, sy + (ty - sy) * k);
               sprite.scale.set(1 - k * 0.4);
             },
-            { delay, ease: Ease.inQuad },
+            { delay: at, ease: Ease.inQuad },
           )
           .then(() => sprite.destroy());
-        end = Math.max(end, delay + 140);
+        end = Math.max(end, at + MERGE_MS);
       } else {
-        this.pop(sprite, rm.color, delay);
-        end = Math.max(end, delay + 170);
+        this.after(at, () => popPiece(this.kit, sprite, rm.color, tintOf(rm.color), amount));
+        end = Math.max(end, at + POP_END);
       }
     }
 
@@ -402,25 +485,36 @@ export class BoardView {
       this.grid[this.indexOf(c.pos)] = c.piece;
       const sprite = this.addPiece(c.piece, c.pos);
       sprite.scale.set(0);
-      void this.scene.tweens.run(220, (k) => sprite.scale.set(k), { delay: 140, ease: Ease.outBack });
-      this.after(140, () => this.flash(this.x(c.pos.c), this.y(c.pos.r), 1.6));
-      end = Math.max(end, 360);
+      const at = plan.lead + CREATE_DELAY;
+      void this.scene.tweens.run(CREATE_MS, (k) => sprite.scale.set(k), { delay: at, ease: Ease.outBack });
+      this.after(at, () => createFx(this.kit, this.x(c.pos.c), this.y(c.pos.r), tintOf(c.piece.color)));
+      end = Math.max(end, at + CREATE_MS);
     }
 
     for (const l of ev.layers) {
       const i = this.indexOf(l.pos);
-      this.after(l.order * ORDER_STEP + 60, () => {
-        this.setLayer('ice', this.ice, i, l.ice, FrameName.ice, ICE_TINT);
-        this.setLayer('crate', this.crates, i, l.crate, FrameName.crate, CRATE_TINT);
-        this.setLayer('chain', this.chains, i, l.chain, FrameName.chain, CHAIN_TINT);
+      const at = plan.layer(l);
+      this.after(at, () => {
+        this.setLayer('ice', this.ice, i, l.ice, FrameName.ice);
+        this.setLayer('crate', this.crates, i, l.crate, FrameName.crate);
+        this.setLayer('chain', this.chains, i, l.chain, FrameName.chain);
       });
+      end = Math.max(end, at);
     }
 
-    for (const p of ev.popups) this.after(p.order * ORDER_STEP, () => this.popup(p.r, p.c, p.value));
+    if (this.fx.on(Fx.Popups)) for (const p of ev.popups) this.after(plan.popup(p), () => this.popup(p.r, p.c, p.value));
     // A special lights up as the blast reaches it.
-    for (const l of ev.lit) this.after(l.order * ORDER_STEP, () => this.light(l.id));
+    for (const l of ev.lit) this.after(plan.at(l.pos, l.order), () => this.light(l.id));
 
     await this.scene.tweens.wait(Math.max(0, end - FALL_OVERLAP));
+  }
+
+  /** A hit of `power`: shakes the board, punches it when big, and freezes the game for the biggest. */
+  private impact(power: number, stop: boolean): void {
+    if (this.fx.on(Fx.Shake)) this.camera.shake(power);
+    if (this.fx.on(Fx.Punch) && power >= 0.4) this.camera.punch(0.008 + 0.022 * Math.min(1, power));
+    const ms = stop && this.fx.on(Fx.Hitstop) ? hitstopMs(power) : 0;
+    if (ms > 0) this.scene.hitstop(ms);
   }
 
   private async playFall(ev: FallEvent): Promise<void> {
@@ -455,7 +549,7 @@ export class BoardView {
           },
           { ease: FALL_EASE },
         )
-        .then(() => this.land(sprite));
+        .then(() => land(this.kit, sprite, total / this.cell));
       end = Math.max(end, duration);
     }
     await this.scene.tweens.wait(end + 40);
@@ -471,7 +565,7 @@ export class BoardView {
     const sprite = this.sprites.get(id);
     if (!sprite || this.lit.has(id)) return;
     this.lit.set(id, null);
-    this.flash(sprite.x, sprite.y, 1.5);
+    flash(this.kit, sprite.x, sprite.y, 1.5, WHITE);
     this.scene.request();
   }
 
@@ -510,7 +604,7 @@ export class BoardView {
       if (!sprite) return Promise.resolve();
       return this.scene.tweens.wait(k * 45).then(() => {
         sprite.texture = this.pieceTexture(p.piece);
-        this.flash(sprite.x, sprite.y, 1.4);
+        flash(this.kit, sprite.x, sprite.y, 1.4, WHITE);
         return this.scene.tweens.run(220, (t) => sprite.scale.set(1.35 - 0.35 * t), { ease: Ease.outQuad });
       });
     });
@@ -537,102 +631,6 @@ export class BoardView {
   }
 
   // ---------- effects ----------
-
-  private blastFx(blast: Blast): void {
-    const ox = this.x(blast.origin.c);
-    const oy = this.y(blast.origin.r);
-    const b = this.board!;
-    switch (blast.kind) {
-      case BlastKind.Row:
-      case BlastKind.Col: {
-        const vertical = blast.kind === BlastKind.Col;
-        const beam = this.fxSprite(FrameName.Beam, vertical ? ox : (b.cols * this.cell) / 2, vertical ? (b.rows * this.cell) / 2 : oy);
-        beam.rotation = vertical ? Math.PI / 2 : 0;
-        const length = ((vertical ? b.rows : b.cols) + 1) * this.cell;
-        beam.width = length;
-        this.animateFx(beam, 280, (k) => {
-          beam.scale.y = Math.sin(k * Math.PI) * 1.1;
-          beam.alpha = 1 - k * k;
-        });
-        this.flash(ox, oy, 1.8);
-        break;
-      }
-      case BlastKind.Bomb: {
-        const radius = Math.max(...blast.cells.map((p) => Math.abs(p.r - blast.origin.r)), 1);
-        const ring = this.fxSprite(FrameName.Ring, ox, oy);
-        this.animateFx(ring, 340, (k) => {
-          ring.scale.set(0.5 + k * (radius * 2 + 1) * 0.9);
-          ring.alpha = 1 - k;
-        });
-        this.flash(ox, oy, radius * 2.6);
-        this.shake(this.cell * 0.1 * radius);
-        break;
-      }
-      case BlastKind.Prism: {
-        const tint = blast.color >= 0 ? GEM_TINTS[blast.color] : WHITE;
-        const ring = this.fxSprite(FrameName.Ring, ox, oy);
-        ring.tint = tint;
-        this.animateFx(ring, 420, (k) => {
-          ring.scale.set(0.6 + k * 4);
-          ring.alpha = 1 - k;
-        });
-        for (const p of blast.cells.slice(0, 40)) {
-          const dot = this.fxSprite(FrameName.Dot, ox, oy);
-          dot.tint = tint;
-          dot.scale.set(0.45);
-          const [tx, ty] = [this.x(p.c), this.y(p.r)];
-          this.animateFx(dot, 200, (k) => {
-            dot.position.set(ox + (tx - ox) * k, oy + (ty - oy) * k);
-            dot.alpha = 1 - k * 0.5;
-          });
-        }
-        this.shake(this.cell * 0.08);
-        break;
-      }
-      case BlastKind.Spark: {
-        this.flash(ox, oy, 1.4);
-        const target = blast.target;
-        if (!target) break;
-        const star = this.fxSprite(FrameName.Star, ox, oy);
-        star.scale.set(0.7);
-        const [tx, ty] = [this.x(target.c), this.y(target.r)];
-        const lift = this.cell * 1.2;
-        this.animateFx(star, 260, (k) => {
-          star.position.set(ox + (tx - ox) * k, oy + (ty - oy) * k - Math.sin(k * Math.PI) * lift);
-          star.rotation = k * 6;
-        });
-        this.after(260, () => this.flash(tx, ty, 1.8));
-        break;
-      }
-    }
-  }
-
-  private pop(sprite: Sprite, color: number, delay: number): void {
-    this.after(delay, () => {
-      const texture = this.atlas.get(FrameName.Dot);
-      const tint = color === NO_COLOR ? WHITE : GEM_TINTS[color];
-      this.particles.burst(sprite.x, sprite.y, texture, tint, { count: 7, speed: this.cell * 3.2, size: 0.3, life: 480 });
-      this.particles.burst(sprite.x, sprite.y, this.atlas.get(FrameName.Star), WHITE, { count: 2, speed: this.cell * 2, size: 0.35, life: 420 });
-    });
-    void this.scene.tweens
-      .run(
-        170,
-        (k) => {
-          sprite.scale.set(k < 0.3 ? 1 + (k / 0.3) * 0.2 : 1.2 * (1 - (k - 0.3) / 0.7));
-          sprite.alpha = 1 - Math.max(0, (k - 0.5) * 2);
-        },
-        { delay, ease: Ease.linear },
-      )
-      .then(() => sprite.destroy());
-  }
-
-  private flash(x: number, y: number, size: number): void {
-    const glow = this.fxSprite(FrameName.Glow, x, y);
-    this.animateFx(glow, 260, (k) => {
-      glow.scale.set(size * (0.6 + k * 0.6));
-      glow.alpha = 1 - k;
-    });
-  }
 
   private popup(r: number, c: number, value: number): void {
     const text = this.popupPool.pop() ?? new BitmapText({ text: '', style: { fontFamily: SCORE_FONT, fontSize: 24 } });
@@ -676,50 +674,20 @@ export class BoardView {
     return true;
   }
 
-  private shake(power: number): void {
-    void this.scene.tweens.run(
-      260,
-      (k) => {
-        const p = power * (1 - k);
-        this.boardRoot.position.set(this.originX + (Math.random() - 0.5) * 2 * p, this.originY + (Math.random() - 0.5) * 2 * p);
-        if (k >= 1) this.boardRoot.position.set(this.originX, this.originY);
-      },
-      { ease: Ease.linear },
-    );
-  }
-
-  private land(sprite: Sprite): void {
-    if (sprite.destroyed) return;
-    void this.scene.tweens.run(
-      130,
-      (k) => {
-        if (sprite.destroyed) return;
-        const squash = Math.sin(k * Math.PI) * 0.14;
-        sprite.scale.set(1 + squash, 1 - squash);
-      },
-      { ease: Ease.linear },
-    );
-  }
-
-  private setLayer(
-    layer: Layer,
-    map: Map<number, LayerSprite>,
-    i: number,
-    value: number,
-    frame: (v: number) => string,
-    tint: number,
-  ): void {
+  private setLayer(layer: Layer, map: Map<number, LayerSprite>, i: number, value: number, frame: (v: number) => string): void {
     const entry = map.get(i);
     if (!entry || entry.value === value) return;
     this.input.onLayerHit(layer);
     const { sprite } = entry;
-    this.particles.burst(sprite.x, sprite.y, this.atlas.get(FrameName.Star), tint, { count: 6, speed: this.cell * 2.6, size: 0.3, life: 520 });
+    layerFx(this.kit, layer, sprite.x, sprite.y);
     if (value === 0) {
       map.delete(i);
-      this.animateFx(sprite, 220, (k) => {
-        sprite.scale.set(1 + k * 0.3);
-        sprite.alpha = 1 - k;
-      });
+      void this.scene.tweens
+        .run(220, (k) => {
+          sprite.scale.set(1 + k * 0.3);
+          sprite.alpha = 1 - k;
+        }, { ease: Ease.outQuad })
+        .then(() => sprite.destroy());
       return;
     }
     entry.value = value;
@@ -906,19 +874,6 @@ export class BoardView {
     map.set(i, { sprite, value });
   }
 
-  private fxSprite(frame: string, x: number, y: number): Sprite {
-    const s = new Sprite(this.atlas.get(frame));
-    s.anchor.set(0.5);
-    s.position.set(x, y);
-    s.blendMode = 'add';
-    this.fxLayer.addChild(s);
-    return s;
-  }
-
-  private animateFx(sprite: Sprite, duration: number, update: (k: number) => void): void {
-    void this.scene.tweens.run(duration, update, { ease: Ease.outQuad }).then(() => sprite.destroy());
-  }
-
   /** Delayed effect; dropped when the board was replaced meanwhile. */
   private after(delay: number, fn: () => void): void {
     const epoch = this.epoch;
@@ -929,4 +884,13 @@ export class BoardView {
       });
     }
   }
+}
+
+function tintOf(color: number): number {
+  return color === NO_COLOR ? WHITE : GEM_TINTS[color];
+}
+
+/** Color of the piece that left `pos` in this step: a blast takes the color of the special that went off. */
+function colorAt(ev: ClearEvent, pos: Pos): number {
+  return ev.removed.find((rm) => rm.pos.r === pos.r && rm.pos.c === pos.c)?.color ?? NO_COLOR;
 }

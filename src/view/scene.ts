@@ -11,7 +11,10 @@ const QUALITY = [
 ];
 const SLOW_FRAME_MS = 24;
 const SLOW_FRAMES_TO_DOWNGRADE = 40;
+/** game time runs this fast during a hitstop */
+const HITSTOP_SPEED = 0.06;
 
+/** Called every frame with the elapsed ms; returns whether it still animates. */
 type Updater = (dt: number) => boolean;
 
 /**
@@ -23,7 +26,10 @@ export class Scene {
   public readonly tweens = new Tweens(() => this.request());
   /** called after a quality downgrade, so textures can be rebuilt for the new resolution */
   public onQualityChange: (() => void) | null = null;
-  private readonly updaters: Updater[] = [];
+  /** game-time updaters slow down in a hitstop; real-time ones (the camera) keep going */
+  private readonly updaters: { fn: Updater; realTime: boolean }[] = [];
+  /** real ms of hitstop left */
+  private stopLeft = 0;
   private quality = 0;
   private slowFrames = 0;
   private scheduled = false;
@@ -72,8 +78,14 @@ export class Scene {
     this.request();
   }
 
-  public addUpdater(fn: Updater): void {
-    this.updaters.push(fn);
+  public addUpdater(fn: Updater, realTime = false): void {
+    this.updaters.push({ fn, realTime });
+  }
+
+  /** Big hits freeze the game for a moment: everything but the camera nearly stops, so the hit lands. */
+  public hitstop(ms: number): void {
+    this.stopLeft = Math.max(this.stopLeft, ms);
+    this.request();
   }
 
   public request(): void {
@@ -89,9 +101,11 @@ export class Scene {
     this.last = now;
 
     const start = performance.now();
-    this.tweens.update(dt);
-    let active = this.tweens.active;
-    for (const update of this.updaters) active = update(dt) || active;
+    const gameDt = this.stopLeft > 0 ? dt * HITSTOP_SPEED : dt;
+    this.stopLeft = Math.max(0, this.stopLeft - dt);
+    this.tweens.update(gameDt);
+    let active = this.tweens.active || this.stopLeft > 0;
+    for (const { fn, realTime } of this.updaters) active = fn(realTime ? dt : gameDt) || active;
     const updated = performance.now();
     this.renderer.render(this.root);
     recordFrame(interval, updated - start, performance.now() - updated);

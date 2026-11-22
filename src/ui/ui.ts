@@ -4,6 +4,7 @@ import { type GameState, type LevelDef, type Objective, ObjectiveKind, Special }
 import { BoardSize, type Settings } from '@/app/save';
 import { DIFFICULTIES } from '@/player/difficulty';
 import { FrameName, frameDataUrl } from '@/view/art';
+import { Fx, type FxChoice } from '@/view/fx/switches';
 import { Counter } from '@/ui/counter';
 import { Glide } from '@/ui/glide';
 import { PraisePicker } from '@/ui/praise';
@@ -33,6 +34,8 @@ export const Action = {
   SoundPrev: 'sound-prev',
   SoundNext: 'sound-next',
   SoundPlay: 'sound-play',
+  Effects: 'effects',
+  ToggleEffect: 'toggle-effect',
 } as const;
 export type Action = (typeof Action)[keyof typeof Action];
 
@@ -64,8 +67,8 @@ export class Ui {
 
   public constructor(
     root: HTMLElement,
-    /** `sound`: the row of the sound menu the action came from */
-    private readonly onAction: (action: Action, sound?: Sfx) => void,
+    /** `item`: the row of a debug menu the action came from (a sound, an effect) */
+    private readonly onAction: (action: Action, item?: string) => void,
   ) {
     this.hud = root.querySelector('#hud')!;
     this.hudGlide = new Glide(this.hud);
@@ -74,7 +77,7 @@ export class Ui {
     this.praiseEl = root.querySelector('#praise')!;
     root.addEventListener('click', (e) => {
       const target = (e.target as HTMLElement).closest<HTMLElement>('[data-action]');
-      if (target) this.onAction(target.dataset.action as Action, target.closest<HTMLElement>('[data-sound]')?.dataset.sound as Sfx);
+      if (target) this.onAction(target.dataset.action as Action, target.closest<HTMLElement>('[data-item]')?.dataset.item);
     });
   }
 
@@ -201,6 +204,7 @@ export class Ui {
           <button data-action="${Action.Harder}" aria-label="${S.harder}" ${settings.difficulty === DIFFICULTIES.at(-1) ? 'disabled' : ''}>+</button>
         </div>
         <button class="btn" data-action="${Action.Sounds}">${S.sounds}</button>
+        <button class="btn" data-action="${Action.Effects}">${S.effects}</button>
         <button class="btn danger" data-action="${Action.Reset}">${S.reset}</button>
         <button class="btn primary" data-action="${Action.Back}">${S.back}</button>
       </div>`,
@@ -211,7 +215,7 @@ export class Ui {
   public showSounds(choice: SoundChoice): void {
     const rows = Object.values(Sfx)
       .map(
-        (id) => `<div class="sound-row" data-sound="${id}">
+        (id) => `<div class="sound-row" data-item="${id}">
           <span>${S.soundNames[id]}</span>
           <div class="toggle stepper">
             <button data-action="${Action.SoundPrev}" aria-label="${S.smaller}">‹</button>
@@ -233,8 +237,34 @@ export class Ui {
 
   /** In place: redrawing the card would replay its entrance and lose the scroll. */
   public updateSound(id: Sfx, choice: SoundChoice): void {
-    const el = this.overlay.querySelector(`[data-sound="${id}"] .variant`);
+    const el = this.overlay.querySelector(`[data-item="${id}"] .variant`);
     if (el) el.innerHTML = this.variantHtml(id, choice);
+  }
+
+  /** Debug menu: every effect, each switched on and off on its own. */
+  public showEffects(choice: FxChoice): void {
+    const rows = Object.values(Fx)
+      .map((fx) => `<button class="toggle ${choice[fx] === false ? '' : 'on'}" data-action="${Action.ToggleEffect}" data-item="${fx}">${this.effectHtml(fx, choice)}</button>`)
+      .join('');
+    this.show(
+      `<div class="card sounds">
+        <h2>${S.effects}</h2>
+        <p class="hint">${S.effectsHint}</p>
+        ${rows}
+        <button class="btn primary" data-action="${Action.Back}">${S.back}</button>
+      </div>`,
+    );
+  }
+
+  /** In place, like a sound row. */
+  public updateEffect(fx: Fx, choice: FxChoice): void {
+    const el = this.overlay.querySelector(`[data-item="${fx}"]`);
+    if (el) el.innerHTML = this.effectHtml(fx, choice);
+    el?.classList.toggle('on', choice[fx] !== false);
+  }
+
+  private effectHtml(fx: Fx, choice: FxChoice): string {
+    return `<span>${S.effectNames[fx]}</span><i>${choice[fx] === false ? S.off : S.on}</i>`;
   }
 
   private variantHtml(id: Sfx, choice: SoundChoice): string {

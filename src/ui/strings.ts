@@ -1,4 +1,5 @@
 import type { Sfx } from '@/audio/synth';
+import type { Fx } from '@/view/fx/switches';
 
 /** All player-facing text in one place, ready for localization. */
 export const S = {
@@ -74,6 +75,29 @@ export const S = {
     lose: 'Поражение',
   } satisfies Record<Sfx, string>,
   variantNames: { synth: 'синтез', off: 'тишина' } as Record<string, string>,
+  effects: 'Эффекты',
+  effectsHint: 'Каждый эффект включается и выключается отдельно, сразу в игре.',
+  effectNames: {
+    shake: 'Тряска от взрывов',
+    punch: 'Толчок поля',
+    hitstop: 'Замирание на больших взрывах',
+    wave: 'Волна: фишки гаснут по ходу взрыва',
+    flash: 'Белая вспышка фишки',
+    shards: 'Осколки фишек',
+    sparks: 'Искры',
+    glitter: 'Блёстки',
+    line: 'Лучи линии',
+    bomb: 'Ударная волна бомбы',
+    prism: 'Молнии призмы',
+    spark: 'Шлейф искры',
+    combo: 'Сбор силы комбо',
+    create: 'Рождение спецфишки',
+    recoil: 'Отдача соседей бомбы',
+    debris: 'Лёд, щепки, пыль',
+    bounce: 'Отскок при падении',
+    'swap-depth': 'Обмен: фишка над фишкой',
+    popups: 'Очки над полем',
+  } satisfies Record<Fx, string>,
   reset: 'Сбросить прогресс',
   resetConfirm: 'Точно сбросить?',
   back: 'Назад',

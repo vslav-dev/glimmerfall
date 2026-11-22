@@ -19,6 +19,7 @@ import { exitApp, Haptic, haptic, onBackButton, onHidden, onVisible, setFullscre
 import { Action, Ui } from '@/ui/ui';
 import { S } from '@/ui/strings';
 import { BoardView, type Layer } from '@/view/boardView';
+import type { Fx } from '@/view/fx/switches';
 import type { Scene } from '@/view/scene';
 
 const Mode = {
@@ -27,6 +28,7 @@ const Mode = {
   Pause: 'pause',
   Settings: 'settings',
   Sounds: 'sounds',
+  Effects: 'effects',
   Finale: 'finale',
   Won: 'won',
   Lost: 'lost',
@@ -78,7 +80,7 @@ export class GameApp {
     private readonly scene: Scene,
     canvas: HTMLCanvasElement,
   ) {
-    this.ui = new Ui(root, (action, sound) => void this.onAction(action, sound));
+    this.ui = new Ui(root, (action, item) => void this.onAction(action, item));
     this.view = new BoardView(scene, canvas, {
       onSwap: (a, b, input) => void this.onSwap(a, b, input),
       onLayerHit: (layer) => this.audio.play(LAYER_SFX[layer]),
@@ -382,10 +384,15 @@ export class GameApp {
   // ---------- actions ----------
 
   /** Screen actions run one at a time; a double tap must not start a level twice. */
-  private async onAction(action: Action, sound?: Sfx): Promise<void> {
-    if (sound) {
+  private async onAction(action: Action, item?: string): Promise<void> {
+    if (action === Action.ToggleEffect) {
+      this.audio.play(Sfx.Button);
+      this.toggleEffect(item as Fx);
+      return;
+    }
+    if (item) {
       // the sound menu plays the variant itself, without the button sound over it
-      this.pickSound(action, sound);
+      this.pickSound(action, item as Sfx);
       return;
     }
     if (this.actionRunning) return;
@@ -446,8 +453,12 @@ export class GameApp {
         this.mode = Mode.Sounds;
         this.ui.showSounds(this.save.settings.sounds);
         break;
+      case Action.Effects:
+        this.mode = Mode.Effects;
+        this.ui.showEffects(this.save.settings.effects);
+        break;
       case Action.Back:
-        if (this.mode === Mode.Sounds) {
+        if (this.mode === Mode.Sounds || this.mode === Mode.Effects) {
           this.mode = Mode.Settings;
           this.ui.showSettings(this.save.settings);
           break;
@@ -527,6 +538,16 @@ export class GameApp {
     void this.audio.preview(id, chosen(sounds, id));
   }
 
+  /** Effects menu: a tap switches the effect on or off, and the board plays it that way at once. */
+  private toggleEffect(fx: Fx): void {
+    const effects = this.save.settings.effects;
+    if (effects[fx] === false) delete effects[fx];
+    else effects[fx] = false;
+    this.view.fx.set(effects);
+    this.persist();
+    this.ui.updateEffect(fx, effects);
+  }
+
   private async onBack(): Promise<void> {
     switch (this.mode) {
       case Mode.Play:
@@ -537,6 +558,7 @@ export class GameApp {
         break;
       case Mode.Settings:
       case Mode.Sounds:
+      case Mode.Effects:
         await this.onAction(Action.Back);
         break;
       case Mode.Won:
@@ -598,6 +620,7 @@ export class GameApp {
     const s = this.save.settings;
     this.audio.enabled = s.sound;
     this.audio.choose(s.sounds);
+    this.view.fx.set(s.effects);
     setHapticsEnabled(s.haptics);
     setFullscreen(s.fullscreen);
     this.view.setScale(s.boardSize / 100);

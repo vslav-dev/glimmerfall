@@ -173,6 +173,8 @@ export type GameEvent =
       popups: ScorePopup[];
       /** specials this step lit: they stay on the board and go off one per step from the next one on */
       lit: LitPiece[];
+      /** where the player's two swapped specials met and went off together, or null */
+      combo: Pos | null;
     }
   | { type: 'transform'; pieces: CreatedPiece[] }
   | { type: 'fall'; moves: FallMove[] }

@@ -15,6 +15,7 @@ import {
   NO_COLOR,
   type PendingSwap,
   type Piece,
+  type Pos,
   type RemovedPiece,
   type ScorePopup,
   Special,
@@ -80,6 +81,8 @@ interface Ctx {
   /** ids of lit specials waiting their turn, shared across steps */
   fuse: number[];
   lit: LitPiece[];
+  /** center of the player's combo this step */
+  combo: Pos | null;
   /** matches other than the player's own create their specials; off once the moves are spent */
   specials: boolean;
 }
@@ -186,6 +189,7 @@ function newCtx(b: Board, step: Step, scorer: TargetScorer, cascadeLevel: number
     crateHits: new Set(),
     fuse,
     lit: [],
+    combo: null,
     specials,
   };
 }
@@ -211,6 +215,7 @@ function finishStep(ctx: Ctx): void {
     layers: [...ctx.layers.values()],
     popups: ctx.popups,
     lit: ctx.lit,
+    combo: ctx.combo,
   });
 }
 
@@ -471,6 +476,7 @@ function runCombo(ctx: Ctx, center: number, otherCell: number): void {
   const q = ctx.b.cells[otherCell].piece!;
   const kinds = [kindOf(p.special), kindOf(q.special)].sort();
   const key = kinds.join('+');
+  ctx.combo = posOf(ctx.b, center);
 
   // Prism with a plain piece wipes its color; with a special it turns that color into copies of it.
   if (kinds.includes(Kind.Prism) && key !== 'prism+prism') {

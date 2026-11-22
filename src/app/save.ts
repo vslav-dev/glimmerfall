@@ -7,6 +7,7 @@ import { initialThreeStars } from '@/player/stars';
 import { loadJson, saveText } from '@/platform/platform';
 import { type AttemptRecord, newRecord } from '@/telemetry/attempt';
 import { timed } from '@/telemetry/perf';
+import type { FxChoice } from '@/view/fx/switches';
 
 const KEY = 'glimmerfall-save';
 const VERSION = 5;
@@ -21,6 +22,8 @@ export interface Settings {
   difficulty: Difficulty;
   /** debug sound menu: the variant picked for each sound */
   sounds: SoundChoice;
+  /** debug effects menu: effects switched off */
+  effects: FxChoice;
 }
 
 /** Board size steps: a big tablet screen otherwise fills edge to edge with huge pieces. */
@@ -78,6 +81,7 @@ export function defaultSave(): SaveData {
       boardSize: BoardSize.Max,
       difficulty: Difficulty.Normal,
       sounds: {},
+      effects: {},
     },
     current: null,
   };

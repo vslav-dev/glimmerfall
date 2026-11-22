@@ -1,4 +1,4 @@
-import { MAX_COLORS, Special } from '@/core/types';
+import { MAX_COLORS, NO_COLOR, Special } from '@/core/types';
 
 /**
  * All game art, drawn procedurally with Canvas 2D. The same painters feed the WebGL atlas
@@ -37,7 +37,19 @@ export const FrameName = {
   Ring: 'ring',
   Beam: 'beam',
   Glow: 'glow',
+  /** soft horizontal streak, stretched along a spark's flight */
+  Streak: 'streak',
+  /** shockwave: a bright rim fading inward */
+  Shock: 'shock',
+  /** wood splinter */
+  Chip: 'chip',
+  /** one of SHARDS pieces a gem breaks into */
+  shard: (color: number, k: number): string => `shard-${color}-${k % SHARDS}`,
+  /** the piece's outline filled white: it flashes over the piece as it is hit */
+  silhouette: (color: number): string => `silhouette-${color === NO_COLOR ? 'prism' : color}`,
 } as const;
+
+export const SHARDS = 4;
 
 /** Chain per layer, bottom to top: ends (cell units) and sag. Each one hangs at its own angle. */
 const CHAIN_LAYERS: { from: [number, number]; to: [number, number]; sag: number }[] = [
@@ -72,6 +84,14 @@ function buildPainters(): Map<string, Painter> {
   painters.set(FrameName.Ring, drawRing);
   painters.set(FrameName.Beam, drawBeam);
   painters.set(FrameName.Glow, drawGlow);
+  painters.set(FrameName.Streak, drawStreak);
+  painters.set(FrameName.Shock, drawShock);
+  painters.set(FrameName.Chip, drawChip);
+  for (let color = 0; color < MAX_COLORS; color++) {
+    for (let k = 0; k < SHARDS; k++) painters.set(FrameName.shard(color, k), (ctx, s) => drawShard(ctx, s, color, k));
+    painters.set(FrameName.silhouette(color), (ctx, s) => drawSilhouette(ctx, s, SHAPES[color], 0.4));
+  }
+  painters.set(FrameName.silhouette(NO_COLOR), (ctx, s) => drawSilhouette(ctx, s, SHAPES[0], 0.42));
   return painters;
 }
 
@@ -152,9 +172,10 @@ function drawGem(ctx: CanvasRenderingContext2D, s: number, color: number, specia
   ctx.save();
   ctx.translate(s / 2, s / 2);
 
+  // The shadow takes the gem's own dark color: it reads as depth, not as a black outline.
   ctx.save();
-  ctx.shadowColor = 'rgba(0,0,0,0.35)';
-  ctx.shadowBlur = s * 0.06;
+  ctx.shadowColor = `${p.dark}b3`;
+  ctx.shadowBlur = s * 0.07;
   ctx.shadowOffsetY = s * 0.035;
   shape(ctx, r);
   ctx.fillStyle = p.base;
@@ -175,6 +196,12 @@ function drawGem(ctx: CanvasRenderingContext2D, s: number, color: number, specia
   ctx.save();
   shape(ctx, r);
   ctx.clip();
+  // Light bounced up from below: the lower edge glows in the gem's light color, so it looks lit through.
+  const bounce = ctx.createRadialGradient(r * 0.2, r * 0.75, 0, r * 0.2, r * 0.75, r * 0.75);
+  bounce.addColorStop(0, `${p.light}80`);
+  bounce.addColorStop(1, `${p.light}00`);
+  ctx.fillStyle = bounce;
+  ctx.fillRect(-r * 1.2, -r * 1.2, r * 2.4, r * 2.4);
   drawSpecialMark(ctx, r, special);
   const shine = ctx.createRadialGradient(-r * 0.3, -r * 0.5, 0, -r * 0.3, -r * 0.5, r * 0.7);
   shine.addColorStop(0, 'rgba(255,255,255,0.75)');
@@ -690,4 +717,68 @@ function drawGlow(ctx: CanvasRenderingContext2D, s: number): void {
   g.addColorStop(1, 'rgba(255,255,255,0)');
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, s, s);
+}
+
+/** Soft streak along x with a hot core: a spark's trail when stretched along its flight. */
+function drawStreak(ctx: CanvasRenderingContext2D, s: number): void {
+  const g = ctx.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
+  g.addColorStop(0, 'rgba(255,255,255,1)');
+  g.addColorStop(0.3, 'rgba(255,255,255,0.7)');
+  g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.save();
+  ctx.translate(s / 2, s / 2);
+  ctx.scale(1, 0.28);
+  ctx.translate(-s / 2, -s / 2);
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, s, s);
+  ctx.restore();
+}
+
+/** Ring with a bright rim that fades inward: an expanding shockwave. */
+function drawShock(ctx: CanvasRenderingContext2D, s: number): void {
+  const g = ctx.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
+  g.addColorStop(0, 'rgba(255,255,255,0)');
+  g.addColorStop(0.55, 'rgba(255,255,255,0.08)');
+  g.addColorStop(0.85, 'rgba(255,255,255,0.75)');
+  g.addColorStop(0.93, 'rgba(255,255,255,0.35)');
+  g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, s, s);
+}
+
+/** Thin wood splinter, white to be tinted. */
+function drawChip(ctx: CanvasRenderingContext2D, s: number): void {
+  ctx.fillStyle = '#fff';
+  polygon(ctx, [[s * 0.2, s * 0.46], [s * 0.82, s * 0.42], [s * 0.86, s * 0.52], [s * 0.24, s * 0.58]], s * 0.02);
+  ctx.fill();
+}
+
+/** A wedge of the plain gem, cut from its center: the gem breaks into SHARDS of these. */
+function drawShard(ctx: CanvasRenderingContext2D, s: number, color: number, k: number): void {
+  const from = (k / SHARDS) * Math.PI * 2 - Math.PI / 3;
+  const to = ((k + 1) / SHARDS) * Math.PI * 2 - Math.PI / 3;
+  const mid = (from + to) / 2;
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(s / 2, s / 2);
+  // A jagged break: the outer edge bulges at an uneven point.
+  ctx.lineTo(s / 2 + Math.cos(from) * s, s / 2 + Math.sin(from) * s);
+  ctx.lineTo(s / 2 + Math.cos(mid + 0.15) * s * 0.9, s / 2 + Math.sin(mid + 0.15) * s * 0.9);
+  ctx.lineTo(s / 2 + Math.cos(to) * s, s / 2 + Math.sin(to) * s);
+  ctx.closePath();
+  ctx.clip();
+  drawGem(ctx, s, color, Special.None);
+  ctx.restore();
+}
+
+/** The piece's shape filled white with a soft edge, at the piece's own size. */
+function drawSilhouette(ctx: CanvasRenderingContext2D, s: number, shape: Shape, size: number): void {
+  ctx.save();
+  ctx.translate(s / 2, s / 2);
+  ctx.shadowColor = '#fff';
+  ctx.shadowBlur = s * 0.08;
+  ctx.fillStyle = '#fff';
+  shape(ctx, s * size);
+  ctx.fill();
+  ctx.restore();
 }
