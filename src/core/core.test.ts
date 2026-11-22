@@ -156,6 +156,37 @@ describe('fuse', () => {
     expect(fuse).toEqual([low.id]);
   });
 
+  it('of specials matched in one step only the topmost goes off; the rest are lit and wait', () => {
+    const b = boardFrom(['00012', '23401', '34111', '40234', '12340']);
+    const high = b.cells[indexOf(b, 0, 0)].piece!;
+    const low = b.cells[indexOf(b, 2, 4)].piece!;
+    high.special = Special.LineH;
+    low.special = Special.LineH;
+    const fuse: number[] = [];
+
+    const first = resolveStep(b, null, 0, noTarget, fuse)!;
+    expect(lineBlasts(first.events).map((x) => x.origin)).toEqual([{ r: 0, c: 0 }]);
+    expect(fuse).toEqual([low.id]);
+    expect(b.cells.some((cell) => cell.piece?.id === low.id)).toBe(true);
+
+    const second = resolveStep(b, null, 1, noTarget, fuse)!;
+    expect(lineBlasts(second.events)).toHaveLength(1);
+    expect(b.cells.some((cell) => cell.piece?.id === low.id)).toBe(false);
+  });
+
+  it('a matched special waits while a lit one goes off', () => {
+    const b = boardFrom(['01234', '23401', '34111', '40234', '12340']);
+    const litPiece = b.cells[indexOf(b, 0, 0)].piece!;
+    const matched = b.cells[indexOf(b, 2, 4)].piece!;
+    litPiece.special = Special.LineH;
+    matched.special = Special.LineH;
+    const fuse = [litPiece.id];
+
+    const first = resolveStep(b, null, 0, noTarget, fuse)!;
+    expect(lineBlasts(first.events).map((x) => x.origin)).toEqual([{ r: 0, c: 0 }]);
+    expect(fuse).toEqual([matched.id]);
+  });
+
   it('prism + line lights the whole color; the lines go off one per step', () => {
     const game = createGame(level({ rows: 5, cols: 5 }), 7);
     game.board = boardFrom(['01234', '12340', '23401', '34012', '40123']);

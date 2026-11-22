@@ -221,8 +221,8 @@ function buildGroup(b: Board, parts: Shape[], preferred: readonly number[]): Mat
 
   if (special === Special.None) return { cells, color, special, at: -1 };
 
-  // A chained piece only loses its chain, so the special cannot appear on it.
-  const free = cells.filter((i) => b.cells[i].chain === 0);
+  // A chained piece only loses its chain and a matched special stays until its turn to go off: the new one cannot appear there.
+  const free = cells.filter((i) => b.cells[i].chain === 0 && b.cells[i].piece!.special === Special.None);
   if (free.length === 0) return { cells, color, special: Special.None, at: -1 };
 
   const at =

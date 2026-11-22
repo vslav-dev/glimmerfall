@@ -74,8 +74,10 @@ interface Ctx {
   blasts: Blast[];
   layers: Map<number, LayerChange>;
   popups: ScorePopup[];
-  /** specials matched this step: they go off within it */
+  /** the special going off this step */
   queue: Activation[];
+  /** cells of specials matched this step: due at once, yet only one goes off per step */
+  matched: number[];
   pending: { i: number; piece: Piece }[];
   crateHits: Set<number>;
   /** ids of lit specials waiting their turn, shared across steps */
@@ -93,9 +95,10 @@ export function newTally(): Tally {
 
 /**
  * One board step: the pending player swap (combo or match) and every ready match clear together,
- * matched specials fire, the next lit special in `fuse` goes off, pieces fall.
- * A special hit by a blast is not fired at once: it is lit, stays on the board (falling with it)
- * and goes off in a later step, one per step, so chain reactions play out one by one while the board refills.
+ * one special goes off, pieces fall.
+ * Exactly one special goes off per step, so chain reactions play out one by one while the board refills:
+ * a special hit by a blast is lit, stays on the board (falling with it) and is due from the next step on;
+ * a matched special is due at once, but when another one goes off first it is lit and waits likewise.
  * With `specials` off, only the player's own match leaves a special behind; the others just clear.
  * Null when nothing matches and nothing is lit: the board is calm.
  */
@@ -156,17 +159,22 @@ function stepInto(ctx: Ctx, swap: PendingSwap | null): boolean {
 
 /**
  * The topmost due special goes off (leftmost on a tie), so a field of lit specials burns from the top down
- * instead of the upper ones falling into the blasts below. Lit ones matched meanwhile are gone already.
+ * instead of the upper ones falling into the blasts below. Due are those lit before this step and those matched in it;
+ * matched ones left over are lit. Lit ones swapped into a combo meanwhile are gone already.
  */
 function fireNext(ctx: Ctx, due: number): boolean {
-  const live = ctx.fuse.splice(0, due).flatMap((id) => {
+  const ids = ctx.fuse.splice(0, due);
+  const live = ids.flatMap((id) => {
     const i = ctx.b.cells.findIndex((cell) => cell.piece?.id === id);
-    return i === -1 ? [] : [{ id, i }];
+    return i === -1 ? [] : [{ i, matched: false }];
   });
+  for (const i of ctx.matched) if (!ids.includes(ctx.b.cells[i].piece!.id)) live.push({ i, matched: true });
   if (live.length === 0) return false;
   // Row-major cells: the smallest index is the topmost, then leftmost.
   const next = live.reduce((top, s) => (s.i < top.i ? s : top));
-  ctx.fuse.unshift(...live.filter((s) => s !== next).map((s) => s.id));
+  const rest = live.filter((s) => s !== next);
+  ctx.fuse.unshift(...rest.flatMap((s) => (s.matched ? [] : [ctx.b.cells[s.i].piece!.id])));
+  for (const s of rest) if (s.matched) light(ctx, s.i, 0);
   unchain(ctx, next.i, 0);
   removePiece(ctx, next.i, 0, -1, true);
   return true;
@@ -185,6 +193,7 @@ function newCtx(b: Board, step: Step, scorer: TargetScorer, cascadeLevel: number
     layers: new Map(),
     popups: [],
     queue: [],
+    matched: [],
     pending: [],
     crateHits: new Set(),
     fuse,
@@ -231,8 +240,10 @@ function clearGroups(ctx: Ctx, groups: MatchGroup[], swap: PendingSwap | null): 
         cell.chain--;
         markLayer(ctx, i, 0);
         points += LAYER_POINTS;
+      } else if (cell.piece && cell.piece.special !== Special.None) {
+        ctx.matched.push(i);
       } else if (cell.piece) {
-        points += removePiece(ctx, i, 0, special ? special.id : -1, true);
+        points += removePiece(ctx, i, 0, special ? special.id : -1, false);
       }
       points += hitCratesAround(ctx, i, 0);
     }
