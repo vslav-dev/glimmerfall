@@ -15,6 +15,8 @@ export const Ease = {
 interface Tween {
   /** false for a pause: it moves nothing on screen */
   visual: boolean;
+  /** slow, calm motion that looks the same at a low frame rate */
+  calm: boolean;
   /** negative while waiting for the delay */
   elapsed: number;
   duration: number;
@@ -26,6 +28,8 @@ interface Tween {
 export interface TweenOptions {
   delay?: number;
   ease?: EaseFn;
+  /** slow, calm motion (a hint breathing): drawn at a low frame rate while nothing else moves */
+  calm?: boolean;
 }
 
 /**
@@ -48,6 +52,11 @@ export class Tweens {
     return this.list.some((t) => t.visual && t.elapsed >= 0);
   }
 
+  /** Something on screen moves at full pace: a visual tween past its delay that is not calm. */
+  public get moving(): boolean {
+    return this.list.some((t) => t.visual && !t.calm && t.elapsed >= 0);
+  }
+
   public run(duration: number, update: (k: number) => void, options: TweenOptions = {}): Promise<void> {
     return this.add(true, duration, update, options);
   }
@@ -61,6 +70,7 @@ export class Tweens {
     return new Promise((resolve) => {
       this.list.push({
         visual,
+        calm: options.calm ?? false,
         elapsed: -(options.delay ?? 0),
         duration: Math.max(1, duration),
         ease: options.ease ?? Ease.outQuad,

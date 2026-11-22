@@ -241,7 +241,6 @@ body {
   inset: 0;
   border-radius: 99px;
   background: linear-gradient(90deg, var(--accent-2), var(--accent) 65%, var(--gold));
-  box-shadow: 0 0 12px var(--glow);
   clip-path: inset(0 100% 0 0 round 99px);
   transition: clip-path 0.45s ease-out;
 }
@@ -829,7 +828,11 @@ body {
 }
 
 .booster.ready.usable::before {
-  animation: booster-breathe 2.4s ease-in-out infinite;
+  /*
+   * A few breaths after each move, then the halo rests lit: an endless animation kept the compositor
+   * redrawing the whole screen 120 times a second while the player thought.
+   */
+  animation: booster-breathe 2.4s ease-in-out 3;
 }
 
 #boosters.calm .booster::before {

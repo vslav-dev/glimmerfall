@@ -1,14 +1,28 @@
 import { autoDetectRenderer, Container, type Renderer, Sprite } from 'pixi.js';
-import { countDraws, perfContext, recordFrame, recordGpuLag, recordIdleFrame } from '@/telemetry/perf';
+import { countDraws, perfContext, perfFlag, recordFrame, recordGpuLag, recordIdleFrame } from '@/telemetry/perf';
 import { track } from '@/telemetry/telemetry';
 import { Tweens } from '@/view/tween';
 
-/** Quality steps the scene falls back through when frames get slow. */
+/**
+ * Quality steps the scene falls back through when frames get slow. `frameMs` is the least time between drawn
+ * frames: a 120 Hz screen that cannot keep up first draws every other frame (a steady 60 fps), keeping the
+ * resolution sharp; only then does the resolution drop. A screen of 60 Hz or less skips that step.
+ */
 const QUALITY = [
-  { maxResolution: 2, particles: 1 },
-  { maxResolution: 1.5, particles: 0.6 },
-  { maxResolution: 1, particles: 0.35 },
+  { maxResolution: 2, particles: 1, frameMs: 0 },
+  { maxResolution: 2, particles: 1, frameMs: 1000 / 60 },
+  { maxResolution: 1.5, particles: 0.6, frameMs: 1000 / 60 },
+  { maxResolution: 1, particles: 0.35, frameMs: 1000 / 60 },
 ];
+/** A screen whose frames come faster than this is a high-refresh one, worth the 60 fps step. */
+const HIGH_REFRESH_MS = 12;
+/**
+ * Slow, calm motion alone on screen (a hinted move breathing, the aim pulsing) is drawn at ~30 fps:
+ * it looks the same, and the GPU and the compositor rest while the player thinks.
+ */
+const CALM_FRAME_MS = 1000 / 30;
+/** vsync jitter allowed when a frame is due: one at 16.4 ms still counts as the 60 fps one */
+const FRAME_SLACK_MS = 3;
 const SLOW_FRAME_MS = 24;
 const SLOW_FRAMES_TO_DOWNGRADE = 40;
 /** game time runs this fast during a hitstop */
@@ -16,6 +30,13 @@ const HITSTOP_SPEED = 0.06;
 
 /** Called every frame with the elapsed ms; returns whether it still animates. */
 type Updater = (dt: number) => boolean;
+
+interface UpdaterOptions {
+  /** game-time updaters slow down in a hitstop; real-time ones (the camera) keep going */
+  realTime?: boolean;
+  /** slow, calm motion (a pulse): drawn at the calm frame rate while nothing else moves */
+  calm?: boolean;
+}
 
 /**
  * WebGL renderer with an on-demand loop: frames run only while something animates,
@@ -27,8 +48,7 @@ export class Scene {
   public readonly tweens = new Tweens(() => this.request());
   /** called after a quality downgrade, so textures can be rebuilt for the new resolution */
   public onQualityChange: (() => void) | null = null;
-  /** game-time updaters slow down in a hitstop; real-time ones (the camera) keep going */
-  private readonly updaters: { fn: Updater; realTime: boolean }[] = [];
+  private readonly updaters: ({ fn: Updater } & UpdaterOptions)[] = [];
   /** real ms of hitstop left */
   private stopLeft = 0;
   private quality = 0;
@@ -36,13 +56,18 @@ export class Scene {
   private scheduled = false;
   /** the picture changed outside the tweens (or right after some finished): draw the next frame */
   private dirty = true;
-  /** an updater animated in the previous frame: its last change still needs drawing */
+  /** an updater animated in the previous frame (a calm one, apart): its last change still needs drawing */
   private animated = false;
+  private calmAnimated = false;
   /** WebGL2 only: a fence after a drawn frame, to see how many frames behind the GPU runs */
   private readonly gl2: WebGL2RenderingContext | null;
   private fence: { sync: WebGLSync; frame: number } | null = null;
   private drawn = 0;
   private last = 0;
+  /** when the last frame was drawn, to keep the calm and the paced frame rates */
+  private lastDrawn = 0;
+  /** the shortest frame interval seen: tells a high-refresh screen */
+  private fastest = Infinity;
   private width = 1;
   private height = 1;
 
@@ -89,8 +114,8 @@ export class Scene {
     this.request();
   }
 
-  public addUpdater(fn: Updater, realTime = false): void {
-    this.updaters.push({ fn, realTime });
+  public addUpdater(fn: Updater, options: UpdaterOptions = {}): void {
+    this.updaters.push({ fn, ...options });
   }
 
   /** Big hits freeze the game for a moment: everything but the camera nearly stops, so the hit lands. */
@@ -120,15 +145,35 @@ export class Scene {
 
     const gameDt = this.stopLeft > 0 ? dt * HITSTOP_SPEED : dt;
     this.stopLeft = Math.max(0, this.stopLeft - dt);
+    if (interval > 0) this.fastest = Math.min(this.fastest, interval);
     const finished = this.tweens.update(gameDt);
     let animating = false;
-    for (const { fn, realTime } of this.updaters) animating = fn(realTime ? dt : gameDt) || animating;
-    const draw = this.dirty || finished > 0 || animating || this.animated || this.tweens.visual;
-    // What awaited the finished tweens runs after this frame: whatever it changes is drawn in the next one.
-    this.dirty = finished > 0;
-    this.animated = animating;
+    let calmAnimating = false;
+    for (const { fn, realTime, calm } of this.updaters) {
+      if (!fn(realTime ? dt : gameDt)) continue;
+      if (calm) calmAnimating = true;
+      else animating = true;
+    }
+    const moving = this.dirty || finished > 0 || animating || this.animated || this.tweens.moving;
+    const changed = moving || calmAnimating || this.calmAnimated || this.tweens.visual;
+    const calm = changed && !moving;
+    const gap = calm ? CALM_FRAME_MS : QUALITY[this.quality].frameMs;
+    const draw = changed && now - this.lastDrawn >= gap - FRAME_SLACK_MS;
+    if (draw) {
+      // What awaited the finished tweens runs after this frame: whatever it changes is drawn in the next one.
+      this.dirty = finished > 0;
+      this.animated = animating;
+      this.calmAnimated = calmAnimating;
+    } else {
+      // A change held back to keep the frame rate is drawn in the next due frame.
+      this.dirty ||= finished > 0;
+      this.animated ||= animating;
+      this.calmAnimated ||= calmAnimating;
+    }
     const updated = performance.now();
     if (draw) {
+      this.lastDrawn = now;
+      perfFlag('calm', calm);
       this.renderer.render(this.root);
       const rendered = performance.now();
       this.watchGpu();
@@ -137,8 +182,8 @@ export class Scene {
       recordIdleFrame();
     }
 
-    if (this.tweens.active || this.stopLeft > 0 || animating || this.dirty) {
-      if (draw) this.trackSpeed(dt);
+    if (this.tweens.active || this.stopLeft > 0 || animating || calmAnimating || this.dirty || this.animated || this.calmAnimated) {
+      if (draw && !calm) this.trackSpeed(dt);
       this.schedule();
     } else {
       this.last = 0;
@@ -170,10 +215,11 @@ export class Scene {
     this.slowFrames = dt > SLOW_FRAME_MS ? this.slowFrames + 1 : Math.max(0, this.slowFrames - 2);
     if (this.slowFrames < SLOW_FRAMES_TO_DOWNGRADE || this.quality === QUALITY.length - 1) return;
     this.quality++;
+    if (this.quality === 1 && this.fastest >= HIGH_REFRESH_MS) this.quality++;
     this.slowFrames = 0;
     this.renderer.resize(this.width, this.height, this.resolution);
     this.reportSize();
-    track('perf', { kind: 'quality', quality: this.quality, res: this.resolution, t: Math.round(performance.now() / 1000) });
+    track('perf', { kind: 'quality', quality: this.quality, res: this.resolution, frameMs: QUALITY[this.quality].frameMs, t: Math.round(performance.now() / 1000) });
     this.onQualityChange?.();
   }
 
@@ -182,6 +228,7 @@ export class Scene {
     const res = this.resolution;
     perfContext({
       quality: this.quality,
+      frameMs: Math.round(QUALITY[this.quality].frameMs),
       dpr: window.devicePixelRatio,
       res,
       css: [Math.round(this.width), Math.round(this.height)],

@@ -164,10 +164,10 @@ export class BoardView {
     this.particles = new Particles(this.matterLayer, this.lightLayer, this.pool, (name) => this.atlas.get(name), () => scene.request());
     this.kit = this.makeKit();
     scene.addUpdater((dt) => this.particles.update(dt));
-    scene.addUpdater((dt) => this.settleGlide(dt), true);
-    scene.addUpdater((dt) => this.camera.update(dt), true);
-    scene.addUpdater((dt) => this.pulseLit(dt));
-    scene.addUpdater((dt) => this.pulseAim(dt));
+    scene.addUpdater((dt) => this.settleGlide(dt), { realTime: true });
+    scene.addUpdater((dt) => this.camera.update(dt), { realTime: true });
+    scene.addUpdater((dt) => this.pulseLit(dt), { calm: true });
+    scene.addUpdater((dt) => this.pulseAim(dt), { calm: true });
     scene.onQualityChange = () => this.layout(this.width, this.height);
 
     BitmapFont.install({
@@ -337,7 +337,17 @@ export class BoardView {
     for (const i of cells) this.locked.add(i);
     this.hits = 0;
     if (this.selected && cells.has(this.indexOf(this.selected))) this.deselect();
+    // Frames while the board plays out a move: the perf window tells their cost from the calm ones.
+    perfFlag('cascade', true);
+    try {
+      await this.playEvents(events, onEvent, epoch);
+    } finally {
+      perfFlag('cascade', false);
+    }
+    if (epoch === this.epoch) for (const i of cells) this.locked.delete(i);
+  }
 
+  private async playEvents(events: GameEvent[], onEvent: (ev: GameEvent) => void, epoch: number): Promise<void> {
     for (const ev of events) {
       if (epoch !== this.epoch) return;
       onEvent(ev);
@@ -366,7 +376,6 @@ export class BoardView {
           break;
       }
     }
-    if (epoch === this.epoch) for (const i of cells) this.locked.delete(i);
   }
 
   private cellsOf(events: GameEvent[]): Set<number> {
@@ -831,7 +840,7 @@ export class BoardView {
       await this.scene.tweens.run(700, (k) => {
         if (token !== this.hintToken) return;
         for (const s of this.hintSprites()) s.scale.set(1 + Math.sin(k * Math.PI) * 0.14);
-      }, { ease: Ease.linear });
+      }, { ease: Ease.linear, calm: true });
       await this.scene.tweens.wait(500);
     }
   }

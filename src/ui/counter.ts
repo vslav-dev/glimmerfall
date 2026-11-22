@@ -3,6 +3,8 @@ import { perfFlag } from '@/telemetry/perf';
 const ROLL_MS = 450;
 const POP_MS = 420;
 const POP_EASE = 'cubic-bezier(0.2, 1.8, 0.4, 1)';
+/** a rolling number is written at most this often (~60 times a second): a 120 Hz screen gains nothing from more */
+const WRITE_MS = 15;
 
 /** counters rolling right now, for the perf flag */
 let rolling = 0;
@@ -36,12 +38,16 @@ export class Counter {
     }
     this.bump();
     const start = performance.now();
+    let written = start;
     rolling++;
     perfFlag('hudRoll', true);
     const tick = (now: number): void => {
       const k = Math.min(1, (now - start) / ROLL_MS);
       // ease-out cubic: big jumps race first, then settle on the exact value
-      this.render(Math.round(from + (value - from) * (1 - (1 - k) ** 3)));
+      if (k === 1 || now - written >= WRITE_MS) {
+        written = now;
+        this.render(Math.round(from + (value - from) * (1 - (1 - k) ** 3)));
+      }
       if (k < 1) this.frame = requestAnimationFrame(tick);
       else this.stopRolling();
     };
@@ -69,14 +75,18 @@ export class Counter {
   }
 }
 
-/** The pop's size and glow come from the element's CSS (`--bump`, `--bump-glow`), read once. */
+/**
+ * The pop's size and glow come from the element's CSS (`--bump`, `--bump-glow`), read once.
+ * The glow is a drop-shadow filter, not a text-shadow: transform and filter both run on the compositor,
+ * while an animated text-shadow repainted the number on the main thread every frame of every pop.
+ */
 function popFrames(el: HTMLElement): Keyframe[] {
   const style = getComputedStyle(el);
   const scale = style.getPropertyValue('--bump').trim() || '1.3';
   const glow = style.getPropertyValue('--bump-glow').trim() || style.getPropertyValue('--accent').trim() || '#fff';
   return [
-    { offset: 0, transform: 'scale(1)', easing: POP_EASE },
-    { offset: 0.35, transform: `scale(${scale})`, textShadow: `0 0 14px ${glow}, 0 0 4px #fff`, easing: POP_EASE },
-    { offset: 1, transform: 'scale(1)' },
+    { offset: 0, transform: 'scale(1)', filter: 'drop-shadow(0 0 0 transparent) drop-shadow(0 0 0 transparent)', easing: POP_EASE },
+    { offset: 0.35, transform: `scale(${scale})`, filter: `drop-shadow(0 0 7px ${glow}) drop-shadow(0 0 2px #fff)`, easing: POP_EASE },
+    { offset: 1, transform: 'scale(1)', filter: 'drop-shadow(0 0 0 transparent) drop-shadow(0 0 0 transparent)' },
   ];
 }

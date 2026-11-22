@@ -33,4 +33,16 @@ describe('Tweens', () => {
     expect(tweens.update(100)).toBe(1);
     expect(tweens.active).toBe(false);
   });
+
+  it('tells calm motion from motion at full pace', () => {
+    const tweens = new Tweens(() => undefined);
+    void tweens.run(100, () => undefined, { calm: true });
+    expect(tweens.visual).toBe(true);
+    expect(tweens.moving).toBe(false);
+    void tweens.run(50, () => undefined);
+    expect(tweens.moving).toBe(true);
+    tweens.update(60);
+    expect(tweens.moving).toBe(false);
+    expect(tweens.visual).toBe(true);
+  });
 });
