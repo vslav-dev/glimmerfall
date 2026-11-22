@@ -15,6 +15,16 @@ const NOTICE_RELEASES = 20;
 const CHECK_EVERY_MINUTES = 1;
 
 /**
+ * HOW TO WRITE changelog.json LINES. Players read them in the update notice, so every line must be understood
+ * by almost anyone at a glance, a child or a grandparent who just plays:
+ * - Russian, one short sentence, ideally under 50 characters; one change per line, 1–3 lines per release.
+ * - Only what the player sees, hears or does; never how it works inside.
+ * - Everyday words, no game jargon: «бонус», not «спецфишка», «комбо», «каскад»; no «генератор», «телеметрия», «рендер».
+ * - Say the new state, not the old one: «Взрыв идёт оттуда, где ты коснулся», not «…а не оттуда, куда…».
+ * - No numbers, conditions or exceptions unless the player needs them; no «теперь», «улучшен», «оптимизирован» filler.
+ * - Nothing the player would notice? One line «Мелкие улучшения».
+ */
+/**
  * Serves `version.json`: the live version and what the latest releases changed. The game polls it to notice
  * an update. A static file, revalidated with a conditional GET (304 while unchanged): the server does nothing else.
  * The build fails when the version has no changelog entry, so every release says what it changed.

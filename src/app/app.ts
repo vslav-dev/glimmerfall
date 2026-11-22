@@ -287,7 +287,10 @@ export class GameApp {
       const record = this.recordOf(game);
       // An invalid swap leaves the board as it was: the cells are what the player tried.
       if (record) recordMiss(record, game.board, a, b);
-      if (this.running !== game) this.view.armHint();
+      // A miss shows a possible move as soon as the pieces are back; mid-cascade the rest arms the usual wait.
+      void anim.then(() => {
+        if (this.game === game && this.running !== game && this.mode === Mode.Play) this.view.armHint(0);
+      });
       return;
     }
     this.ui.updateHud(game);

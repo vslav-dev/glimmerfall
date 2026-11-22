@@ -799,13 +799,13 @@ export class BoardView {
   // ---------- hints ----------
 
   /**
-   * Starts the idle timer: a possible move pulses when the player hesitates.
+   * Starts the idle timer: a possible move pulses when the player hesitates, or at once (`delay` 0) after a miss.
    * A hint already pulsing stays: only a made move (`cancelHint`) stops it.
    */
-  public armHint(): void {
+  public armHint(delay = HINT_DELAY): void {
     if (this.hinted.length > 0) return;
     window.clearTimeout(this.hintTimer);
-    this.hintTimer = window.setTimeout(() => void this.showHint(), HINT_DELAY);
+    this.hintTimer = window.setTimeout(() => void this.showHint(), delay);
   }
 
   /** A move is pulsing: a swap made now may just follow it. */
