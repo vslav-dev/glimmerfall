@@ -51,15 +51,20 @@ const THEMES = 5;
 const STAR_PATH = 'M12 2.4l2.95 6.07 6.65.95-4.8 4.7 1.13 6.63L12 17.6l-5.93 3.15 1.13-6.63-4.8-4.7 6.65-.95z';
 const starSvg = (cls: string): string => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="${STAR_PATH}"/></svg>`;
 const ICON_SIZE = 72;
-/** A flashed word pops in, holds and drifts up as it fades: opacity and transform only, run by the compositor. */
+/**
+ * A flashed word pops in, holds and drifts up as it fades: opacity and transform only, run by the compositor.
+ * A lone word holds long enough to read; in a fast cascade each next word cuts the previous one short,
+ * so the words change as fast as the cascade goes. The pop and the fade keep their pace, only the hold is long.
+ */
+const FLASH_MS = 1400;
+const FLASH_FADE_MS = 200;
 const FLASH_FRAMES: Keyframe[] = [
   { offset: 0, opacity: 0, transform: 'translate(-50%, -50%) scale(0.5)', easing: 'ease-out' },
-  { offset: 0.2, opacity: 1, transform: 'translate(-50%, -50%) scale(1.12)', easing: 'ease-out' },
-  { offset: 0.35, transform: 'translate(-50%, -50%) scale(1)', easing: 'ease-out' },
-  { offset: 0.8, opacity: 1, easing: 'ease-out' },
+  { offset: 200 / FLASH_MS, opacity: 1, transform: 'translate(-50%, -50%) scale(1.12)', easing: 'ease-out' },
+  { offset: 350 / FLASH_MS, transform: 'translate(-50%, -50%) scale(1)', easing: 'ease-out' },
+  { offset: 1 - FLASH_FADE_MS / FLASH_MS, opacity: 1, easing: 'ease-out' },
   { offset: 1, opacity: 0, transform: 'translate(-50%, -70%) scale(1)' },
 ];
-const FLASH_MS = 1000;
 
 /**
  * DOM layer: menus, cards and the HUD over the canvas. Only transform/opacity animate,
