@@ -77,16 +77,16 @@ export class Counter {
 
 /**
  * The pop's size and glow come from the element's CSS (`--bump`, `--bump-glow`), read once.
- * The glow is a drop-shadow filter, not a text-shadow: transform and filter both run on the compositor,
- * while an animated text-shadow repainted the number on the main thread every frame of every pop.
+ * The glow stays a text-shadow: a drop-shadow filter (0.30.0) put a blurred layer on the GPU for every pop
+ * of every cascade step, and cascades on Mali got ~5× more slow frames (plans/11).
  */
 function popFrames(el: HTMLElement): Keyframe[] {
   const style = getComputedStyle(el);
   const scale = style.getPropertyValue('--bump').trim() || '1.3';
   const glow = style.getPropertyValue('--bump-glow').trim() || style.getPropertyValue('--accent').trim() || '#fff';
   return [
-    { offset: 0, transform: 'scale(1)', filter: 'drop-shadow(0 0 0 transparent) drop-shadow(0 0 0 transparent)', easing: POP_EASE },
-    { offset: 0.35, transform: `scale(${scale})`, filter: `drop-shadow(0 0 7px ${glow}) drop-shadow(0 0 2px #fff)`, easing: POP_EASE },
-    { offset: 1, transform: 'scale(1)', filter: 'drop-shadow(0 0 0 transparent) drop-shadow(0 0 0 transparent)' },
+    { offset: 0, transform: 'scale(1)', easing: POP_EASE },
+    { offset: 0.35, transform: `scale(${scale})`, textShadow: `0 0 14px ${glow}, 0 0 4px #fff`, easing: POP_EASE },
+    { offset: 1, transform: 'scale(1)' },
   ];
 }

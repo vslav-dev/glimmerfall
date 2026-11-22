@@ -48,7 +48,10 @@
   --panel: rgba(20, 24, 70, 0.92);
 }
 
-* {
+/* pseudo-elements too: `*` does not match them, and a bordered ring drawn by one came out larger and off center */
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 

@@ -5,7 +5,7 @@ import { findMoves } from '@/core/moves';
 import { strikeCells } from '@/core/resolve';
 import { BlastKind, type Board, Booster, type GameEvent, NO_COLOR, type Piece, type Pos, Special, type SwapEvent } from '@/core/types';
 import type { SwapInput } from '@/telemetry/attempt';
-import { perfContext, perfCount, perfFlag, timed } from '@/telemetry/perf';
+import { perfContext, perfCount, perfFlag, perfPhase, timed } from '@/telemetry/perf';
 import { FrameName, GEM_TINTS } from '@/view/art';
 import { Atlas } from '@/view/atlas';
 import { Camera } from '@/view/fx/camera';
@@ -43,11 +43,15 @@ const FALL_OVERLAP = 50;
 const FALL_START_SPEED = 0.35;
 const FALL_EASE: EaseFn = (t) => t * (FALL_START_SPEED + (1 - FALL_START_SPEED) * t);
 const SCORE_FONT = 'gf-score';
-/** a removed piece pops this long, a merging one slides this long into its special */
+/**
+ * A removed piece pops this long, a merging one slides this long into its special. The slide starts fast
+ * and settles into place: one that crept off and then shot in felt like a hitch before every special.
+ */
 const POP_END = 140;
-const MERGE_MS = 140;
+const MERGE_MS = 120;
+const MERGE_EASE = Ease.outCubic;
 /** a created special appears once the pieces merged into it */
-const CREATE_DELAY = 140;
+const CREATE_DELAY = MERGE_MS;
 const CREATE_MS = 220;
 /** a clear with this many pieces throws a full burst for each; more pieces share it */
 const FULL_BURSTS = 14;
@@ -343,6 +347,7 @@ export class BoardView {
       await this.playEvents(events, onEvent, epoch);
     } finally {
       perfFlag('cascade', false);
+      perfPhase(null);
     }
     if (epoch === this.epoch) for (const i of cells) this.locked.delete(i);
   }
@@ -350,6 +355,7 @@ export class BoardView {
   private async playEvents(events: GameEvent[], onEvent: (ev: GameEvent) => void, epoch: number): Promise<void> {
     for (const ev of events) {
       if (epoch !== this.epoch) return;
+      perfPhase(phaseOf(ev));
       onEvent(ev);
       switch (ev.type) {
         case 'swap':
@@ -528,7 +534,7 @@ export class BoardView {
               sprite.position.set(sx + (tx - sx) * k, sy + (ty - sy) * k);
               sprite.scale.set(1 - k * 0.4);
             },
-            { delay: at, ease: Ease.inQuad },
+            { delay: at, ease: MERGE_EASE },
           )
           .then(() => sprite.destroy());
         end = Math.max(end, at + MERGE_MS);
@@ -1021,4 +1027,13 @@ function tintOf(color: number): number {
 /** Color of the piece that left `pos` in this step: a blast takes the color of the special that went off. */
 function colorAt(ev: ClearEvent, pos: Pos): number {
   return ev.removed.find((rm) => rm.pos.r === pos.r && rm.pos.c === pos.c)?.color ?? NO_COLOR;
+}
+
+/** What a played event is, for the perf windows: a clear names its specials ("combo:bomb+row", "blast:col"). */
+function phaseOf(ev: GameEvent): string {
+  if (ev.type !== 'clear') return ev.type;
+  const kinds = [...new Set(ev.blasts.map((b) => b.kind))].sort().join('+');
+  if (strikeOf(ev)) return `strike:${kinds}`;
+  if (ev.combo) return `combo:${kinds}`;
+  return kinds ? `blast:${kinds}` : ev.created.length > 0 ? 'create' : 'match';
 }

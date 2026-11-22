@@ -17,6 +17,11 @@ import { track } from '@/telemetry/telemetry';
  * `counts` tally what the board played (blasts by kind, popped pieces), `peaks` the most of something at once
  * (live particles), and the battery says how charged the phone is and whether it charges: a warm, charging phone
  * may be throttled.
+ * Who made a frame late: `work` is the main thread's busy time in the gap before the frame (the previous frame's
+ * update and render, plus `after`: what ran after it until the thread was free — the code awaiting finished
+ * tweens, other frame callbacks, style, layout and paint of the DOM). A slow frame with little work waited on the
+ * GPU or the compositor. `phases` split frames by what the board played (a combo of which specials, a fall,
+ * a strike), and `spikes` keep the longest frames of the window with everything known about them.
  */
 
 type Data = Record<string, unknown>;
@@ -33,6 +38,11 @@ const MAX_GPU_LAG = 5;
 const MIN_FRAMES = 30;
 /** Taps that take longer than this to show their result are reported (the API rounds to 8 ms). */
 const SLOW_INPUT_MS = 40;
+/** frames longer than this are kept as spikes, the longest few per window */
+const SPIKE_MS = SLOW_INTERVALS[1];
+const MAX_SPIKES = 8;
+/** the phase of frames while the board plays nothing */
+const NO_PHASE = 'none';
 
 /** Battery Status API (Chromium), not in the DOM typings. */
 interface BatteryManager extends EventTarget {
@@ -103,6 +113,30 @@ export interface FrameSample {
   sprites: number;
 }
 
+/** A frame as recorded: the sample plus the main thread's work in the gap before it. */
+interface Frame extends FrameSample {
+  /** the previous frame's update and render plus `after` */
+  work: number;
+  /** main-thread time after the previous frame until the thread was free */
+  after: number;
+}
+
+/** One of the longest frames of a window, with what was going on. */
+interface Spike {
+  ms: number;
+  work: number;
+  after: number;
+  late: number;
+  update: number;
+  render: number;
+  sprites: number;
+  fill: number;
+  /** what the board played in this frame and in the one before */
+  phase: string;
+  prev: string;
+  flags: string[];
+}
+
 /** Sums of a group of frames, averaged in the report. */
 class Profile {
   public n = 0;
@@ -111,19 +145,32 @@ class Profile {
   private late = 0;
   private fill = 0;
   private sprites = 0;
+  private work = 0;
+  private after = 0;
 
-  public add(f: FrameSample): void {
+  public add(f: Frame): void {
     this.n++;
     this.update += f.updateMs;
     this.render += f.renderMs;
     this.late += f.lateMs;
     this.fill += f.fill;
     this.sprites += f.sprites;
+    this.work += f.work;
+    this.after += f.after;
   }
 
   public summary(): Data {
     const avg = (v: number): number => round(this.n ? v / this.n : 0);
-    return { n: this.n, update: avg(this.update), render: avg(this.render), late: avg(this.late), fill: avg(this.fill), sprites: avg(this.sprites) };
+    return {
+      n: this.n,
+      update: avg(this.update),
+      render: avg(this.render),
+      late: avg(this.late),
+      work: avg(this.work),
+      after: avg(this.after),
+      fill: avg(this.fill),
+      sprites: avg(this.sprites),
+    };
   }
 }
 
@@ -142,11 +189,14 @@ function newWindow() {
     slowProfile: new Profile(),
     fastProfile: new Profile(),
     late: new Histogram(0.5, 50),
+    after: new Histogram(0.5, 100),
     fill: new Histogram(0.25, 20),
     fillBins: FILL_BINS.map(() => ({ frames: 0, slow: 0 })),
     gpuLag: new Array<number>(MAX_GPU_LAG + 1).fill(0),
     idle: 0,
     flags: new Map<string, { frames: number; slow: number }>(),
+    phases: new Map<string, { frames: number; slow: number; worst: number }>(),
+    spikes: [] as Spike[],
     counts: new Map<string, number>(),
     peaks: new Map<string, number>(),
   };
@@ -162,6 +212,21 @@ let eventsSupported = false;
 let battery: BatteryManager | null = null;
 /** states on right now: each frame counts toward them */
 const flagsOn = new Set<string>();
+/** what the board plays right now, and what it played in the previous drawn frame */
+let phase = NO_PHASE;
+let prevPhase = NO_PHASE;
+/** main-thread work since the previous drawn frame began: its update and render, then `after` once measured */
+let gapWork = 0;
+let gapAfter = 0;
+let afterStart = 0;
+/** a message posted at the end of a frame arrives once the main thread is free: the time in between is `after` */
+const afterChannel = new MessageChannel();
+afterChannel.port1.onmessage = () => {
+  const ms = performance.now() - afterStart;
+  gapAfter = ms;
+  gapWork += ms;
+  win.after.add(ms);
+};
 
 /** Call first thing at startup. Hiding the app sends the open window. */
 export function startPerf(): void {
@@ -188,6 +253,11 @@ export function startPerf(): void {
 export function perfFlag(name: string, on: boolean): void {
   if (on) flagsOn.add(name);
   else flagsOn.delete(name);
+}
+
+/** What the board plays from now on (`null`: nothing); frames are split by it. */
+export function perfPhase(name: string | null): void {
+  phase = name ?? NO_PHASE;
 }
 
 /** Adds `n` to a tally of the open window. */
@@ -221,9 +291,21 @@ export function perfContext(data: Data): void {
   Object.assign(context, data);
 }
 
-export function recordFrame(f: FrameSample): void {
+export function recordFrame(sample: FrameSample): void {
+  const f: Frame = { ...sample, work: gapWork, after: gapAfter };
+  gapWork = sample.updateMs + sample.renderMs;
+  gapAfter = 0;
+  afterStart = performance.now();
+  afterChannel.port2.postMessage(0);
   const { interval } = f;
   const slow = interval > SLOW_MS;
+  const p = win.phases.get(phase) ?? { frames: 0, slow: 0, worst: 0 };
+  p.frames++;
+  if (slow) p.slow++;
+  p.worst = Math.max(p.worst, round(interval));
+  win.phases.set(phase, p);
+  if (interval > SPIKE_MS) keepSpike(f);
+  prevPhase = phase;
   if (interval > 0) {
     win.interval.add(interval);
     SLOW_INTERVALS.forEach((limit, k) => {
@@ -252,6 +334,30 @@ export function recordFrame(f: FrameSample): void {
 /** A frame the loop ran but did not draw: only pauses were running, nothing on screen changed. */
 export function recordIdleFrame(): void {
   win.idle++;
+  // The gap before the next drawn frame starts here: an undrawn frame costs next to nothing.
+  gapWork = 0;
+  gapAfter = 0;
+}
+
+/** Keeps the frame if it is among the window's longest. */
+function keepSpike(f: Frame): void {
+  const spikes = win.spikes;
+  if (spikes.length === MAX_SPIKES && f.interval <= spikes[MAX_SPIKES - 1].ms) return;
+  spikes.push({
+    ms: round(f.interval),
+    work: round(f.work),
+    after: round(f.after),
+    late: round(f.lateMs),
+    update: round(f.updateMs),
+    render: round(f.renderMs),
+    sprites: f.sprites,
+    fill: round(f.fill),
+    phase,
+    prev: prevPhase,
+    flags: [...flagsOn].filter((name) => name !== 'charging'),
+  });
+  spikes.sort((a, b) => b.ms - a.ms);
+  if (spikes.length > MAX_SPIKES) spikes.pop();
 }
 
 /** The GPU finished a frame this many frames after it was submitted. */
@@ -302,6 +408,7 @@ export function flushPerf(reason: string): void {
     render: w.render.summary(),
     draws: { avg: round(w.update.count ? w.draws / w.update.count : 0), max: w.drawsMax },
     late: w.late.summary(),
+    after: w.after.summary(),
     fill: w.fill.summary(),
     profile: { slow: w.slowProfile.summary(), fast: w.fastProfile.summary() },
     fillBins: Object.fromEntries(FILL_BINS.map((edge, k) => [edge === Infinity ? `${FILL_BINS[k - 1]}+` : `<${edge}`, w.fillBins[k]])),
@@ -311,6 +418,8 @@ export function flushPerf(reason: string): void {
     input: eventsSupported ? w.input : null,
     ops: Object.fromEntries([...w.ops].map(([name, o]) => [name, { n: o.n, ms: round(o.ms), max: round(o.max) }])),
     flags: Object.fromEntries(w.flags),
+    phases: Object.fromEntries(w.phases),
+    spikes: w.spikes,
     counts: Object.fromEntries(w.counts),
     peaks: Object.fromEntries(w.peaks),
     battery: batteryState(),
