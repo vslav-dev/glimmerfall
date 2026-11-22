@@ -176,7 +176,8 @@ export type GameEvent =
       /** where the player's two swapped specials met and went off together, or null */
       combo: Pos | null;
     }
-  | { type: 'transform'; pieces: CreatedPiece[] }
+  /** pieces turn into specials: the finale's remaining moves, or a prism spreading its partner (`from`: the prism) */
+  | { type: 'transform'; pieces: CreatedPiece[]; from: Pos | null }
   | { type: 'fall'; moves: FallMove[] }
   | { type: 'shuffle'; pieces: CreatedPiece[] }
   /** finale and last chance: every special left on the calm board is lit */

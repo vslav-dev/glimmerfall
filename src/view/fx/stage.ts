@@ -25,7 +25,7 @@ const STAR_GOLD = 0xffd25e;
 const FIRE = 0xff7a2a;
 const EMBER = 0xffc061;
 const SOOT = 0x3a2a26;
-/** a prism throws at most this many bolts: a whole-board wipe would otherwise draw a hedgehog */
+/** a prism throws at most this many rays: a whole-board wipe would otherwise draw a hedgehog */
 const MAX_BOLTS = 36;
 /** a hit piece swells, then breaks: particles fly at the break */
 const POP_MS = 140;
@@ -56,7 +56,7 @@ export interface FxKit {
 
 /**
  * The look of a blast going off now. `tint` is the color of the special that went off;
- * `delay` tells when its wave reaches a cell, from now, so bolts and rings arrive with the pops.
+ * `delay` tells when its wave reaches a cell, from now, so rays and rings arrive with the pops.
  */
 export function blastFx(kit: FxKit, b: Blast, tint: number, power: number, delay: (p: Pos) => number): void {
   switch (b.kind) {
@@ -171,7 +171,7 @@ function nudge(kit: FxKit, s: Sprite, dx: number, dy: number): void {
   }, { ease: Ease.linear });
 }
 
-/** A colored ring, then a bolt to every piece of the color, each as the wave gets there. */
+/** A colored ring, then a ray to every piece of the color, each as the wave gets there. */
 function prismFx(kit: FxKit, b: Blast, tint: number, delay: (p: Pos) => number): void {
   const ox = kit.x(b.origin.c);
   const oy = kit.y(b.origin.r);
@@ -183,20 +183,29 @@ function prismFx(kit: FxKit, b: Blast, tint: number, delay: (p: Pos) => number):
   });
   const step = Math.ceil(b.cells.length / MAX_BOLTS);
   b.cells.forEach((p, k) => {
-    if (k % step === 0) kit.after(delay(p), () => bolt(kit, ox, oy, kit.x(p.c), kit.y(p.r), tint));
+    if (k % step !== 0) return;
+    kit.after(delay(p), () => {
+      ray(kit, ox, oy, kit.x(p.c), kit.y(p.r), tint, 0);
+      flash(kit, kit.x(p.c), kit.y(p.r), 0.9, tint);
+    });
   });
 }
 
-function bolt(kit: FxKit, ox: number, oy: number, tx: number, ty: number, tint: number): void {
+/**
+ * A ray from a prism to a piece: a tinted glow round a white core that shoots out over `travel` ms
+ * behind a bright head (0: there at once), then thins out.
+ */
+export function ray(kit: FxKit, ox: number, oy: number, tx: number, ty: number, tint: number, travel: number): void {
   const length = Math.hypot(tx - ox, ty - oy) / kit.cell;
   const rotation = Math.atan2(ty - oy, tx - ox);
-  light(kit, FrameName.Beam, ox, oy, tint, 170, (s, k) => {
-    s.anchor.set(0, 0.5);
-    s.rotation = rotation;
-    s.scale.set(length, 0.3 * (1 - k));
-    s.alpha = 1 - k;
-  });
-  flash(kit, tx, ty, 0.9, tint);
+  const run = Math.max(1, travel);
+  beam(kit, ox, oy, rotation, length, run, 0.8, tint, 0.75);
+  beam(kit, ox, oy, rotation, length, run, 0.28, WHITE, 1);
+  if (travel <= 0) return;
+  light(kit, FrameName.Glow, ox, oy, tint, travel, (s, k) => {
+    s.position.set(ox + (tx - ox) * k, oy + (ty - oy) * k);
+    s.scale.set(1);
+  }, Ease.linear);
 }
 
 // ---------- boosters ----------

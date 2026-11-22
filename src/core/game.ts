@@ -210,7 +210,7 @@ export function startFinale(state: GameState): GameEvent[] {
   const pieces = convertForFinale(state.board, state.movesLeft);
   state.movesLeft = 0;
   state.finale = FINALE_ROUNDS;
-  return pieces.length > 0 ? [{ type: 'transform', pieces }] : [];
+  return pieces.length > 0 ? [{ type: 'transform', pieces, from: null }] : [];
 }
 
 export function addExtraMoves(state: GameState): void {

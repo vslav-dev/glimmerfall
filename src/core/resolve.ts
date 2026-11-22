@@ -497,7 +497,10 @@ function runCombo(ctx: Ctx, center: number, otherCell: number): void {
   COMBOS[key]?.(ctx, center);
 }
 
-/** The partner's color turns into copies of it, all lit: they go off one by one, nearest to the prism first. */
+/**
+ * The partner's color turns into copies of it, all lit: they go off one by one, nearest to the prism first.
+ * The prism's own blast hits nothing: the turned pieces are its work, shown as the transform.
+ */
 function spreadSpecial(ctx: Ctx, origin: number, partner: Piece): void {
   const o = posOf(ctx.b, origin);
   const distance = (i: number): number => {
@@ -515,11 +518,11 @@ function spreadSpecial(ctx: Ctx, origin: number, partner: Piece): void {
     }
     return { pos: posOf(ctx.b, i), piece };
   });
-  ctx.events.push({ type: 'transform', pieces });
+  ctx.events.push({ type: 'transform', pieces, from: o });
   ctx.blasts.push({
     kind: BlastKind.Prism,
     origin: o,
-    cells: targets.map((i) => posOf(ctx.b, i)),
+    cells: [],
     order: 0,
     color: partner.color,
   });

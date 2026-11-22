@@ -11,7 +11,7 @@ import { Atlas } from '@/view/atlas';
 import { Camera } from '@/view/fx/camera';
 import { blastPower, cascadeBoost, feel, METEOR_HITS } from '@/view/fx/impact';
 import { SpritePool } from '@/view/fx/pool';
-import { blastFx, comboCharge, createFx, flash, type FxKit, land, type Layer, layerFx, popPiece, strikeFall, WHITE } from '@/view/fx/stage';
+import { blastFx, comboCharge, createFx, flash, type FxKit, land, type Layer, layerFx, popPiece, ray, strikeFall, WHITE } from '@/view/fx/stage';
 import { Fx, FxSwitches } from '@/view/fx/switches';
 import { planClear, strikeOf } from '@/view/fx/timeline';
 import { Particles } from '@/view/particles';
@@ -25,6 +25,7 @@ type Writable<T> = { -readonly [K in keyof T]: T[K] };
 type ClearEvent = Extract<GameEvent, { type: 'clear' }>;
 type FallEvent = Extract<GameEvent, { type: 'fall' }>;
 type PiecesEvent = Extract<GameEvent, { type: 'transform' | 'shuffle' }>;
+type TransformEvent = Extract<GameEvent, { type: 'transform' }>;
 type LightEvent = Extract<GameEvent, { type: 'light' }>;
 
 const MAX_CELL = 84;
@@ -52,6 +53,12 @@ const MERGE_MS = 120;
 const MERGE_EASE = Ease.outCubic;
 /** a created special appears once the pieces merged into it */
 const CREATE_DELAY = MERGE_MS;
+/** pieces turn into specials one after another this often, nearest to the prism first */
+const TURN_STEP = 45;
+/** a turned piece settles from its swell this long */
+const TURN_MS = 220;
+/** a prism's ray takes this long to reach the piece it turns */
+const RAY_MS = 90;
 const CREATE_MS = 220;
 /** a clear with this many pieces throws a full burst for each; more pieces share it */
 const FULL_BURSTS = 14;
@@ -652,17 +659,32 @@ export class BoardView {
     return halo;
   }
 
-  private async playTransform(ev: PiecesEvent): Promise<void> {
-    const jobs = ev.pieces.map((p, k) => {
+  /**
+   * Pieces turn one by one. A spreading prism shoots a ray at each and it turns, lit, as the ray lands;
+   * the step ends with the last turn, so the turned specials start going off right after.
+   */
+  private async playTransform(ev: TransformEvent): Promise<void> {
+    const from = ev.from;
+    const rays = from !== null && this.fx.on(Fx.Prism);
+    const travel = rays ? RAY_MS : 0;
+    let end = 0;
+    ev.pieces.forEach((p, k) => {
       const sprite = this.sprites.get(p.piece.id);
-      if (!sprite) return Promise.resolve();
-      return this.scene.tweens.wait(k * 45).then(() => {
+      if (!sprite) return;
+      const at = k * TURN_STEP;
+      const tint = tintOf(p.piece.color);
+      if (rays) this.after(at, () => ray(this.kit, this.x(from.c), this.y(from.r), sprite.x, sprite.y, tint, travel));
+      this.after(at + travel, () => {
         sprite.texture = this.pieceTexture(p.piece);
-        flash(this.kit, sprite.x, sprite.y, 1.4, WHITE);
-        return this.scene.tweens.run(220, (t) => sprite.scale.set(1.35 - 0.35 * t), { ease: Ease.outQuad });
+        if (rays) flash(this.kit, sprite.x, sprite.y, 1.6, tint);
+        // Lighting flashes white; a finale piece is not lit yet and flashes on its own.
+        if (from !== null) this.light(p.piece.id);
+        else flash(this.kit, sprite.x, sprite.y, 1.4, WHITE);
       });
+      void this.scene.tweens.run(TURN_MS, (t) => sprite.scale.set(1.35 - 0.35 * t), { delay: at + travel, ease: Ease.outQuad });
+      end = at + travel;
     });
-    await Promise.all(jobs);
+    await this.scene.tweens.wait(end + (from !== null ? 0 : TURN_MS));
   }
 
   private async playShuffle(ev: PiecesEvent): Promise<void> {
