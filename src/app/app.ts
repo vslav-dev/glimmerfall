@@ -1,5 +1,6 @@
 import { EARN, spend, stock, winGain, withGain } from '@/app/boosters';
-import { type Attempt, BoardSize, type CurrentLevel, type SaveData, defaultSave, loadSave, persist, randomSeed } from '@/app/save';
+import { type Attempt, BoardSize, type CurrentLevel, type SaveData, defaultSave, flushSaves, loadSave, persist, randomSeed } from '@/app/save';
+import { type Update, UpdateWatch } from '@/app/updates';
 import { AudioBus } from '@/audio/audio';
 import { chosen, VARIANTS } from '@/audio/sounds';
 import { Sfx } from '@/audio/synth';
@@ -16,7 +17,8 @@ import { observeMove, observeOutcome, twinOf } from '@/player/model';
 import { updateThreeStars } from '@/player/stars';
 import { AttemptEnd, type AttemptRecord, newRecord, recordMiss, recordMove, recordStep, recordStrike, type SwapInput, trackAttempt } from '@/telemetry/attempt';
 import { flushPerf, perfContext, timed } from '@/telemetry/perf';
-import { exitApp, Haptic, haptic, onBackButton, onHidden, onVisible, setFullscreen, setHapticsEnabled } from '@/platform/platform';
+import { exitApp, Haptic, haptic, isNative, onBackButton, onHidden, onVisible, setFullscreen, setHapticsEnabled } from '@/platform/platform';
+import { track } from '@/telemetry/telemetry';
 import { BOOSTER_FOOTER, BoosterBar } from '@/ui/boosterBar';
 import { Action, Ui } from '@/ui/ui';
 import { S } from '@/ui/strings';
@@ -35,6 +37,8 @@ const Mode = {
   Finale: 'finale',
   Won: 'won',
   Lost: 'lost',
+  /** the update notice is open */
+  Update: 'update',
 } as const;
 type Mode = (typeof Mode)[keyof typeof Mode];
 
@@ -82,6 +86,10 @@ export class GameApp {
   private aiming: Booster | null = null;
   /** moves left when the level was won: what the star charges from once the finale used them up */
   private winMoves: number | null = null;
+  /** a newer build is live, once noticed */
+  private update: Update | null = null;
+  /** where the update notice returns to */
+  private updateReturn: Mode = Mode.Title;
   /** `?debug` in the URL shows level and difficulty numbers for tuning, and fills the boosters at each level */
   private readonly debugEl = new URLSearchParams(location.search).has('debug') ? createDebugEl() : null;
 
@@ -121,6 +129,8 @@ export class GameApp {
     this.ui.setTheme(this.save.level);
     this.showTitle();
     if (!this.save.current) void this.drafts.get(this.draftRequest(this.save.level));
+    // The web build updates by reloading; a native shell ships its files and updates through its store.
+    if (!isNative) new UpdateWatch(__APP_VERSION__, (update) => this.onUpdate(update)).start();
   }
 
   // ---------- flow ----------
@@ -135,7 +145,7 @@ export class GameApp {
     this.view.clear();
     this.ui.hideHud();
     this.boosters.hide();
-    this.ui.showTitle(this.save.level, this.save.current?.attempt != null);
+    this.ui.showTitle(this.save.level, this.save.current?.attempt != null, this.update !== null);
   }
 
   /** The level to play now; a new one is built when the saved one is already won. The next one is built meanwhile. */
@@ -206,6 +216,38 @@ export class GameApp {
     this.announce(game, current.fails);
     // A save made mid-cascade or right after the last move resumes from there.
     void this.run(game);
+  }
+
+  /** A newer build is live: its button shows under the board, and on the title screen. */
+  private onUpdate(update: Update): void {
+    this.update = update;
+    track('update', { event: 'found', to: update.version });
+    this.boosters.showUpdate();
+    if (this.mode === Mode.Title) this.showTitle();
+  }
+
+  /** The notice: what the new version brings. From play it pauses the level; "later" goes back where it was. */
+  private openUpdate(): void {
+    if (!this.update || (this.mode !== Mode.Play && this.mode !== Mode.Title)) return;
+    this.updateReturn = this.mode;
+    if (this.mode === Mode.Play) this.pause();
+    this.mode = Mode.Update;
+    this.ui.showUpdate(__APP_VERSION__, this.update);
+  }
+
+  private closeUpdate(): void {
+    if (this.mode !== Mode.Update) return;
+    if (this.updateReturn === Mode.Play) this.resume();
+    else this.showTitle();
+  }
+
+  /** Reloads into the new build once the save is written: a level in progress resumes where it was. */
+  private async applyUpdate(): Promise<void> {
+    track('update', { event: 'applied', to: this.update?.version ?? null });
+    flushPerf('update');
+    this.persist();
+    await flushSaves();
+    location.reload();
   }
 
   /** A new mechanic explains itself once; otherwise a short flash names the level. */
@@ -500,6 +542,15 @@ export class GameApp {
       case Action.Goals:
         if (this.mode === Mode.Play) this.showGoals();
         break;
+      case Action.Update:
+        this.openUpdate();
+        break;
+      case Action.UpdateLater:
+        this.closeUpdate();
+        break;
+      case Action.ApplyUpdate:
+        await this.applyUpdate();
+        break;
       case Action.Star:
         this.toggleAim(Booster.Star);
         break;
@@ -656,6 +707,9 @@ export class GameApp {
       case Mode.Won:
       case Mode.Lost:
         await this.onAction(Action.Menu);
+        break;
+      case Mode.Update:
+        this.closeUpdate();
         break;
       case Mode.Title:
         exitApp();

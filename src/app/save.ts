@@ -132,6 +132,11 @@ export function persist(data: SaveData): void {
   queue = queue.then(() => saveText(KEY, text)).catch(() => undefined);
 }
 
+/** Resolves once every save asked for so far is written: before a reload, nothing may be lost. */
+export function flushSaves(): Promise<void> {
+  return queue;
+}
+
 /** A random 32-bit seed, unsigned. */
 export function randomSeed(): number {
   return crypto.getRandomValues(new Uint32Array(1))[0];

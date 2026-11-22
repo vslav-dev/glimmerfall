@@ -294,7 +294,7 @@ function matchHit(ctx: Ctx, i: number, order: number): number {
   return hit(ctx, i, order) + hitCratesAround(ctx, i, order);
 }
 
-/** A meteor's hit: every layer in the cell breaks at once and the piece goes; a special is lit instead. */
+/** A booster's hit: every layer in the cell breaks at once and the piece goes; a special is lit instead. */
 function smash(ctx: Ctx, i: number, order: number): number {
   const cell = ctx.b.cells[i];
   if (!cell.exists) return 0;
@@ -408,7 +408,7 @@ function wipeColor(ctx: Ctx, origin: number, color: number, order: number): void
 
 /** What a booster strike does at its cell. A new booster = one entry here + its looks. */
 const STRIKES: Record<Booster, (ctx: Ctx, s: Strike) => void> = {
-  [Booster.Star]: (ctx, s) => blast(ctx, BlastKind.Star, s.at, strikeCells(ctx.b, Booster.Star, s.at), 0),
+  [Booster.Star]: (ctx, s) => blast(ctx, BlastKind.Star, s.at, strikeCells(ctx.b, Booster.Star, s.at), 0, smash),
   [Booster.Meteor]: (ctx, s) => blast(ctx, BlastKind.Meteor, s.at, strikeCells(ctx.b, Booster.Meteor, s.at), 0, smash),
 };
 

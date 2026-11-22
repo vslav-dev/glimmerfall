@@ -52,6 +52,13 @@ const METEOR_ICON = `<svg viewBox="0 0 48 48" aria-hidden="true">
 
 const ICONS: Record<Booster, string> = { [Booster.Star]: STAR_ICON, [Booster.Meteor]: METEOR_ICON };
 
+/** An arrow rising out of a ring, a spark beside it: something new is waiting. */
+const UPDATE_ICON = `<svg viewBox="0 0 48 48" aria-hidden="true">
+  <circle cx="24" cy="24" r="15" fill="none" stroke="currentColor" stroke-width="3" stroke-dasharray="70 25" stroke-linecap="round" transform="rotate(-60 24 24)"/>
+  <path d="M24 32V16M17 22.5 24 15.5 31 22.5" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M38 6l1.4 3.6L43 11l-3.6 1.4L38 16l-1.4-3.6L33 11l3.6-1.4z" fill="#fff"/>
+</svg>`;
+
 /**
  * The two booster buttons under the board, at its right edge. Each icon fills with color from below as its
  * charge grows, with no numbers: the player reads how far it is. A ready booster glows; the star shows its
@@ -60,13 +67,14 @@ const ICONS: Record<Booster, string> = { [Booster.Star]: STAR_ICON, [Booster.Met
 export class BoosterBar {
   private readonly glide: Glide;
   private readonly buttons: Record<Booster, BoosterButton>;
+  private readonly updateEl: HTMLElement;
 
   public constructor(
     private readonly el: HTMLElement,
     onCharged: () => void,
   ) {
     this.glide = new Glide(el);
-    el.innerHTML = Object.values(Booster)
+    el.innerHTML = `<button class="update-btn" data-action="${Action.Update}" aria-label="${S.update.button}" hidden>${UPDATE_ICON}</button>` + Object.values(Booster)
       .map((b) => {
         const pips = EARN[b].max > 1 ? `<span class="pips">${'<i></i>'.repeat(EARN[b].max)}</span>` : '';
         return `<button class="booster ${b}" data-action="${ACTIONS[b]}" aria-label="${S.boosterNames[b]}">
@@ -79,6 +87,7 @@ export class BoosterBar {
         </button>`;
       })
       .join('');
+    this.updateEl = el.querySelector<HTMLElement>('.update-btn')!;
     const button = (b: Booster): BoosterButton => new BoosterButton(el.querySelector<HTMLElement>(`.booster.${b}`)!, onCharged);
     this.buttons = { [Booster.Star]: button(Booster.Star), [Booster.Meteor]: button(Booster.Meteor) };
   }
@@ -107,6 +116,13 @@ export class BoosterBar {
       button.el.classList.toggle('usable', usable);
       button.el.classList.toggle('aiming', aiming === b);
     }
+  }
+
+  /** A new version is out: its button appears at the bar's left end, with one pop to catch the eye. */
+  public showUpdate(): void {
+    if (!this.updateEl.hidden) return;
+    this.updateEl.hidden = false;
+    this.updateEl.animate([{ transform: 'scale(0)', opacity: 0, easing: BURST_EASE }, { transform: 'scale(1)', opacity: 1 }], BURST_MS);
   }
 
   /** The effects menu can stop a ready button's breathing halo. */

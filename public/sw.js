@@ -17,6 +17,8 @@ self.addEventListener('fetch', (event) => {
   const request = event.request;
   const url = new URL(request.url);
   if (request.method !== 'GET' || url.origin !== location.origin) return;
+  // The update check asks the server itself every time; a cached answer would hide the update.
+  if (url.pathname.endsWith('/version.json')) return;
 
   if (!url.pathname.includes('/assets/')) {
     event.respondWith(

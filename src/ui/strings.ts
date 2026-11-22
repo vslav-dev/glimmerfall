@@ -121,6 +121,14 @@ export const S = {
   /** a tap on a booster not charged yet says how it charges */
   boosterHint: { star: 'Копится из оставшихся ходов', meteor: 'Копится за три звезды' } satisfies Record<Booster, string>,
   aim: { star: 'Куда упадёт звезда?', meteor: 'Куда ударит метеорит?' } satisfies Record<Booster, string>,
+  update: {
+    button: 'Обновление',
+    title: 'Вышло обновление',
+    versions: (current: string, next: string): string => `У вас версия ${current}, новая — ${next}`,
+    release: (version: string, date: string): string => `${version} · ${date.split('-').reverse().join('.')}`,
+    apply: 'Обновить',
+    later: 'Позже',
+  },
   on: 'Вкл',
   off: 'Выкл',
 } as const;

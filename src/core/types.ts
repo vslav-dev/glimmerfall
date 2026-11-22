@@ -100,7 +100,7 @@ export const BlastKind = {
   Col: 'col',
   Bomb: 'bomb',
   Prism: 'prism',
-  /** a falling star the player aimed: the cell and the four around it, one layer each */
+  /** a falling star the player aimed: the cell and the four around it, every layer at once */
   Star: 'star',
   /** a meteor the player aimed: every layer in its crater breaks at once */
   Meteor: 'meteor',

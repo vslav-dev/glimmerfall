@@ -242,12 +242,14 @@ describe('boosters', () => {
     expect(canStrike(game)).toBe(true);
   });
 
-  it('the star takes its cell and the four around it, one layer each', () => {
+  it('the star takes its cell and the four around it, every layer at once', () => {
     const game = calm();
     game.board.cells.forEach((cell) => (cell.ice = 2));
+    game.board.cells[indexOf(game.board, 3, 3)].chain = 3;
     strike(game, Booster.Star, { r: 3, c: 3 });
     advance(game);
-    const cracked = game.board.cells.flatMap((cell, i) => (cell.ice === 1 ? [i] : []));
+    expect(game.board.cells[indexOf(game.board, 3, 3)].chain).toBe(0);
+    const cracked = game.board.cells.flatMap((cell, i) => (cell.ice === 0 ? [i] : []));
     expect(cracked.sort((a, b) => a - b)).toEqual([indexOf(game.board, 2, 3), indexOf(game.board, 3, 2), indexOf(game.board, 3, 3), indexOf(game.board, 3, 4), indexOf(game.board, 4, 3)]);
   });
 

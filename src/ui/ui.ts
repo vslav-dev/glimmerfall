@@ -2,6 +2,7 @@ import { chosen, type SoundChoice, VARIANTS } from '@/audio/sounds';
 import { Sfx } from '@/audio/synth';
 import { type GameState, type LevelDef, type Objective, ObjectiveKind, Special } from '@/core/types';
 import { BoardSize, type Settings } from '@/app/save';
+import type { Update } from '@/app/updates';
 import { DIFFICULTIES } from '@/player/difficulty';
 import { FrameName, frameDataUrl } from '@/view/art';
 import { perfFlag } from '@/telemetry/perf';
@@ -39,6 +40,9 @@ export const Action = {
   ToggleEffect: 'toggle-effect',
   Star: 'use-star',
   Meteor: 'use-meteor',
+  Update: 'update',
+  UpdateLater: 'update-later',
+  ApplyUpdate: 'apply-update',
 } as const;
 export type Action = (typeof Action)[keyof typeof Action];
 
@@ -116,7 +120,7 @@ export class Ui {
 
   // ---------- screens ----------
 
-  public showTitle(level: number, resumable: boolean): void {
+  public showTitle(level: number, resumable: boolean, update: boolean): void {
     const gems = [0, 1, 2, 3, 4, 5]
       .map((k) => `<img class="float-gem g${k}" src="${this.icon(FrameName.gem(k, Special.None))}" alt="">`)
       .join('');
@@ -128,6 +132,7 @@ export class Ui {
         <button class="btn primary big" data-action="${Action.Play}">${resumable ? S.continue : S.play}</button>
         <p class="sub">${S.level(level)}</p>
         <p class="version">${S.version(__APP_VERSION__)}</p>
+        ${update ? `<button class="btn ghost update-link" data-action="${Action.Update}">✨ ${S.update.button}</button>` : ''}
         <button class="btn icon corner" data-action="${Action.Settings}" aria-label="${S.settings}">⚙</button>
       </div>`,
       'title',
@@ -157,6 +162,22 @@ export class Ui {
         ${goals}
         ${blockers}
         <button class="btn primary big" data-action="${Action.Resume}">${S.gotIt}</button>
+      </div>`,
+    );
+  }
+
+  /** What the new version brings, release by release since the one running here. */
+  public showUpdate(current: string, update: Update): void {
+    const releases = update.releases
+      .map((r) => `<div class="release"><h3>${S.update.release(r.version, r.date)}</h3><ul>${r.changes.map((c) => `<li>${escapeHtml(c)}</li>`).join('')}</ul></div>`)
+      .join('');
+    this.show(
+      `<div class="card update">
+        <h2>${S.update.title}</h2>
+        <p>${S.update.versions(current, update.version)}</p>
+        <div class="releases">${releases}</div>
+        <button class="btn primary big" data-action="${Action.ApplyUpdate}">${S.update.apply}</button>
+        <button class="btn ghost" data-action="${Action.UpdateLater}">${S.update.later}</button>
       </div>`,
     );
   }
@@ -435,6 +456,10 @@ export class Ui {
     }
     return url;
   }
+}
+
+function escapeHtml(text: string): string {
+  return text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 }
 
 function wait(ms: number): Promise<void> {
