@@ -1,4 +1,4 @@
-import type { SoundChoice } from '@/audio/sounds';
+import { DEFAULTS_ID, type SoundChoice } from '@/audio/sounds';
 import type { GameState } from '@/core/types';
 import type { LevelDraft } from '@/gen/generator';
 import { Difficulty } from '@/player/difficulty';
@@ -22,6 +22,8 @@ export interface Settings {
   difficulty: Difficulty;
   /** debug sound menu: the variant picked for each sound */
   sounds: SoundChoice;
+  /** the sound defaults those picks were made over */
+  soundDefaults: string;
   /** debug effects menu: effects switched off */
   effects: FxChoice;
 }
@@ -81,6 +83,7 @@ export function defaultSave(): SaveData {
       boardSize: BoardSize.Max,
       difficulty: Difficulty.Normal,
       sounds: {},
+      soundDefaults: DEFAULTS_ID,
       effects: {},
     },
     current: null,
@@ -93,6 +96,11 @@ export async function loadSave(): Promise<SaveData> {
   const defaults = defaultSave();
   // Settings merge one level deeper: a setting added later gets its default in an older save.
   const settings = { ...defaults.settings, ...data.settings };
+  // New sound defaults reach everyone: picks made over older ones (or before they were tracked) start over.
+  if (data.settings.soundDefaults !== DEFAULTS_ID) {
+    settings.sounds = {};
+    settings.soundDefaults = DEFAULTS_ID;
+  }
   if (data.version < VERSION) {
     // Before v3 the bars stayed visible by default; v3 turned fullscreen on for everyone.
     if (data.version < 3) settings.fullscreen = true;

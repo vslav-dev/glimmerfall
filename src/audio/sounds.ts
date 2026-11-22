@@ -40,7 +40,7 @@ const DEFAULTS: Record<Sfx, string> = {
   [Sfx.Bomb]: '01-punch',
   [Sfx.Prism]: '04-glass-ring',
   [Sfx.Spark]: '08-glass',
-  [Sfx.Ice]: '01-glass-light',
+  [Sfx.Ice]: Variant.Synth,
   [Sfx.Crate]: '01-wood-light',
   [Sfx.Chain]: '04-metal-heavy',
   [Sfx.Shuffle]: '01-card-fan',
@@ -48,6 +48,9 @@ const DEFAULTS: Record<Sfx, string> = {
   [Sfx.Win]: '10-confirm',
   [Sfx.Lose]: '10-error',
 };
+
+/** Changes with any default: picks a save made over other defaults start over from these. */
+export const DEFAULTS_ID = JSON.stringify(DEFAULTS);
 
 /** The variant a sound plays: the picked one, else the default; the first one when that is gone too. */
 export function chosen(choice: SoundChoice, id: Sfx): string {
