@@ -152,7 +152,7 @@ export class Ui {
   public showWin(stars: number, score: number): void {
     // Every slot shows a dashed outline at once; earned stars fly in over it.
     const starEls = [1, 2, 3]
-      .map((k) => `<span class="star-slot" style="--i:${k}">${starSvg('outline')}${k <= stars ? starSvg('earned') : ''}</span>`)
+      .map((k) => `<span class="star-slot${k <= stars ? ' won' : ''}" style="--i:${k}">${starSvg('outline')}${k <= stars ? starSvg('earned') : ''}</span>`)
       .join('');
     this.show(
       `<div class="card win">

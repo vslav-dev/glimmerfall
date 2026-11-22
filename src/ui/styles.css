@@ -567,6 +567,12 @@ body {
   animation-delay: calc(var(--i) * 120ms + 30ms);
 }
 
+/* the outline fades while its star flies in, gone by the time the star settles: no dashes peek out of the bounce */
+.star-slot.won .outline {
+  animation: outline-out 0.3s ease-out both;
+  animation-delay: calc(var(--i) * 120ms + 30ms);
+}
+
 .score-line b {
   color: var(--text);
   font-size: 22px;
@@ -728,6 +734,10 @@ body {
 
 @keyframes mark-pop {
   50% { transform: scale(1.35); }
+}
+
+@keyframes outline-out {
+  to { opacity: 0; }
 }
 
 @keyframes star-in {
