@@ -67,13 +67,17 @@ export class BoosterBar {
   private readonly glide: Glide;
   private readonly buttons: Record<Booster, BoosterButton>;
   private readonly updateEl: HTMLElement;
+  private readonly giveUpEl: HTMLElement;
 
   public constructor(
     private readonly el: HTMLElement,
     onCharged: () => void,
   ) {
     this.glide = new Glide(el);
-    el.innerHTML = `<button class="update-btn" data-action="${Action.Update}" aria-label="${S.update.button}" hidden>${UPDATE_ICON}</button>` + Object.values(Booster)
+    el.innerHTML =
+      `<button class="update-btn" data-action="${Action.Update}" aria-label="${S.update.button}" hidden>${UPDATE_ICON}</button>` +
+      `<button class="give-up" data-action="${Action.GiveUp}" hidden>${S.giveUp}</button>` +
+      Object.values(Booster)
       .map((b) => {
         const pips = EARN[b].max > 1 ? `<span class="pips">${'<i></i>'.repeat(EARN[b].max)}</span>` : '';
         return `<button class="booster ${b}" data-action="${ACTIONS[b]}" aria-label="${S.boosterNames[b]}">
@@ -87,6 +91,7 @@ export class BoosterBar {
       })
       .join('');
     this.updateEl = el.querySelector<HTMLElement>('.update-btn')!;
+    this.giveUpEl = el.querySelector<HTMLElement>('.give-up')!;
     const button = (b: Booster): BoosterButton => new BoosterButton(el.querySelector<HTMLElement>(`.booster.${b}`)!, onCharged);
     this.buttons = { [Booster.Star]: button(Booster.Star), [Booster.Meteor]: button(Booster.Meteor) };
   }
@@ -99,6 +104,16 @@ export class BoosterBar {
 
   public hide(): void {
     this.el.classList.add('off');
+    this.beckon(false);
+  }
+
+  /**
+   * Out of moves, a saved booster may still finish the level: rings keep running out of the ready ones, as when
+   * one is earned, and «Give up» sits beside them for a player who would rather keep it.
+   */
+  public beckon(on: boolean): void {
+    this.el.classList.toggle('beckon', on);
+    this.giveUpEl.hidden = !on;
   }
 
   /** Follows the charges (gains animate), whether a booster can be aimed now, and which one is being aimed. */

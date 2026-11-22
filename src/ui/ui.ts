@@ -42,6 +42,7 @@ export const Action = {
   Update: 'update',
   UpdateLater: 'update-later',
   ApplyUpdate: 'apply-update',
+  GiveUp: 'give-up',
 } as const;
 export type Action = (typeof Action)[keyof typeof Action];
 

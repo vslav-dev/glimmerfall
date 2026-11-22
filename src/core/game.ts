@@ -85,17 +85,27 @@ export function canSwap(state: GameState, a: Pos, b: Pos): boolean {
   return ca !== null && cb !== null && isMovable(ca) && isMovable(cb);
 }
 
-/** A booster can be aimed: the player may act and the board is calm, no cascade running. */
+/**
+ * A booster can be aimed: the board is calm, no cascade running, and the player may act, or the level was just
+ * lost for want of moves. Out of moves and goals left is not over while a booster can still finish the job.
+ */
 export function canStrike(state: GameState): boolean {
-  return canAct(state) && state.cascade === 0;
+  return state.cascade === 0 && (canAct(state) || canRescue(state));
+}
+
+/** Lost with every move spent, the board calm: a booster may still finish the goals (a stuck board may not). */
+export function canRescue(state: GameState): boolean {
+  return state.status === 'lost' && state.movesLeft === 0 && state.pending === null && state.cascade === 0;
 }
 
 /**
  * Aims a booster at cell `at`: it goes off in the next step and costs no move.
+ * A strike on a level lost for want of moves plays it on: the board then rests won, or lost again.
  * Whether the player has one is up to the caller: the saved stock lives outside the level.
  */
 export function strike(state: GameState, booster: Booster, at: Pos): boolean {
   if (!canStrike(state) || !cellAt(state.board, at.r, at.c)) return false;
+  if (state.status === 'lost') state.status = 'playing';
   state.pending = { booster, at: indexOf(state.board, at.r, at.c) };
   state.strikes++;
   return true;

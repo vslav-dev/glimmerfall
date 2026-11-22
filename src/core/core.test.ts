@@ -294,6 +294,33 @@ describe('boosters', () => {
     expect(b.cells[corner].ice).toBe(2);
   });
 
+  it('a level lost for want of moves can still be finished by a booster', () => {
+    const lost = (target: number): ReturnType<typeof createGame> => {
+      const game = calm();
+      game.level = { ...game.level, objectives: [{ kind: ObjectiveKind.Score, target, color: -1 }] };
+      game.movesLeft = 0;
+      while (advance(game)) continue;
+      return game;
+    };
+    const short = lost(1_000_000);
+    expect(short.status).toBe('lost');
+    expect(canStrike(short)).toBe(true);
+    expect(strike(short, Booster.Star, { r: 3, c: 3 })).toBe(true);
+    expect(short.status).toBe('playing');
+    while (advance(short)) continue;
+    expect(short.status).toBe('lost');
+
+    const enough = lost(1);
+    strike(enough, Booster.Meteor, { r: 3, c: 3 });
+    while (advance(enough)) continue;
+    expect(enough.status).toBe('won');
+
+    // A board stuck with moves left is lost for good.
+    const stuck = calm();
+    stuck.status = 'lost';
+    expect(canStrike(stuck)).toBe(false);
+  });
+
   it('a special in the crater is lit and goes off in a later step', () => {
     const game = calm();
     const special = game.board.cells[indexOf(game.board, 4, 4)].piece!;

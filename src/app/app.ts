@@ -6,7 +6,7 @@ import { chosen, VARIANTS } from '@/audio/sounds';
 import { Sfx } from '@/audio/synth';
 import { goalsOf, type MoveOptions, moveOptions } from '@/bot/features';
 import { indexOf } from '@/core/board';
-import { addExtraMoves, advance, canAct, canStrike, createGame, EXTRA_MOVES, makeMove, startFinale, starsFor, strike } from '@/core/game';
+import { addExtraMoves, advance, canAct, canRescue, canStrike, createGame, EXTRA_MOVES, makeMove, startFinale, starsFor, strike } from '@/core/game';
 import { BlastKind, Booster, type GameEvent, type GameState, LevelKind, type Pos } from '@/core/types';
 import { LevelDrafts } from '@/gen/drafts';
 import { type DraftRequest, finalizeLevel, GEN_VERSION, twinMoves } from '@/gen/generator';
@@ -305,6 +305,7 @@ export class GameApp {
     if (this.mode !== Mode.Play || !game || !booster || this.running === game) return;
     if (stock(this.save.boosters, booster) < 1 || !strike(game, booster, at)) return;
     spend(this.save.boosters, booster);
+    this.boosters.beckon(false);
     const record = this.recordOf(game);
     if (record) recordStrike(record, game.board, booster, at);
     // The moves valued at rest no longer stand: the next swap is not read against them.
@@ -331,7 +332,7 @@ export class GameApp {
       this.view.aim(booster);
       this.ui.flashText(S.aim[booster]);
     }
-    this.updateBoosters();
+    this.updateInput();
   }
 
   private stopAim(): void {
@@ -384,6 +385,7 @@ export class GameApp {
     const game = this.game;
     if (!game || this.running === game || this.mode !== Mode.Play) return;
     if (game.status === 'won') await this.finishWin(game);
+    else if (game.status === 'lost' && this.canRescue(game)) this.offerRescue();
     else if (game.status === 'lost') this.showLose(game);
     else {
       this.rest = timed('options', () => moveOptions(game.board, goalsOf(game), this.lastTo));
@@ -471,7 +473,19 @@ export class GameApp {
     for (let k = 0; k < stars; k++) setTimeout(() => this.audio.play(Sfx.Star, 1 + k * 0.12), 150 + k * 120);
   }
 
+  /** Out of moves with goals left and a booster saved: the level is not lost before the player says so. */
+  private canRescue(game: GameState): boolean {
+    return canRescue(game) && Object.values(Booster).some((b) => stock(this.save.boosters, b) > 0);
+  }
+
+  private offerRescue(): void {
+    this.boosters.beckon(true);
+    this.updateBoosters();
+    this.ui.flashText(S.rescue);
+  }
+
   private showLose(game: GameState): void {
+    this.boosters.beckon(false);
     this.mode = Mode.Lost;
     this.audio.play(Sfx.Lose);
     // Extra moves cannot help a board that is stuck with moves still left.
@@ -507,8 +521,10 @@ export class GameApp {
     void this.onRest();
   }
 
+  /** Out of moves the board takes no swaps; an aimed booster still takes its cell. */
   private updateInput(): void {
-    this.view.inputEnabled = this.mode === Mode.Play && this.game !== null && canAct(this.game);
+    const game = this.game;
+    this.view.inputEnabled = this.mode === Mode.Play && game !== null && (canAct(game) || (this.aiming !== null && canRescue(game)));
     this.updateBoosters();
   }
 
@@ -547,6 +563,13 @@ export class GameApp {
         break;
       case Action.Update:
         this.openUpdate();
+        break;
+      case Action.GiveUp:
+        if (this.game && this.mode === Mode.Play && this.running !== this.game && this.canRescue(this.game)) {
+          this.stopAim();
+          this.showLose(this.game);
+          this.updateInput();
+        }
         break;
       case Action.UpdateLater:
         this.closeUpdate();

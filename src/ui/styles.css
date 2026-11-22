@@ -690,8 +690,33 @@ body {
   cursor: pointer;
 }
 
-.update-btn[hidden] {
+.update-btn[hidden],
+.give-up[hidden] {
   display: none;
+}
+
+/* out of moves with a booster saved: beside the boosters, for a player who would rather keep it */
+.give-up {
+  /* level with the orbs' middle */
+  margin-top: 8px;
+  padding: 8px 14px;
+  border-radius: 99px;
+  border: 2px solid var(--panel-border);
+  background: rgba(0, 0, 0, 0.28);
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.give-up:active {
+  transform: scale(0.94);
+}
+
+/* rings keep running out of a ready booster: the one that was earned may still finish the level */
+#boosters.beckon .booster.ready::after {
+  animation: booster-beckon 1.3s ease-out infinite;
 }
 
 .update-btn svg {
@@ -994,6 +1019,11 @@ body {
 
 @keyframes outline-out {
   to { opacity: 0; }
+}
+
+@keyframes booster-beckon {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(1.9); }
 }
 
 @keyframes booster-breathe {

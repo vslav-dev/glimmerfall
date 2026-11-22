@@ -117,6 +117,9 @@ export const S = {
   retry: 'Ещё раз',
   shuffle: 'Перемешиваем!',
   lastChance: 'Последний шанс!',
+  /** out of moves with goals left while a booster is saved: it may still finish the level */
+  rescue: 'Ходов нет, но есть бонус!',
+  giveUp: 'Сдаться',
   boosterNames: { star: 'Падающая звезда', meteor: 'Метеорит' } satisfies Record<Booster, string>,
   /** a tap on a booster not charged yet says how it charges */
   boosterHint: { star: 'Копится из оставшихся ходов', meteor: 'Копится за три звезды' } satisfies Record<Booster, string>,
