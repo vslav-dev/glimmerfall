@@ -101,6 +101,23 @@ describe('generator', () => {
     expect(amount(fast)).toBeGreaterThan(amount(own));
   }, 60_000);
 
+  it('eases a layout its twin cannot finish until it can', () => {
+    // Level 203 of a strong deliberate player (telemetry, 22.11): a crate or ice goal beside a collect one.
+    // Only the collect was ever tuned, so the twin never won: 14 moves at any target, stars at 100 and 150.
+    const style: TwinStyle = {
+      weights: [0.058, -0.169, 0.041, 0.311, -0.261, 0.862, 0.911, 0.129, 3.001, -0.342, 0.007, 0.801, -0.377],
+      strength: 0.95,
+      craft: 0.97,
+    };
+    const draft = draftLevel(req(203, 3250437337, style, 1.03));
+    const kinds = draft.level.objectives.map((o) => `${o.kind}:${o.target}`).join(' ');
+    const easy = finalizeLevel(draft, 0.97);
+    const hard = finalizeLevel(draft, 0.4);
+    expect(easy.targetWinRate, kinds).toBeGreaterThan(0.6);
+    expect(easy.moves).toBeGreaterThan(hard.moves);
+    expect(hard.stars[2]).toBeGreaterThan(1000);
+  }, 120_000);
+
   it('gives more moves for a higher target win rate', () => {
     const draft = draftLevel(req(13));
     expect(finalizeLevel(draft, 0.9).moves).toBeGreaterThanOrEqual(finalizeLevel(draft, 0.4).moves);

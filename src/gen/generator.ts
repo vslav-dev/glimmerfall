@@ -6,7 +6,7 @@ import { type LevelPlan, planLevel } from '@/gen/plan';
 import type { TwinStyle } from '@/player/model';
 
 /** Bumped whenever the same request builds a different level: a replay needs the generator that built its level. */
-export const GEN_VERSION = 10;
+export const GEN_VERSION = 11;
 /** Levels everyone shares: the tutorial, and the first read of the player's style. */
 const COMMON_LEVELS = 5;
 /** How deliberate the shared levels assume the player to be. */
@@ -259,8 +259,16 @@ function fitness(level: LevelDef, twin: number[], craft: number, seed: number): 
   const gap = Math.max(0, strong - typical(RANDOM_BOT, 1)) / strong;
   const sorted = [...twin].sort((a, b) => a - b);
   const mid = quantile(sorted, 0.5);
-  const spread = mid > 0 ? (quantile(sorted, 0.75) - quantile(sorted, 0.25)) / mid : 1;
+  // A level the twin mostly cannot finish leaves no move count that wins as targeted.
+  if (mid === 0) return -Infinity;
+  const spread = (quantile(sorted, 0.75) - quantile(sorted, 0.25)) / mid;
   return craft * gap - (1 - craft) * spread;
+}
+
+/** Whether any twin run wins the drafted level: one none does gets the fewest moves at any target and stars from nothing. */
+export function isWinnable(draft: LevelDraft): boolean {
+  const cal = draft.calibration;
+  return cal.fixedMoves > 0 || cal.runs.some((r) => r.needed !== null || r.chances.length > 0);
 }
 
 function calibrate(level: LevelDef, style: BotStyle, seed: number): Calibration {
@@ -286,30 +294,70 @@ function medianFirstWin(results: SimResult[]): number {
 }
 
 /**
- * Scales collect amounts, or strengthens / weakens crates and ice, towards the intended length.
- * Returns whether it changed anything.
+ * Moves every goal towards the intended length: scales collect amounts, and strengthens or weakens crates and ice.
+ * A twin that never wins gets every goal halved. Returns whether it changed anything.
  */
 function adjustLength(level: LevelDef, median: number, length: number): boolean {
-  const collects = level.objectives.filter((o) => o.kind === ObjectiveKind.Collect);
-  if (collects.length > 0) {
-    const factor = Number.isFinite(median) ? Math.min(3, Math.max(0.5, length / median)) : 0.6;
-    if (Math.abs(factor - 1) <= 0.15) return false;
-    for (const o of collects) o.target = Math.max(8, Math.round(o.target * factor));
-    return true;
+  const factor = Number.isFinite(median) ? Math.min(3, Math.max(0.5, length / median)) : 0.5;
+  let changed = false;
+  for (const o of level.objectives) {
+    if (o.kind === ObjectiveKind.Collect) {
+      const target = Math.max(8, Math.round(o.target * factor));
+      if (Math.abs(factor - 1) <= 0.15 || target === o.target) continue;
+      o.target = target;
+      changed = true;
+    } else if (o.kind === ObjectiveKind.Crate || o.kind === ObjectiveKind.Ice) {
+      const [layer, max] = o.kind === ObjectiveKind.Crate ? [level.crate, 3] : [level.ice, 2];
+      // Layers are coarse: they change only when the length is well off. Too quick: thicker. Too slow: thinner, then fewer.
+      if (median < length * 0.75) changed = thicken(layer, max) || changed;
+      else if (median > length * 1.5) changed = (thin(layer) || drop(level, layer, factor)) || changed;
+      o.target = layer.filter((v) => v > 0).length;
+    }
   }
-  const kinds = level.objectives.map((o) => o.kind);
-  const [layer, max] = kinds.includes(ObjectiveKind.Crate) ? [level.crate, 3] : kinds.includes(ObjectiveKind.Ice) ? [level.ice, 2] : [null, 0];
-  // Too quick: thicker layers. Too slow (a random tapper's twin): thinner ones.
-  const delta = median < length * 0.75 ? 1 : median > length * 1.5 ? -1 : 0;
-  if (!layer || delta === 0) return false;
+  return changed;
+}
+
+function thicken(layer: number[], max: number): boolean {
   let changed = false;
   for (let i = 0; i < layer.length; i++) {
-    if (layer[i] > 0 && layer[i] + delta >= 1 && layer[i] + delta <= max) {
-      layer[i] += delta;
+    if (layer[i] > 0 && layer[i] < max) {
+      layer[i]++;
       changed = true;
     }
   }
   return changed;
+}
+
+function thin(layer: number[]): boolean {
+  let changed = false;
+  for (let i = 0; i < layer.length; i++) {
+    if (layer[i] > 1) {
+      layer[i]--;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+/**
+ * Keeps about `share` of the layer's cells, at least one: the lowest rows go first, a cell with its mirror twin.
+ * Fewer crates never cut the refill off.
+ */
+function drop(level: LevelDef, layer: number[], share: number): boolean {
+  const { rows, cols } = level;
+  const keep = Math.max(1, Math.round(layer.filter((v) => v > 0).length * share));
+  let count = layer.filter((v) => v > 0).length;
+  const before = count;
+  for (let r = rows - 1; r >= 0 && count > keep; r--) {
+    for (let c = 0; c < Math.ceil(cols / 2) && count > keep; c++) {
+      for (const i of new Set([r * cols + c, r * cols + cols - 1 - c])) {
+        if (layer[i] === 0) continue;
+        layer[i] = 0;
+        count--;
+      }
+    }
+  }
+  return count < before;
 }
 
 // ---------- layout ----------

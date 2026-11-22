@@ -9,7 +9,7 @@ import { indexOf } from '@/core/board';
 import { addExtraMoves, advance, canAct, canRescue, canStrike, createGame, EXTRA_MOVES, makeMove, startFinale, starsFor, strike } from '@/core/game';
 import { BlastKind, Booster, type GameEvent, type GameState, LevelKind, type Pos } from '@/core/types';
 import { LevelDrafts } from '@/gen/drafts';
-import { type DraftRequest, finalizeLevel, GEN_VERSION, twinMoves } from '@/gen/generator';
+import { type DraftRequest, finalizeLevel, GEN_VERSION, isWinnable, twinMoves } from '@/gen/generator';
 import { planLevel } from '@/gen/plan';
 import { DIFFICULTIES, targetWinRate } from '@/player/difficulty';
 import { paceFactor, updatePace } from '@/player/pace';
@@ -154,8 +154,8 @@ export class GameApp {
   private async currentLevel(): Promise<CurrentLevel> {
     const n = this.save.level;
     let current = this.save.current;
-    // A level built by an older generator is rebuilt, unless an attempt on it is under way.
-    const stale = current && !current.attempt && current.draft.version !== GEN_VERSION;
+    // A level built by an older generator is rebuilt, unless an attempt on it is under way that can still be won.
+    const stale = current && current.draft.version !== GEN_VERSION && (!current.attempt || !isWinnable(current.draft));
     if (!current || current.draft.request.number !== n || stale) {
       const fails = current?.draft.request.number === n ? current.fails : 0;
       current = { draft: await this.drafts.get(this.draftRequest(n)), fails, attempt: null };
