@@ -211,22 +211,31 @@ export function ray(kit: FxKit, ox: number, oy: number, tx: number, ty: number, 
 // ---------- boosters ----------
 
 /**
- * A booster falls from the sky onto the cell it was aimed at, for `ms`, speeding up as it comes:
- * the star from up right, small and quick, trailing gold; the meteor from far up left, swelling as it nears,
- * trailing fire, the crater it is about to open glowing ever brighter under it.
+ * A booster falls from the sky onto the cell it was aimed at, for `ms`, speeding up as it comes, along an arc
+ * from a random side at a random slant, so no two falls look alike: the star small and quick, trailing gold;
+ * the meteor from farther up, swelling as it nears, trailing fire, the crater it is about to open glowing ever brighter under it.
  */
 export function strikeFall(kit: FxKit, b: Blast, ms: number): void {
   const meteor = b.kind === BlastKind.Meteor;
   const tx = kit.x(b.origin.c);
   const ty = kit.y(b.origin.r);
-  // Far enough to start above the board, coming in at a steep slant.
+  // Far enough to start above the board, coming in at a steep slant: 15–40° off the vertical, from either side.
+  const side = Math.random() < 0.5 ? -1 : 1;
   const rise = ty + kit.cell * (meteor ? 5 : 3);
-  const sx = tx + rise * (meteor ? -0.62 : 0.45);
+  const sx = tx + side * rise * Math.tan(((15 + 25 * Math.random()) * Math.PI) / 180);
   const sy = ty - rise;
-  const angle = Math.atan2(ty - sy, tx - sx);
+  // The arc: a quadratic curve whose middle bows off the straight line by 10–25 % of its length, either way.
+  const bend = (Math.random() < 0.5 ? -1 : 1) * (0.1 + 0.15 * Math.random());
+  const mx = (sx + tx) / 2 + (ty - sy) * bend;
+  const my = (sy + ty) / 2 - (tx - sx) * bend;
   const trail = kit.on(Fx.Strike);
   const tint = meteor ? FIRE : STAR_GOLD;
-  const at = (k: number): [number, number] => [sx + (tx - sx) * k, sy + (ty - sy) * k];
+  const at = (k: number): [number, number] => {
+    const [a, m, c] = [(1 - k) * (1 - k), 2 * k * (1 - k), k * k];
+    return [a * sx + m * mx + c * tx, a * sy + m * my + c * ty];
+  };
+  // The direction of flight at k: the curve's tangent.
+  const heading = (k: number): number => Math.atan2((1 - k) * (my - sy) + k * (ty - my), (1 - k) * (mx - sx) + k * (tx - mx));
   if (meteor) {
     for (const p of b.cells) {
       light(kit, FrameName.Aim, kit.x(p.c), kit.y(p.r), FIRE, ms, (s, k) => {
@@ -241,7 +250,7 @@ export function strikeFall(kit: FxKit, b: Blast, ms: number): void {
     const length = (meteor ? 4.5 : 3.2) * Math.min(1, k * 3);
     s.anchor.set(1, 0.5);
     s.position.set(x, y);
-    s.rotation = angle;
+    s.rotation = heading(k);
     s.scale.set(length, meteor ? 1.3 : 0.7);
     s.alpha = 0.9;
   }, Ease.inQuad);
@@ -251,17 +260,20 @@ export function strikeFall(kit: FxKit, b: Blast, ms: number): void {
     s.scale.set(meteor ? 1.4 + 1.4 * k : 1.3);
     s.alpha = 0.85;
   }, Ease.inQuad);
-  let traveled = 0;
+  // Puffs every TRAIL_STEP cells along the arc: each frame's stretch of it is near enough straight.
+  let next = TRAIL_STEP;
+  let last = 0;
+  let [lx, ly] = [sx, sy];
   const head = kit.pool.acquire(kit.light, kit.texture(meteor ? FrameName.Meteor : FrameName.FallingStar), 'normal');
   const step = (k: number): void => {
     const [x, y] = at(k);
     head.position.set(x, y);
-    head.rotation = meteor ? -1.2 + k * 1.6 : k * 7;
+    head.rotation = meteor ? side * (1.2 - k * 1.6) : side * k * 7;
     head.scale.set(meteor ? 0.7 + 0.9 * k : 0.75 + 0.15 * k);
     if (!trail) return;
-    const moved = Math.hypot(x - sx, y - sy) / kit.cell;
-    for (; traveled + TRAIL_STEP <= moved; traveled += TRAIL_STEP) {
-      const [px, py] = at((traveled / moved) * k);
+    const span = Math.hypot(x - lx, y - ly) / kit.cell;
+    for (; next <= span; next += TRAIL_STEP) {
+      const [px, py] = at(last + (k - last) * (next / span));
       if (meteor) {
         kit.particles.emit(Burst.fire, px, py, { color: NO_COLOR, tint: FIRE });
         if (Math.random() < 0.35) kit.particles.emit(Burst.sparks, px, py, { color: NO_COLOR, tint: EMBER, amount: 0.4 });
@@ -270,6 +282,9 @@ export function strikeFall(kit: FxKit, b: Blast, ms: number): void {
         if (Math.random() < 0.3) kit.particles.emit(Burst.glitter, px, py, { color: NO_COLOR, tint: WHITE, amount: 0.5 });
       }
     }
+    next -= span;
+    last = k;
+    [lx, ly] = [x, y];
   };
   head.tint = WHITE;
   step(0);
