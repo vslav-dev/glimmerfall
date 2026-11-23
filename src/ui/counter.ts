@@ -1,3 +1,5 @@
+import { perfFlagFor } from '@/telemetry/perf';
+
 const ROLL_MS = 450;
 const POP_MS = 420;
 const POP_EASE = 'cubic-bezier(0.2, 1.8, 0.4, 1)';
@@ -32,6 +34,7 @@ export class Counter {
       return;
     }
     this.bump();
+    perfFlagFor('hud', Math.max(ROLL_MS, POP_MS));
     const start = performance.now();
     let written = start;
     const tick = (now: number): void => {

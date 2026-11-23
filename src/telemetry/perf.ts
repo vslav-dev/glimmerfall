@@ -13,6 +13,8 @@ import { track } from '@/telemetry/telemetry';
  * frames) a state was on in (the phone charging, the frame rate paced to 60), `counts` tally events (pacing turned
  * on and off), and the battery says how charged the phone is and whether it charges: a warm, charging phone may be
  * throttled. Deeper probes for a hunt (a frame profile, board phases, spikes) live in git history: plans/11.
+ * Hunt flags for the HUD of 0.34.0 (plans/11, 23.11): `hud` (a HUD number rolling or popping), `alarm` (the moves
+ * orb's halo pulsing), `debris` (crate and chain bits falling); remove them once the HUD's cost is settled.
  */
 
 type Data = Record<string, unknown>;
@@ -118,6 +120,8 @@ let eventsSupported = false;
 let battery: BatteryManager | null = null;
 /** states on right now: each frame counts toward them */
 const flagsOn = new Set<string>();
+/** states on for a while: each frame drawn before its time runs out counts toward them */
+const flagsUntil = new Map<string, number>();
 /** Call first thing at startup. Hiding the app sends the open window. */
 export function startPerf(): void {
   scriptAt = performance.now();
@@ -143,6 +147,11 @@ export function startPerf(): void {
 export function perfFlag(name: string, on: boolean): void {
   if (on) flagsOn.add(name);
   else flagsOn.delete(name);
+}
+
+/** A state on for the next `ms`: an effect that ends by itself (a HUD number rolling, debris falling). */
+export function perfFlagFor(name: string, ms: number): void {
+  flagsUntil.set(name, Math.max(flagsUntil.get(name) ?? 0, performance.now() + ms));
 }
 
 /** Adds `n` to a tally of the open window. */
@@ -185,12 +194,20 @@ export function recordFrame(f: FrameSample): void {
   win.draws += frameDraws;
   win.drawsMax = Math.max(win.drawsMax, frameDraws);
   frameDraws = 0;
-  for (const name of flagsOn) {
-    const flag = win.flags.get(name) ?? { frames: 0, slow: 0 };
-    flag.frames++;
-    if (slow) flag.slow++;
-    win.flags.set(name, flag);
+  for (const name of flagsOn) countFlag(name, slow);
+  if (flagsUntil.size === 0) return;
+  const now = performance.now();
+  for (const [name, until] of flagsUntil) {
+    if (now < until) countFlag(name, slow);
+    else flagsUntil.delete(name);
   }
+}
+
+function countFlag(name: string, slow: boolean): void {
+  const flag = win.flags.get(name) ?? { frames: 0, slow: 0 };
+  flag.frames++;
+  if (slow) flag.slow++;
+  win.flags.set(name, flag);
 }
 
 /** A frame the loop ran but did not draw: only pauses were running, nothing on screen changed. */

@@ -290,6 +290,8 @@ body {
   background: linear-gradient(90deg, var(--accent-2), var(--accent) 65%, var(--gold));
   clip-path: inset(0 100% 0 0 round 99px);
   transition: clip-path 0.45s ease-out;
+  /* a layer of its own: the clip slides every frame of a gain without repainting the glass track under it */
+  will-change: transform;
 }
 
 /* gloss stripe */
@@ -1072,14 +1074,28 @@ body {
 /* ---------- motion ---------- */
 
 /* how far a HUD number pops as it changes, and its glow: read by the counter's Web Animation */
+.hud-moves .value,
+.goal b,
+.hud-score .value {
+  /*
+   * A layer of its own: rolling digits and the pop's glow repaint every frame, and on the HUD's layer each repaint
+   * re-rasterized the glass under them (gradient, rim, blurred inner shadow): 0.34.0 got ~10× more slow frames.
+   */
+  will-change: transform;
+}
+
 .hud-moves .value { --bump: 1.3; }
 .goal b { --bump: 1.45; }
 /* centered, so it grows evenly in every direction */
 .hud-score .value { --bump: 1.35; --bump-glow: var(--gold); }
 
+/*
+ * Plain numbers only: a keyframe that reads a variable may keep the pulse off the compositor. The urgency rides on
+ * the halo's own glow (`--u`) and the beat (`--pulse`), set once per move.
+ */
 @keyframes moves-alarm {
-  0%, 100% { opacity: calc(0.1 + 0.25 * var(--u)); transform: scale(1); }
-  50% { opacity: 1; transform: scale(calc(1.03 + 0.07 * var(--u))); }
+  0%, 100% { opacity: 0.2; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.06); }
 }
 
 @keyframes card-in {

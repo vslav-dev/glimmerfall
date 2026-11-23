@@ -1,5 +1,6 @@
 import type { Container, Sprite, Texture } from 'pixi.js';
 import { type Blast, BlastKind, NO_COLOR, type Pos } from '@/core/types';
+import { perfFlagFor } from '@/telemetry/perf';
 import { CHAIN_BITS, CRATE_BITS, CRATE_PIECES, type Fragment, FrameName } from '@/view/art';
 import { Burst } from '@/view/fx/bursts';
 import type { Camera } from '@/view/fx/camera';
@@ -466,6 +467,7 @@ function shatter(kit: FxKit, fragments: readonly Fragment[], x: number, y: numbe
       s.alpha = k < 1 - f.fade ? 1 : (1 - k) / f.fade;
     };
     update(0);
+    perfFlagFor('debris', ms);
     void kit.tweens.run(ms, update, { ease: Ease.linear }).then(() => kit.pool.release(s));
   }
 }
