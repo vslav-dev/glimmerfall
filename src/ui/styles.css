@@ -272,31 +272,6 @@ body {
   transition: clip-path 0.45s ease-out;
 }
 
-/* the bright edge of the rising color, as on a booster's orb; rides along by transform, nothing repaints */
-.hud-score .front {
-  position: absolute;
-  inset: 0;
-  transform: translateX(-100%);
-  transition: transform 0.45s ease-out, opacity 0.3s;
-  pointer-events: none;
-}
-
-.hud-score .front::before {
-  content: '';
-  position: absolute;
-  top: 1px;
-  bottom: 1px;
-  right: -1px;
-  width: 2px;
-  border-radius: 2px;
-  background: #fff3c4;
-  box-shadow: 0 0 8px 1px var(--gold);
-}
-
-.hud-score .front.hidden {
-  opacity: 0;
-}
-
 /* gloss stripe */
 .hud-score .fill::after {
   content: '';

@@ -86,7 +86,6 @@ export class Ui {
   private hudScore: Counter | null = null;
   private hudGoalCounters: Counter[] = [];
   private hudFill: HTMLElement | null = null;
-  private hudFront: HTMLElement | null = null;
   private hudStars: HTMLElement[] = [];
   private hudGoals: HTMLElement[] = [];
   private resetArmed = false;
@@ -381,7 +380,7 @@ export class Ui {
       <div class="hud-goals" data-action="${Action.Goals}" role="button" aria-label="${S.goals}">${def.objectives.map((o) => this.goalHtml(o, o.target)).join('')}</div>
       <button class="btn icon" data-action="${Action.Pause}" aria-label="${S.paused}">${PAUSE_ICON}</button>
       <div class="hud-score">
-        <div class="bar"><div class="track"><div class="fill"></div><div class="front"></div>${this.markHtml(0, '')}${this.markHtml(
+        <div class="bar"><div class="track"><div class="fill"></div>${this.markHtml(0, '')}${this.markHtml(
           (def.stars[1] / def.stars[2]) * 100,
           def.stars[1].toLocaleString('ru-RU'),
         )}${this.markHtml(100, def.stars[2].toLocaleString('ru-RU'))}</div></div>
@@ -391,7 +390,6 @@ export class Ui {
     this.hudMoves = new Counter(this.hud.querySelector('.hud-moves .value')!, pops);
     this.hudScore = new Counter(this.hud.querySelector('.hud-score .value')!, pops);
     this.hudFill = this.hud.querySelector('.fill');
-    this.hudFront = this.hud.querySelector('.front');
     this.hudStars = [...this.hud.querySelectorAll<HTMLElement>('.mark')];
     this.hudGoals = [...this.hud.querySelectorAll<HTMLElement>('.hud-goals .goal')];
     this.hudGoalCounters = this.hudGoals.map((el) => new Counter(el.querySelector('b')!, pops));
@@ -406,13 +404,8 @@ export class Ui {
     this.hudMoves?.set(state.movesLeft);
     this.hud.querySelector('.hud-moves')?.classList.toggle('low', state.movesLeft <= 5);
     this.hudScore?.set(state.score);
-    // clip-path keeps the rounded ends and, unlike width, costs no layout; the bright front rides along by transform.
-    const fill = Math.min(1, state.score / def.stars[2]);
-    if (this.hudFill) this.hudFill.style.clipPath = `inset(0 ${(1 - fill) * 100}% 0 0 round 99px)`;
-    if (this.hudFront) {
-      this.hudFront.style.transform = `translateX(${(fill - 1) * 100}%)`;
-      this.hudFront.classList.toggle('hidden', fill <= 0 || fill >= 1);
-    }
+    // clip-path keeps the rounded ends and, unlike width, costs no layout.
+    if (this.hudFill) this.hudFill.style.clipPath = `inset(0 ${(1 - Math.min(1, state.score / def.stars[2])) * 100}% 0 0 round 99px)`;
     // First star: the level is won; the other two: their score thresholds.
     const earned = [state.status === 'won', state.score >= def.stars[1], state.score >= def.stars[2]];
     this.hudStars.forEach((el, k) => el.classList.toggle('earned', earned[k]));
