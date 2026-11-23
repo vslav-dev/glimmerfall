@@ -171,6 +171,16 @@ body {
   border-color: color-mix(in srgb, #ff5a5a calc(var(--u) * 100%), rgba(255, 255, 255, 0.16));
 }
 
+/* won: the same scale in green, still, with a steady glow */
+.hud-moves.won {
+  border-color: color-mix(in srgb, #5dff9a calc(var(--u) * 100%), rgba(255, 255, 255, 0.16));
+  box-shadow: var(--well), 0 0 calc(14px * var(--u)) calc(3px * var(--u)) rgba(80, 255, 150, calc(0.55 * var(--u)));
+}
+
+.hud-moves.won .value {
+  color: color-mix(in srgb, #7dff9e calc(var(--u) * 100%), #ffffff);
+}
+
 .hud-moves.low::before {
   will-change: opacity, transform;
   animation: moves-alarm var(--pulse) ease-in-out infinite;

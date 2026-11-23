@@ -406,7 +406,7 @@ export class Ui {
   public updateHud(state: GameState): void {
     const def = state.level;
     this.hudMoves?.set(state.movesLeft);
-    this.alarmMoves(state.movesLeft);
+    this.alarmMoves(state.movesLeft, state.status === 'won');
     this.hudScore?.set(state.score);
     // clip-path keeps the rounded ends and, unlike width, costs no layout.
     if (this.hudFill) this.hudFill.style.clipPath = `inset(0 ${(1 - Math.min(1, state.score / def.stars[2])) * 100}% 0 0 round 99px)`;
@@ -426,13 +426,15 @@ export class Ui {
   /**
    * From five moves left the moves orb turns faintly red and pulses slowly; each move closer to zero it reddens
    * and pulses faster, up to an alarm on the last one, so a player racing through the level still notices.
+   * Once the level is won it calms down: no pulse, and the same scale in green as the finale spends the moves.
    */
-  private alarmMoves(left: number): void {
+  private alarmMoves(left: number, won: boolean): void {
     const el = this.hud.querySelector<HTMLElement>('.hud-moves');
     if (!el) return;
-    const low = left <= LOW_MOVES;
-    el.classList.toggle('low', low);
-    if (!low) return;
+    const near = left <= LOW_MOVES;
+    el.classList.toggle('low', near && !won);
+    el.classList.toggle('won', near && won);
+    if (!near) return;
     const u = (LOW_MOVES + 1 - Math.max(1, left)) / LOW_MOVES;
     el.style.setProperty('--u', u.toFixed(2));
     el.style.setProperty('--pulse', `${Math.round(ALARM_SLOW_MS + (ALARM_FAST_MS - ALARM_SLOW_MS) * (u - 1 / LOW_MOVES) / (1 - 1 / LOW_MOVES))}ms`);
