@@ -12,9 +12,10 @@ import { track } from '@/telemetry/telemetry';
  * `idle` counts frames left undrawn (nothing changed, or held to a frame rate). `flags` count the frames (and slow
  * frames) a state was on in (the phone charging, the frame rate paced to 60), `counts` tally events (pacing turned
  * on and off), and the battery says how charged the phone is and whether it charges: a warm, charging phone may be
- * throttled. Deeper probes for a hunt (a frame profile, board phases, spikes) live in git history: plans/11.
- * Hunt flags for the HUD of 0.34.0 (plans/11, 23.11): `hud` (a HUD number rolling or popping), `alarm` (the moves
- * orb's halo pulsing), `debris` (crate and chain bits falling); remove them once the HUD's cost is settled.
+ * throttled. `hud` flags the frames a HUD number rolls or pops in: the DOM over the board, a cost the frame's own
+ * update and render do not show. `slowOwn` counts the slow frames our own update and render made slow; the rest
+ * were slowed by the GPU, the compositor or the DOM. Deeper probes for a hunt (a frame profile, board phases, spikes,
+ * flags per effect) live in git history: plans/11.
  */
 
 type Data = Record<string, unknown>;
@@ -23,6 +24,8 @@ type Data = Record<string, unknown>;
 const SLOW_INTERVALS = [20, 33, 50, 100];
 /** a frame this long is slow for the flags */
 const SLOW_MS = SLOW_INTERVALS[0];
+/** update and render past this (ms) make a slow frame our own: half the 60 Hz budget */
+const OWN_MS = 8;
 /** A window with less play than this carries over into the next one instead of being sent. */
 const MIN_FRAMES = 30;
 /** Taps that take longer than this to show their result are reported (the API rounds to 8 ms). */
@@ -99,6 +102,7 @@ function newWindow() {
     update: new Histogram(0.25, 50),
     render: new Histogram(0.25, 50),
     slow: SLOW_INTERVALS.map(() => 0),
+    slowOwn: 0,
     draws: 0,
     drawsMax: 0,
     loaf: { n: 0, ms: 0, blockMs: 0, layoutMs: 0, maxMs: 0, worst: '' },
@@ -188,6 +192,7 @@ export function recordFrame(f: FrameSample): void {
     SLOW_INTERVALS.forEach((limit, k) => {
       if (interval > limit) win.slow[k]++;
     });
+    if (slow && f.updateMs + f.renderMs > OWN_MS) win.slowOwn++;
   }
   win.update.add(f.updateMs);
   win.render.add(f.renderMs);
@@ -254,6 +259,7 @@ export function flushPerf(reason: string): void {
     activeMs: Math.round(i.sum),
     dt: { p10: i.percentile(0.1), p50: i.percentile(0.5), p95: i.percentile(0.95), p99: i.percentile(0.99), max: round(i.max) },
     slow: Object.fromEntries(SLOW_INTERVALS.map((limit, k) => [`>${limit}`, w.slow[k]])),
+    slowOwn: w.slowOwn,
     update: w.update.summary(),
     render: w.render.summary(),
     draws: { avg: round(w.update.count ? w.draws / w.update.count : 0), max: w.drawsMax },

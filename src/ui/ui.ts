@@ -4,7 +4,6 @@ import { type GameState, type LevelDef, type Objective, ObjectiveKind, Special }
 import { BoardSize, type Settings } from '@/app/save';
 import type { Update } from '@/app/updates';
 import { DIFFICULTIES } from '@/player/difficulty';
-import { perfFlag } from '@/telemetry/perf';
 import { FrameName, frameDataUrl } from '@/view/art';
 import { Fx, type FxChoice } from '@/view/fx/switches';
 import { Counter } from '@/ui/counter';
@@ -402,7 +401,6 @@ export class Ui {
 
   public hideHud(): void {
     this.hud.classList.add('off');
-    perfFlag('alarm', false);
   }
 
   public updateHud(state: GameState): void {
@@ -436,7 +434,6 @@ export class Ui {
     if (!el) return;
     const near = left <= LOW_MOVES;
     el.classList.toggle('low', near && !won);
-    perfFlag('alarm', near && !won);
     el.classList.toggle('won', near && won);
     if (!near) return;
     const u = (LOW_MOVES + 1 - Math.max(1, left)) / LOW_MOVES;
