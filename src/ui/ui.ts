@@ -61,6 +61,10 @@ const PAUSE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="5
  * so the words change as fast as the cascade goes. The pop and the fade keep their pace, only the hold is long.
  */
 const FLASH_MS = 1400;
+/** the moves orb starts warning at this many moves left; its pulse runs from slow to fast over them, ms per beat */
+const LOW_MOVES = 5;
+const ALARM_SLOW_MS = 2600;
+const ALARM_FAST_MS = 550;
 const FLASH_FADE_MS = 200;
 const FLASH_FRAMES: Keyframe[] = [
   { offset: 0, opacity: 0, transform: 'translate(-50%, -50%) scale(0.5)', easing: 'ease-out' },
@@ -402,7 +406,7 @@ export class Ui {
   public updateHud(state: GameState): void {
     const def = state.level;
     this.hudMoves?.set(state.movesLeft);
-    this.hud.querySelector('.hud-moves')?.classList.toggle('low', state.movesLeft <= 5);
+    this.alarmMoves(state.movesLeft);
     this.hudScore?.set(state.score);
     // clip-path keeps the rounded ends and, unlike width, costs no layout.
     if (this.hudFill) this.hudFill.style.clipPath = `inset(0 ${(1 - Math.min(1, state.score / def.stars[2])) * 100}% 0 0 round 99px)`;
@@ -417,6 +421,21 @@ export class Ui {
       this.hudGoalCounters[k].set(left);
       el.classList.toggle('done', left === 0);
     });
+  }
+
+  /**
+   * From five moves left the moves orb turns faintly red and pulses slowly; each move closer to zero it reddens
+   * and pulses faster, up to an alarm on the last one, so a player racing through the level still notices.
+   */
+  private alarmMoves(left: number): void {
+    const el = this.hud.querySelector<HTMLElement>('.hud-moves');
+    if (!el) return;
+    const low = left <= LOW_MOVES;
+    el.classList.toggle('low', low);
+    if (!low) return;
+    const u = (LOW_MOVES + 1 - Math.max(1, left)) / LOW_MOVES;
+    el.style.setProperty('--u', u.toFixed(2));
+    el.style.setProperty('--pulse', `${Math.round(ALARM_SLOW_MS + (ALARM_FAST_MS - ALARM_SLOW_MS) * (u - 1 / LOW_MOVES) / (1 - 1 / LOW_MOVES))}ms`);
   }
 
   // ---------- feedback ----------

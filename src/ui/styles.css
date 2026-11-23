@@ -125,6 +125,7 @@ body {
 
 .hud-moves {
   grid-area: moves;
+  position: relative;
   width: 68px;
   height: 68px;
   border-radius: 50%;
@@ -135,6 +136,18 @@ body {
   background: var(--glass);
   border: var(--rim);
   box-shadow: var(--well);
+}
+
+/* the halo the moves orb pulses with when few are left: its own layer, so only opacity and transform animate */
+.hud-moves::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: 50%;
+  border: 2px solid #ff4d4d;
+  box-shadow: 0 0 calc(6px + 12px * var(--u)) calc(1px + 3px * var(--u)) rgba(255, 60, 60, calc(0.35 + 0.55 * var(--u))), inset 0 0 calc(4px + 8px * var(--u)) rgba(255, 60, 60, calc(0.2 + 0.4 * var(--u)));
+  opacity: 0;
+  pointer-events: none;
 }
 
 .hud-moves .label {
@@ -150,14 +163,21 @@ body {
   font-weight: 900;
 }
 
+/*
+ * Few moves left: `--u` grows from 0.2 at five moves to 1 at the last one (set from the count). The rim and the number
+ * redden with it, and the halo breathes ever faster and brighter, from a slow hint to an alarm, every `--pulse`.
+ */
 .hud-moves.low {
-  border-color: #ff6b6b;
-  box-shadow: var(--well), 0 0 12px 2px rgba(255, 90, 90, 0.5);
+  border-color: color-mix(in srgb, #ff5a5a calc(var(--u) * 100%), rgba(255, 255, 255, 0.16));
+}
+
+.hud-moves.low::before {
+  will-change: opacity, transform;
+  animation: moves-alarm var(--pulse) ease-in-out infinite;
 }
 
 .hud-moves.low .value {
-  color: #ff8a8a;
-  animation: pulse 0.9s ease-in-out infinite;
+  color: color-mix(in srgb, #ff7b7b calc(var(--u) * 100%), #ffffff);
 }
 
 /* a capsule of the orbs' glass, sized to its goals: ends rounded by half its height */
@@ -1055,8 +1075,9 @@ body {
 /* centered, so it grows evenly in every direction */
 .hud-score .value { --bump: 1.35; --bump-glow: var(--gold); }
 
-@keyframes pulse {
-  50% { transform: scale(1.15); }
+@keyframes moves-alarm {
+  0%, 100% { opacity: calc(0.1 + 0.25 * var(--u)); transform: scale(1); }
+  50% { opacity: 1; transform: scale(calc(1.03 + 0.07 * var(--u))); }
 }
 
 @keyframes card-in {
