@@ -407,6 +407,7 @@ export class Ui {
     const def = state.level;
     this.hudMoves?.set(state.movesLeft);
     this.alarmMoves(state.movesLeft, state.status === 'won');
+    this.hud.querySelector('.hud-goals')?.classList.toggle('won', state.status === 'won');
     this.hudScore?.set(state.score);
     // clip-path keeps the rounded ends and, unlike width, costs no layout.
     if (this.hudFill) this.hudFill.style.clipPath = `inset(0 ${(1 - Math.min(1, state.score / def.stars[2])) * 100}% 0 0 round 99px)`;

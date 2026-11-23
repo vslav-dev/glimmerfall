@@ -171,6 +171,12 @@ body {
   border-color: color-mix(in srgb, #ff5a5a calc(var(--u) * 100%), rgba(255, 255, 255, 0.16));
 }
 
+/* every goal met: the goals capsule lights green, still, like the moves orb at its last move */
+.hud-goals.won {
+  border-color: #5dff9a;
+  box-shadow: var(--well), 0 0 14px 3px rgba(80, 255, 150, 0.55);
+}
+
 /* won: the same scale in green, still, with a steady glow */
 .hud-moves.won {
   border-color: color-mix(in srgb, #5dff9a calc(var(--u) * 100%), rgba(255, 255, 255, 0.16));
@@ -202,7 +208,7 @@ body {
   gap: 6px 14px;
   flex-wrap: wrap;
   min-height: 54px;
-  padding: 7px 10px 7px 16px;
+  padding: 7px 16px;
   border-radius: 27px;
   background: var(--glass);
   border: var(--rim);
@@ -226,22 +232,6 @@ body {
 .goal img {
   width: 36px;
   height: 36px;
-}
-
-/* the goals open their explanation: a small "?" says so */
-.hud-goals::after {
-  content: '?';
-  align-self: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: var(--glass);
-  border: 1.5px solid var(--panel-border);
-  font-size: 12px;
-  font-weight: 800;
-  line-height: 17px;
-  text-align: center;
-  color: var(--muted);
 }
 
 .goal .score-icon {
