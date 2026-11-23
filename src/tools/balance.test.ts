@@ -8,7 +8,7 @@
  * Runs only with GF_BALANCE=1.
  */
 import { describe, it } from 'vitest';
-import { EARN } from '@/app/boosters';
+import { EARN, winGain } from '@/app/boosters';
 import { pickMove } from '@/bot/bot';
 import { goalsOf, moveOptions } from '@/bot/features';
 import { posOf } from '@/core/board';
@@ -101,6 +101,8 @@ describe.runIf(process.env.GF_BALANCE)('balance', () => {
     let wins = 0;
     let runs = 0;
     let three = 0;
+    /** meteor charge the wins earned */
+    let meteor = 0;
     const leftAtWin: number[] = [];
     const made = [0, 0, 0, 0, 0];
     let movesMade = 0;
@@ -125,6 +127,7 @@ describe.runIf(process.env.GF_BALANCE)('balance', () => {
           w++;
           left.push(run.left);
           if (run.stars === 3) t++;
+          meteor += winGain(run.left, run.stars)[Booster.Meteor];
           continue;
         }
         for (const booster of Object.values(Booster)) {
@@ -141,7 +144,7 @@ describe.runIf(process.env.GF_BALANCE)('balance', () => {
     const perWin = mean(leftAtWin);
     console.log(`🎯 win rate ${round(wins / runs)} (twin predicts ${round(mean(twin))}, moves ${round(mean(granted), 1)}) | 3★ per win ${round(three / wins)} | moves left per win ${round(perWin, 1)} (median ${[...leftAtWin].sort((a, b) => a - b)[Math.floor(leftAtWin.length / 2)]})`);
     console.log(`💎 specials per 100 moves: line ${round((100 * (made[Special.LineH] + made[Special.LineV])) / movesMade, 1)} bomb ${round((100 * made[Special.Bomb]) / movesMade, 1)} prism ${round((100 * made[Special.Prism]) / movesMade, 1)}`);
-    console.log(`⭐ wins per star: ${round(EARN.star.unit / perWin, 1)} | ☄️ wins per meteor: ${round(EARN.meteor.unit / (three / wins), 1)}`);
+    console.log(`⭐ wins per star: ${round(EARN.star.unit / perWin, 1)} | ☄️ wins per meteor: ${round(EARN.meteor.unit / (meteor / wins), 1)}`);
     for (const booster of Object.values(Booster)) {
       const [saved, lost] = rescue[booster];
       console.log(`🛟 ${booster} turns ${saved}/${lost} lost runs into wins (${round(saved / Math.max(1, lost))})`);

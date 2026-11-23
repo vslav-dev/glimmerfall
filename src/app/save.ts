@@ -1,4 +1,4 @@
-import { type Charges, newCharges } from '@/app/boosters';
+import { type Charges, EARN, newCharges } from '@/app/boosters';
 import { DEFAULTS_ID, type SoundChoice } from '@/audio/sounds';
 import type { GameState } from '@/core/types';
 import type { LevelDraft } from '@/gen/generator';
@@ -11,7 +11,7 @@ import { timed } from '@/telemetry/perf';
 import type { FxChoice } from '@/view/fx/switches';
 
 const KEY = 'glimmerfall-save';
-const VERSION = 6;
+const VERSION = 7;
 
 export interface Settings {
   sound: boolean;
@@ -95,8 +95,13 @@ export function defaultSave(): SaveData {
 }
 
 export async function loadSave(): Promise<SaveData> {
-  const data = await loadJson<SaveData>(KEY);
+  let data = await loadJson<SaveData>(KEY);
   if (!data) return defaultSave();
+  // v7 counts the meteor's charge in twentieths, not thirds: a v6 save keeps its share of the way and all the rest.
+  if (data.version === 6) {
+    const meteor = Math.round((data.boosters.meteor * EARN.meteor.unit) / 3);
+    data = { ...data, version: VERSION, boosters: { ...data.boosters, meteor } };
+  }
   const defaults = defaultSave();
   // Settings merge one level deeper: a setting added later gets its default in an older save.
   const settings = { ...defaults.settings, ...data.settings };
