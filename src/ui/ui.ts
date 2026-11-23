@@ -388,7 +388,7 @@ export class Ui {
           (def.stars[1] / def.stars[2]) * 100,
           def.stars[1].toLocaleString('ru-RU'),
         )}${this.markHtml(100, def.stars[2].toLocaleString('ru-RU'))}</div></div>
-        <b class="value">0</b>
+        <div class="score"><b class="value">0</b></div>
       </div>`;
     const pops = (): boolean => this.on(Fx.HudPop);
     this.hudMoves = new Counter(this.hud.querySelector('.hud-moves .value')!, pops);

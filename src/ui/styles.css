@@ -352,7 +352,10 @@ body {
   color: var(--gold);
 }
 
-.hud-score .value {
+/* the capsule stays still while the number inside it pops */
+.hud-score .score {
+  display: flex;
+  justify-content: center;
   min-width: 72px;
   /* a glass capsule centered on the track's line (7 + 18 / 2 = 16 from the top), so the number sits level with the bar */
   margin: 2px 0 14px;
@@ -362,7 +365,6 @@ body {
   border: var(--rim);
   box-shadow: var(--well);
   line-height: 20px;
-  text-align: center;
   font-size: 17px;
   font-variant-numeric: tabular-nums;
 }
