@@ -11,7 +11,7 @@ import { Atlas } from '@/view/atlas';
 import { Camera } from '@/view/fx/camera';
 import { blastPower, cascadeBoost, feel, METEOR_HITS } from '@/view/fx/impact';
 import { SpritePool } from '@/view/fx/pool';
-import { blastFx, comboCharge, createFx, flash, type FxKit, land, type Layer, layerFx, popPiece, ray, strikeFall, WHITE } from '@/view/fx/stage';
+import { blastFx, breakLayer, comboCharge, createFx, flash, type FxKit, knock, land, type Layer, layerFx, popPiece, ray, strikeFall, WHITE } from '@/view/fx/stage';
 import { Fx, FxSwitches } from '@/view/fx/switches';
 import { planClear, strikeOf } from '@/view/fx/timeline';
 import { Particles } from '@/view/particles';
@@ -215,6 +215,7 @@ export class BoardView {
       y: (r) => this.y(r),
       texture: (name) => this.atlas.get(name),
       light: this.lightLayer,
+      matter: this.matterLayer,
       pool: this.pool,
       particles: this.particles,
       camera: this.camera,
@@ -750,14 +751,24 @@ export class BoardView {
     return true;
   }
 
+  /**
+   * A layer took a hit. Ice melts as before; with debris on, a crate or chain comes apart: the bits it lost fly
+   * off, a crate still standing jolts, and the last one is gone at once, its pieces taking its place.
+   */
   private setLayer(layer: Layer, map: Map<number, LayerSprite>, i: number, value: number, frame: (v: number) => string): void {
     const entry = map.get(i);
     if (!entry || entry.value === value) return;
     this.input.onLayerHit(layer);
     const { sprite } = entry;
     layerFx(this.kit, layer, sprite.x, sprite.y);
+    const breaks = layer !== 'ice' && this.fx.on(Fx.Debris);
+    if (breaks) breakLayer(this.kit, layer, sprite.x, sprite.y, entry.value, value);
     if (value === 0) {
       map.delete(i);
+      if (breaks) {
+        sprite.destroy();
+        return;
+      }
       void this.scene.tweens
         .run(220, (k) => {
           sprite.scale.set(1 + k * 0.3);
@@ -768,7 +779,8 @@ export class BoardView {
     }
     entry.value = value;
     sprite.texture = this.atlas.get(frame(value));
-    void this.scene.tweens.run(200, (k) => sprite.scale.set(1.15 - 0.15 * k), { ease: Ease.outQuad });
+    if (breaks && layer === 'crate') knock(this.kit, sprite);
+    else void this.scene.tweens.run(200, (k) => sprite.scale.set(1.15 - 0.15 * k), { ease: Ease.outQuad });
   }
 
   // ---------- aim ----------

@@ -32,6 +32,13 @@ export const FrameName = {
   ice: (layers: number): string => `ice-${layers}`,
   crate: (strength: number): string => `crate-${strength}`,
   chain: (layers: number): string => `chain-${layers}`,
+  /** the bit a hit knocks off a crate, leaving it at `strength` */
+  crateBit: (strength: number): string => `crate-bit-${strength}`,
+  /** one of the boards a crate bursts into */
+  cratePiece: (k: number): string => `crate-piece-${k}`,
+  /** a torn-off run of this many chain links */
+  chainBit: (links: number): string => `chain-bit-${links}`,
+  ChainBolt: 'chain-bolt',
   Dot: 'dot',
   Star: 'star',
   Ring: 'ring',
@@ -65,6 +72,107 @@ const CHAIN_LAYERS: { from: [number, number]; to: [number, number]; sag: number 
   { from: [0.07, 0.74], to: [0.93, 0.7], sag: 0.12 },
 ];
 
+/**
+ * A piece of a blocker thrown off as it breaks. Its frame is drawn centered on the piece; `x`, `y` say
+ * where that center sits from the cell's center and `angle` how the frame is turned there, cell units.
+ */
+export interface Fragment {
+  frame: string;
+  x: number;
+  y: number;
+  angle: number;
+}
+
+type Pt = [number, number];
+
+/**
+ * Crate geometry in its unit square (the cell minus the crate's margin): the frame board width and the height
+ * of each of the three planks inside it. The frame's edges in that square bound every knocked-out area.
+ */
+const CRATE_INSET = 0.06;
+const CRATE_FRAME = 0.15;
+const CRATE_PLANK = (1 - CRATE_FRAME * 2) / 3;
+const CELL_LO = -CRATE_INSET / (1 - CRATE_INSET * 2);
+const CELL_HI = 1 - CELL_LO;
+
+/** The first hit knocks the top right corner off: its broken edge runs from the top board down the right one. */
+const CRATE_CORNER_EDGE: Pt[] = [[0.62, CELL_LO], [0.66, 0.05], [0.75, 0.07], [0.79, 0.15], [0.88, 0.18], [0.9, 0.27], [CELL_HI, 0.33]];
+const CRATE_CORNER: Pt[] = [...CRATE_CORNER_EDGE, [CELL_HI, CELL_LO]];
+/** The second breaks a chunk out of the bottom plank, clear of the brace. */
+const CRATE_HOLE: Pt[] = [[0.47, 0.7], [0.54, 0.64], [0.62, 0.67], [0.69, 0.62], [0.77, 0.66], [0.83, 0.63], [0.83, 0.74], [0.77, 0.8], [0.68, 0.78], [0.6, 0.82], [0.52, 0.77]];
+
+/** A row of the crate from `x0` to `x1`, snapped at `at` along a jagged break, or whole. */
+function cratePieces(y0: number, y1: number, x0: number, x1: number, at: number | null): Pt[][] {
+  if (at === null) return [[[x0, y0], [x1, y0], [x1, y1], [x0, y1]]];
+  const h = y1 - y0;
+  const jag: Pt[] = [[at + 0.04, y0 + h * 0.35], [at - 0.03, y0 + h * 0.7]];
+  return [
+    [[x0, y0], [at, y0], ...jag, [at, y1], [x0, y1]],
+    [[at, y0], [x1, y0], [x1, y1], [at, y1], jag[1], jag[0]],
+  ];
+}
+
+/** The last hit bursts the crate into its boards: the frame's four, the planks snapped across the grain. */
+const CRATE_BURST: Pt[][] = [
+  ...cratePieces(CELL_LO, CRATE_FRAME, CELL_LO, CELL_HI, 0.45),
+  ...cratePieces(1 - CRATE_FRAME, CELL_HI, CELL_LO, CELL_HI, null),
+  ...cratePieces(CRATE_FRAME, 1 - CRATE_FRAME, CELL_LO, CRATE_FRAME, null),
+  ...cratePieces(CRATE_FRAME, 1 - CRATE_FRAME, 1 - CRATE_FRAME, CELL_HI, null),
+  ...[0.38, null, 0.58].flatMap((at, k) =>
+    cratePieces(CRATE_FRAME + k * CRATE_PLANK, CRATE_FRAME + (k + 1) * CRATE_PLANK, CRATE_FRAME, 1 - CRATE_FRAME, at),
+  ),
+];
+
+/** Middle of a polygon in the crate's unit square, and that point from the cell's center, cell units. */
+function crateCenter(points: Pt[]): { unit: Pt; cell: Pt } {
+  const unit: Pt = [points.reduce((a, p) => a + p[0], 0) / points.length, points.reduce((a, p) => a + p[1], 0) / points.length];
+  const k = 1 - CRATE_INSET * 2;
+  return { unit, cell: [CRATE_INSET + unit[0] * k - 0.5, CRATE_INSET + unit[1] * k - 0.5] };
+}
+
+const crateFragment = (frame: string, points: Pt[]): Fragment => {
+  const [x, y] = crateCenter(points).cell;
+  return { frame, x, y, angle: 0 };
+};
+
+/** The bit a hit knocks off, by the strength the crate is left with. */
+export const CRATE_BITS: Record<number, Fragment> = {
+  2: crateFragment(FrameName.crateBit(2), CRATE_CORNER),
+  1: crateFragment(FrameName.crateBit(1), CRATE_HOLE),
+};
+export const CRATE_PIECES: Fragment[] = CRATE_BURST.map((points, k) => crateFragment(FrameName.cratePiece(k), points));
+
+/** Link pitch along a chain, cell units. */
+const CHAIN_PITCH = 0.1;
+/** Where each layer's chain tears, as shares of its length: three runs of links, so no two layers tear alike. */
+const CHAIN_TEARS: [number, number][] = [
+  [0.3, 0.64],
+  [0.38, 0.7],
+  [0.27, 0.6],
+  [0.42, 0.74],
+];
+
+/** Link count of each run frame the layers tear into. */
+const CHAIN_RUN_LINKS = new Map<string, number>();
+
+/** A layer's chain torn in three runs of links, each straight from its first link to its last, and its two bolts. */
+function chainFragments(spec: (typeof CHAIN_LAYERS)[number], tears: [number, number]): Fragment[] {
+  const { links, ends } = chainLinks(1, spec.from, spec.to, spec.sag);
+  const n = links.length;
+  const bounds = [0, Math.round(tears[0] * n), Math.round(tears[1] * n), n];
+  const runs = bounds.slice(1).map((end, k): Fragment => {
+    const a = links[bounds[k]];
+    const b = links[end - 1];
+    const frame = FrameName.chainBit(end - bounds[k]);
+    CHAIN_RUN_LINKS.set(frame, end - bounds[k]);
+    return { frame, x: (a.x + b.x) / 2 - 0.5, y: (a.y + b.y) / 2 - 0.5, angle: Math.atan2(b.y - a.y, b.x - a.x) };
+  });
+  return [...runs, ...ends.map(([x, y]): Fragment => ({ frame: FrameName.ChainBolt, x: x - 0.5, y: y - 0.5, angle: 0 }))];
+}
+
+/** What flies off as each layer's chain breaks, bottom layer first. */
+export const CHAIN_BITS: Fragment[][] = CHAIN_LAYERS.map((spec, k) => chainFragments(spec, CHAIN_TEARS[k]));
+
 type Painter = (ctx: CanvasRenderingContext2D, s: number) => void;
 
 function buildPainters(): Map<string, Painter> {
@@ -82,6 +190,12 @@ function buildPainters(): Map<string, Painter> {
   painters.set(FrameName.ice(2), (ctx, s) => drawIce(ctx, s, 2));
   for (const strength of [1, 2, 3]) painters.set(FrameName.crate(strength), (ctx, s) => drawCrate(ctx, s, strength));
   for (let layers = 1; layers <= CHAIN_LAYERS.length; layers++) painters.set(FrameName.chain(layers), (ctx, s) => drawChain(ctx, s, layers));
+  // A bit is cut from the crate as it was before the hit; the burst, from the last crate.
+  painters.set(FrameName.crateBit(2), (ctx, s) => drawCrateFragment(ctx, s, CRATE_CORNER, 3));
+  painters.set(FrameName.crateBit(1), (ctx, s) => drawCrateFragment(ctx, s, CRATE_HOLE, 2));
+  CRATE_BURST.forEach((points, k) => painters.set(FrameName.cratePiece(k), (ctx, s) => drawCrateFragment(ctx, s, points, 1)));
+  for (const [frame, links] of CHAIN_RUN_LINKS) painters.set(frame, (ctx, s) => drawChainRun(ctx, s, links));
+  painters.set(FrameName.ChainBolt, (ctx, s) => drawBolt(ctx, s, s / 2, s / 2));
   painters.set(FrameName.Dot, drawDot);
   painters.set(FrameName.Star, (ctx, s) => {
     ctx.fillStyle = '#fff';
@@ -334,12 +448,6 @@ const CRATE_WOOD = {
   hollow: '#2c170a',
 };
 
-/** Unit-square geometry: frame board width and the height of each of the three planks inside it. */
-const CRATE_FRAME = 0.15;
-const CRATE_PLANK = (1 - CRATE_FRAME * 2) / 3;
-
-type Pt = [number, number];
-
 /** Grain per plank: plank index, line height within it, and bend. */
 const CRATE_GRAIN: [number, number, number][] = [
   [0, 0.35, 0.04],
@@ -352,17 +460,26 @@ const CRATE_GRAIN: [number, number, number][] = [
 
 /**
  * The same crate at every strength: a frame of four boards around three planks, crossed by a brace.
- * Each lost point of strength adds damage on top of the previous one: first cracks and a chipped edge,
- * then a snapped brace, a hole and a popped nail.
+ * Each lost point of strength adds damage on top of the previous one, and the wood darkens as it takes it:
+ * first the top right corner is knocked off and the wood cracks, then a chunk of the bottom plank breaks out,
+ * the brace snaps and a nail pops.
  */
 function drawCrate(ctx: CanvasRenderingContext2D, s: number, strength: number): void {
-  const damage = 3 - strength;
-  const inset = s * 0.06;
-  const body = (): void => roundRect(ctx, 0, 0, 1, 1, 0.12);
+  inCrate(ctx, s, () => drawCrateBody(ctx, s, 3 - strength));
+}
+
+/** Paints in the crate's unit square: the cell minus the crate's margin. */
+function inCrate(ctx: CanvasRenderingContext2D, s: number, paint: () => void): void {
+  const inset = s * CRATE_INSET;
   ctx.save();
   ctx.translate(inset, inset);
   ctx.scale(s - inset * 2, s - inset * 2);
+  paint();
+  ctx.restore();
+}
 
+function drawCrateBody(ctx: CanvasRenderingContext2D, s: number, damage: number): void {
+  const body = (): void => roundRect(ctx, 0, 0, 1, 1, 0.12);
   // Shadow offsets are in pixels: the transform does not scale them.
   ctx.save();
   ctx.shadowColor = 'rgba(0,0,0,0.35)';
@@ -379,12 +496,55 @@ function drawCrate(ctx: CanvasRenderingContext2D, s: number, strength: number): 
   drawCratePlanks(ctx, damage);
   drawCrateBrace(ctx, s, damage);
   drawCrateFrame(ctx, s, damage);
+  ctx.fillStyle = `rgba(40,16,2,${damage * 0.12})`;
+  ctx.fillRect(0, 0, 1, 1);
   ctx.restore();
 
   body();
   ctx.lineWidth = 0.04;
   ctx.strokeStyle = CRATE_WOOD.line;
   ctx.stroke();
+  if (damage >= 1) knockOut(ctx, CRATE_CORNER_EDGE, CRATE_CORNER, body);
+}
+
+/**
+ * A bit gone from the crate: the frame's own pixels erased there, so the tile shows through, and bare wood
+ * along the broken edge. The erased area stays inside the cell's frame: past it lie the atlas's other frames.
+ */
+function knockOut(ctx: CanvasRenderingContext2D, edge: Pt[], area: Pt[], body: () => void): void {
+  ctx.save();
+  body();
+  ctx.clip();
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  path(ctx, edge, false);
+  ctx.lineWidth = 0.06;
+  ctx.strokeStyle = CRATE_WOOD.raw;
+  ctx.stroke();
+  ctx.restore();
+  ctx.save();
+  ctx.globalCompositeOperation = 'destination-out';
+  path(ctx, area, true);
+  ctx.fill();
+  ctx.restore();
+}
+
+/**
+ * A piece of the crate as it was at `strength`, drawn centered on the piece, so a sprite turns about its middle.
+ * Clipped to the frame first: a centered piece must not spill into the atlas's other frames.
+ */
+function drawCrateFragment(ctx: CanvasRenderingContext2D, s: number, points: Pt[], strength: number): void {
+  const [x, y] = crateCenter(points).cell;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, s, s);
+  ctx.clip();
+  ctx.translate(-x * s, -y * s);
+  inCrate(ctx, s, () => {
+    path(ctx, points, true);
+    ctx.clip();
+    drawCrateBody(ctx, s, 3 - strength);
+  });
   ctx.restore();
 }
 
@@ -424,15 +584,14 @@ function drawCratePlanks(ctx: CanvasRenderingContext2D, damage: number): void {
   }
   if (damage >= 2) {
     crateCrack(ctx, [[0.62, 0.53], [0.7, 0.49], [0.77, 0.535], [0.86, 0.5]]);
-    const hole: Pt[] = [[0.49, 0.7], [0.55, 0.65], [0.6, 0.685], [0.66, 0.64], [0.74, 0.69], [0.71, 0.76], [0.63, 0.795], [0.55, 0.77]];
-    path(ctx, hole, true);
+    path(ctx, CRATE_HOLE, true);
     ctx.fillStyle = CRATE_WOOD.hollow;
     ctx.fill();
     ctx.lineJoin = 'round';
     ctx.lineWidth = 0.022;
     ctx.strokeStyle = CRATE_WOOD.raw;
     ctx.stroke();
-    crateCrack(ctx, [[0.74, 0.69], [0.8, 0.66], [0.86, 0.685]]);
+    crateCrack(ctx, [[0.47, 0.7], [0.4, 0.73], [0.33, 0.7], [0.25, 0.74]]);
   }
 }
 
@@ -525,8 +684,8 @@ function drawCrateFrame(ctx: CanvasRenderingContext2D, s: number, damage: number
   ctx.stroke();
 
   if (damage >= 1) {
-    crateChip(ctx, [[0.5, -0.01], [0.55, 0.075], [0.63, 0.05], [0.69, -0.01]]);
-    crateCrack(ctx, [[0.69, 0.02], [0.75, 0.06], [0.8, 0.045], [0.86, 0.09]]);
+    crateChip(ctx, [[0.2, -0.01], [0.25, 0.075], [0.33, 0.05], [0.39, -0.01]]);
+    crateCrack(ctx, [[0.61, 0.09], [0.55, 0.06], [0.49, 0.1], [0.43, 0.08]]);
   }
   if (damage >= 2) {
     crateChip(ctx, [[1.01, 0.72], [0.92, 0.79], [0.95, 0.87], [1.01, 0.9]]);
@@ -536,8 +695,8 @@ function drawCrateFrame(ctx: CanvasRenderingContext2D, s: number, damage: number
   const nails: Pt[] = [[F / 2, F / 2], [G + F / 2, F / 2], [F / 2, G + F / 2], [G + F / 2, G + F / 2]];
   nails.forEach(([x, y], k) => {
     ctx.beginPath();
-    // The top-right nail pops out on the last strength, leaving its hole.
-    if (damage >= 2 && k === 1) {
+    // The bottom-left nail pops out on the last strength, leaving its hole (the top-right one went with the corner).
+    if (damage >= 2 && k === 2) {
       ctx.arc(x, y, 0.017, 0, Math.PI * 2);
       ctx.fillStyle = CRATE_WOOD.hollow;
       ctx.fill();
@@ -591,22 +750,33 @@ function crateChip(ctx: CanvasRenderingContext2D, points: Pt[]): void {
 
 /** One sagging chain per layer, each laid over the previous; breaking a layer removes the top chain. */
 function drawChain(ctx: CanvasRenderingContext2D, s: number, layers: number): void {
-  for (const spec of CHAIN_LAYERS.slice(0, layers)) drawHangingChain(ctx, s, spec.from, spec.to, spec.sag);
+  for (const spec of CHAIN_LAYERS.slice(0, layers)) {
+    const { links, ends } = chainLinks(s, spec.from, spec.to, spec.sag);
+    drawLinks(ctx, s, links);
+    for (const [x, y] of ends) drawBolt(ctx, s, x, y);
+  }
 }
 
-function drawHangingChain(ctx: CanvasRenderingContext2D, s: number, from: [number, number], to: [number, number], sag: number): void {
+interface Link {
+  x: number;
+  y: number;
+  angle: number;
+}
+
+/** A chain hanging from `from` to `to` (cell units) in a cell of `s` px: its links, evenly spaced, and its bolts. */
+function chainLinks(s: number, from: Pt, to: Pt, sag: number): { links: Link[]; ends: Pt[] } {
   // Quadratic curve whose middle dips `sag` below the straight line between the anchors.
   const [x0, y0] = [from[0] * s, from[1] * s];
   const [x2, y2] = [to[0] * s, to[1] * s];
   const [x1, y1] = [(x0 + x2) / 2, (y0 + y2) / 2 + sag * s * 2];
-  const at = (t: number): [number, number] => {
+  const at = (t: number): Pt => {
     const u = 1 - t;
     return [u * u * x0 + 2 * u * t * x1 + t * t * x2, u * u * y0 + 2 * u * t * y1 + t * t * y2];
   };
 
   // Walk the curve by arc length so links sit at an even pitch.
-  const pitch = s * 0.1;
-  const links: { x: number; y: number; angle: number }[] = [];
+  const pitch = s * CHAIN_PITCH;
+  const links: Link[] = [];
   let [px, py] = at(0);
   let travelled = pitch / 2;
   for (let k = 1; k <= 200; k++) {
@@ -620,7 +790,16 @@ function drawHangingChain(ctx: CanvasRenderingContext2D, s: number, from: [numbe
     travelled -= step;
     [px, py] = [x, y];
   }
+  return { links, ends: [[x0, y0], [x2, y2]] };
+}
 
+/** A torn-off run of links, straight along the frame's middle. */
+function drawChainRun(ctx: CanvasRenderingContext2D, s: number, count: number): void {
+  const links = Array.from({ length: count }, (_, k): Link => ({ x: s / 2 + (k - (count - 1) / 2) * s * CHAIN_PITCH, y: s / 2, angle: 0 }));
+  drawLinks(ctx, s, links);
+}
+
+function drawLinks(ctx: CanvasRenderingContext2D, s: number, links: Link[]): void {
   // Links alternate: an open oval facing us, then one seen edge-on as a short bar.
   const shape = (k: number): void => {
     ctx.beginPath();
@@ -653,23 +832,20 @@ function drawHangingChain(ctx: CanvasRenderingContext2D, s: number, from: [numbe
   pass(s * 0.05, '#1f232b', true);
   pass(s * 0.03, '#a9b3c3', false);
   pass(s * 0.011, 'rgba(255,255,255,0.75)', false);
+}
 
-  // Bolts the chain hangs from.
-  for (const [bx, by] of [
-    [x0, y0],
-    [x2, y2],
-  ]) {
-    const g = ctx.createRadialGradient(bx - s * 0.015, by - s * 0.015, 0, bx, by, s * 0.05);
-    g.addColorStop(0, '#f2f5fa');
-    g.addColorStop(1, '#5d6676');
-    ctx.beginPath();
-    ctx.arc(bx, by, s * 0.042, 0, Math.PI * 2);
-    ctx.fillStyle = g;
-    ctx.fill();
-    ctx.lineWidth = s * 0.014;
-    ctx.strokeStyle = '#1f232b';
-    ctx.stroke();
-  }
+/** A bolt a chain hangs from. */
+function drawBolt(ctx: CanvasRenderingContext2D, s: number, bx: number, by: number): void {
+  const g = ctx.createRadialGradient(bx - s * 0.015, by - s * 0.015, 0, bx, by, s * 0.05);
+  g.addColorStop(0, '#f2f5fa');
+  g.addColorStop(1, '#5d6676');
+  ctx.beginPath();
+  ctx.arc(bx, by, s * 0.042, 0, Math.PI * 2);
+  ctx.fillStyle = g;
+  ctx.fill();
+  ctx.lineWidth = s * 0.014;
+  ctx.strokeStyle = '#1f232b';
+  ctx.stroke();
 }
 
 function drawSparkle(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, alpha: number): void {

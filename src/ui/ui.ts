@@ -53,6 +53,8 @@ const THEMES = 5;
 const STAR_PATH = 'M12 2.4l2.95 6.07 6.65.95-4.8 4.7 1.13 6.63L12 17.6l-5.93 3.15 1.13-6.63-4.8-4.7 6.65-.95z';
 const starSvg = (cls: string): string => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="${STAR_PATH}"/></svg>`;
 const ICON_SIZE = 72;
+/** Two rounded bars: a glyph sits off center in a round button, a path does not. */
+const PAUSE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="5" width="4.2" height="14" rx="1.6"/><rect x="13.8" y="5" width="4.2" height="14" rx="1.6"/></svg>';
 /**
  * A flashed word pops in, holds and drifts up as it fades: opacity and transform only, run by the compositor.
  * A lone word holds long enough to read; in a fast cascade each next word cuts the previous one short,
@@ -84,6 +86,7 @@ export class Ui {
   private hudScore: Counter | null = null;
   private hudGoalCounters: Counter[] = [];
   private hudFill: HTMLElement | null = null;
+  private hudFront: HTMLElement | null = null;
   private hudStars: HTMLElement[] = [];
   private hudGoals: HTMLElement[] = [];
   private resetArmed = false;
@@ -376,9 +379,9 @@ export class Ui {
     this.hud.innerHTML = `
       <div class="hud-moves"><span class="label">${S.moves}</span><b class="value"></b></div>
       <div class="hud-goals" data-action="${Action.Goals}" role="button" aria-label="${S.goals}">${def.objectives.map((o) => this.goalHtml(o, o.target)).join('')}</div>
-      <button class="btn icon" data-action="${Action.Pause}" aria-label="${S.paused}">❚❚</button>
+      <button class="btn icon" data-action="${Action.Pause}" aria-label="${S.paused}">${PAUSE_ICON}</button>
       <div class="hud-score">
-        <div class="bar"><div class="track"><div class="fill"></div>${this.markHtml(0, '')}${this.markHtml(
+        <div class="bar"><div class="track"><div class="fill"></div><div class="front"></div>${this.markHtml(0, '')}${this.markHtml(
           (def.stars[1] / def.stars[2]) * 100,
           def.stars[1].toLocaleString('ru-RU'),
         )}${this.markHtml(100, def.stars[2].toLocaleString('ru-RU'))}</div></div>
@@ -388,6 +391,7 @@ export class Ui {
     this.hudMoves = new Counter(this.hud.querySelector('.hud-moves .value')!, pops);
     this.hudScore = new Counter(this.hud.querySelector('.hud-score .value')!, pops);
     this.hudFill = this.hud.querySelector('.fill');
+    this.hudFront = this.hud.querySelector('.front');
     this.hudStars = [...this.hud.querySelectorAll<HTMLElement>('.mark')];
     this.hudGoals = [...this.hud.querySelectorAll<HTMLElement>('.hud-goals .goal')];
     this.hudGoalCounters = this.hudGoals.map((el) => new Counter(el.querySelector('b')!, pops));
@@ -402,8 +406,13 @@ export class Ui {
     this.hudMoves?.set(state.movesLeft);
     this.hud.querySelector('.hud-moves')?.classList.toggle('low', state.movesLeft <= 5);
     this.hudScore?.set(state.score);
-    // clip-path keeps the rounded ends and, unlike width, costs no layout.
-    if (this.hudFill) this.hudFill.style.clipPath = `inset(0 ${(1 - Math.min(1, state.score / def.stars[2])) * 100}% 0 0 round 99px)`;
+    // clip-path keeps the rounded ends and, unlike width, costs no layout; the bright front rides along by transform.
+    const fill = Math.min(1, state.score / def.stars[2]);
+    if (this.hudFill) this.hudFill.style.clipPath = `inset(0 ${(1 - fill) * 100}% 0 0 round 99px)`;
+    if (this.hudFront) {
+      this.hudFront.style.transform = `translateX(${(fill - 1) * 100}%)`;
+      this.hudFront.classList.toggle('hidden', fill <= 0 || fill >= 1);
+    }
     // First star: the level is won; the other two: their score thresholds.
     const earned = [state.status === 'won', state.score >= def.stars[1], state.score >= def.stars[2]];
     this.hudStars.forEach((el, k) => el.classList.toggle('earned', earned[k]));

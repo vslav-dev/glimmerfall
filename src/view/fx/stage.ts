@@ -1,6 +1,6 @@
 import type { Container, Sprite, Texture } from 'pixi.js';
 import { type Blast, BlastKind, NO_COLOR, type Pos } from '@/core/types';
-import { FrameName } from '@/view/art';
+import { CHAIN_BITS, CRATE_BITS, CRATE_PIECES, type Fragment, FrameName } from '@/view/art';
 import { Burst } from '@/view/fx/bursts';
 import type { Camera } from '@/view/fx/camera';
 import { bombRadius } from '@/view/fx/impact';
@@ -31,6 +31,23 @@ const MAX_BOLTS = 36;
 const POP_MS = 140;
 const POP_BREAK = 0.3;
 
+/**
+ * How broken bits fly: kicked out at `kick` cells/s (each one 0.6–1.4 of it), up at `lift`, tumbling at up to
+ * `spin` rad/s either way, falling at `gravity` cells/s² for about `ms`, fading over the last share `fade`.
+ */
+interface Flight {
+  kick: number;
+  lift: number;
+  spin: number;
+  gravity: number;
+  ms: number;
+  fade: number;
+}
+
+const CHAIN_FLIGHT: Flight = { kick: 2.6, lift: 1.6, spin: 7, gravity: 16, ms: 700, fade: 0.4 };
+const CRATE_BIT_FLIGHT: Flight = { kick: 2.8, lift: 2.4, spin: 9, gravity: 18, ms: 620, fade: 0.4 };
+const CRATE_FLIGHT: Flight = { kick: 2.2, lift: 2.6, spin: 6, gravity: 17, ms: 760, fade: 0.35 };
+
 /** What an effect may use of the board: coordinates, frames, layers and the tools that animate them. */
 export interface FxKit {
   readonly cell: number;
@@ -41,6 +58,8 @@ export interface FxKit {
   texture(name: string): Texture;
   /** additive layer over the pieces */
   readonly light: Container;
+  /** layer over the pieces for what covers: debris */
+  readonly matter: Container;
   readonly pool: SpritePool;
   readonly particles: Particles;
   readonly camera: Camera;
@@ -410,6 +429,56 @@ export function layerFx(kit: FxKit, layer: Layer, x: number, y: number): void {
       kit.particles.emit(Burst.dust, x, y, { ...dust, amount: 0.5 });
       break;
   }
+}
+
+/** A crate or chain comes apart as it goes from `from` layers down to `to`: what each lost layer was flies off and falls. */
+export function breakLayer(kit: FxKit, layer: 'crate' | 'chain', x: number, y: number, from: number, to: number): void {
+  for (let k = from; k > to; k--) {
+    if (layer === 'chain') shatter(kit, CHAIN_BITS[k - 1], x, y, CHAIN_FLIGHT);
+    else if (k > 1) shatter(kit, [CRATE_BITS[k - 1]], x, y, CRATE_BIT_FLIGHT);
+    else shatter(kit, CRATE_PIECES, x, y, CRATE_FLIGHT);
+  }
+}
+
+/**
+ * Bits fly apart from the cell's center at (`x`, `y`) and fall: each is kicked out along the line from the center
+ * to itself, turned at random a little, and lifted, then gravity bends its flight into a parabola (a quadratic
+ * Bézier) as it tumbles and fades. The kick, lift, spin and length are drawn anew for every bit, every time.
+ */
+function shatter(kit: FxKit, fragments: readonly Fragment[], x: number, y: number, f: Flight): void {
+  const cell = kit.cell;
+  for (const bit of fragments) {
+    const s = kit.pool.acquire(kit.matter, kit.texture(bit.frame), 'normal');
+    const [x0, y0] = [x + bit.x * cell, y + bit.y * cell];
+    // A bit at the very center has no line of its own: it goes any way.
+    const out = Math.hypot(bit.x, bit.y) > 0.05 ? Math.atan2(bit.y, bit.x) : Math.random() * Math.PI * 2;
+    const dir = out + (Math.random() - 0.5) * 1.1;
+    const speed = f.kick * (0.6 + 0.8 * Math.random());
+    const vx = Math.cos(dir) * speed;
+    const vy = Math.sin(dir) * speed * 0.6 - f.lift * (0.5 + Math.random());
+    const spin = (Math.random() - 0.5) * 2 * f.spin;
+    const ms = f.ms * (0.85 + 0.3 * Math.random());
+    const update = (k: number): void => {
+      const t = (k * ms) / 1000;
+      s.position.set(x0 + vx * t * cell, y0 + (vy * t + (f.gravity * t * t) / 2) * cell);
+      s.rotation = bit.angle + spin * t;
+      s.scale.set(1 - 0.2 * k);
+      s.alpha = k < 1 - f.fade ? 1 : (1 - k) / f.fade;
+    };
+    update(0);
+    void kit.tweens.run(ms, update, { ease: Ease.linear }).then(() => kit.pool.release(s));
+  }
+}
+
+/** A hit crate jolts: it swells, then rocks to one side and back, settling as the bit it lost flies off. */
+export function knock(kit: FxKit, sprite: Sprite): void {
+  const side = Math.random() < 0.5 ? -1 : 1;
+  void kit.tweens.run(360, (k) => {
+    if (sprite.destroyed) return;
+    const d = (1 - k) ** 2;
+    sprite.rotation = side * 0.18 * Math.sin(k * Math.PI * 3) * d;
+    sprite.scale.set(1 + 0.14 * d);
+  }, { ease: Ease.linear });
 }
 
 /** A combo gathers its power: light and sparkles pulled into its center, the two specials drawn together. */
