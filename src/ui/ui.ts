@@ -53,6 +53,8 @@ const THEMES = 5;
 const STAR_PATH = 'M12 2.4l2.95 6.07 6.65.95-4.8 4.7 1.13 6.63L12 17.6l-5.93 3.15 1.13-6.63-4.8-4.7 6.65-.95z';
 const starSvg = (cls: string): string => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="${STAR_PATH}"/></svg>`;
 const ICON_SIZE = 72;
+/** A met goal's badge in the HUD: a little green orb with a check, the star marks' twin. */
+const CHECK_BADGE = '<i class="check"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12.5l4 4L18 8"/></svg></i>';
 /** Two rounded bars: a glyph sits off center in a round button, a path does not. */
 const PAUSE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="5" width="4.2" height="14" rx="1.6"/><rect x="13.8" y="5" width="4.2" height="14" rx="1.6"/></svg>';
 /**
@@ -381,7 +383,7 @@ export class Ui {
     this.hud.classList.remove('off');
     this.hud.innerHTML = `
       <div class="hud-moves"><span class="label">${S.moves}</span><b class="value"></b></div>
-      <div class="hud-goals" data-action="${Action.Goals}" role="button" aria-label="${S.goals}">${def.objectives.map((o) => this.goalHtml(o, o.target)).join('')}</div>
+      <div class="hud-goals" data-action="${Action.Goals}" role="button" aria-label="${S.goals}">${def.objectives.map((o) => this.goalHtml(o, o.target, true)).join('')}</div>
       <button class="btn icon" data-action="${Action.Pause}" aria-label="${S.paused}">${PAUSE_ICON}</button>
       <div class="hud-score">
         <div class="bar"><div class="track"><div class="fill"></div>${this.markHtml(0, '')}${this.markHtml(
@@ -419,8 +421,9 @@ export class Ui {
       if (!el) return;
       const left = Math.max(0, o.target - state.progress[k]);
       // Every goal counts down, points included: the number is always "how much is left".
-      this.hudGoalCounters[k].set(left);
+      // A met goal trades it for a check: the zero would tell nothing more, so the number does not roll down to it.
       el.classList.toggle('done', left === 0);
+      if (left > 0) this.hudGoalCounters[k].set(left);
     });
   }
 
@@ -478,10 +481,13 @@ export class Ui {
   /**
    * The number keeps the width of its starting value: goals only count down, so the HUD row
    * never rewraps mid-level and never resizes the board under the player.
+   * In the HUD the number and the check that replaces it share one cell, as wide as the wider of the two
+   * from the start: meeting a goal resizes nothing either.
    */
-  private goalHtml(o: Objective, value: number): string {
+  private goalHtml(o: Objective, value: number, hud = false): string {
     const text = value.toLocaleString('ru-RU');
-    return `<div class="goal">${this.goalIcon(o)}<b style="min-width:${text.length}ch">${text}</b></div>`;
+    const number = `<b style="min-width:${text.length}ch">${text}</b>`;
+    return `<div class="goal">${this.goalIcon(o)}${hud ? `<span class="tally">${number}${CHECK_BADGE}</span>` : number}</div>`;
   }
 
   private goalIcon(o: Objective): string {

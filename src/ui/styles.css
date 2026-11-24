@@ -216,7 +216,6 @@ body {
 }
 
 .goal {
-  position: relative;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -239,25 +238,53 @@ body {
   color: var(--gold);
 }
 
-.goal.done b {
-  color: #7dff9e;
+/* the number and the check that replaces it stack in one cell */
+.goal .tally {
+  display: grid;
+  place-items: center;
 }
 
-/* a badge on the icon, out of flow: finishing a goal adds no width */
-.goal.done::after {
-  content: '✓';
-  position: absolute;
-  left: 22px;
-  bottom: -2px;
+.goal .tally > * {
+  grid-area: 1 / 1;
+}
+
+.goal .tally b {
+  transition: opacity 0.15s;
+}
+
+/* the star marks' green twin; it pops in as the number fades out (transform and opacity only: the compositor's) */
+.goal .check {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #e4ffe9, #5dff9a 55%, #1fae5c);
+  border: 2px solid #c8ffd6;
+  box-shadow: inset 0 -2px 4px rgba(0, 90, 40, 0.45), 0 0 12px rgba(80, 255, 150, 0.7);
+  color: #06331a;
+  opacity: 0;
+  transform: scale(0.3);
+  transition: opacity 0.15s, transform 0.45s cubic-bezier(0.2, 1.6, 0.4, 1);
+}
+
+.goal .check svg {
   width: 16px;
   height: 16px;
-  border-radius: 50%;
-  background: #7dff9e;
-  color: #06261c;
-  font-size: 11px;
-  font-weight: 900;
-  line-height: 16px;
-  text-align: center;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 3.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.goal.done .tally b {
+  opacity: 0;
+}
+
+.goal.done .check {
+  opacity: 1;
+  transform: none;
 }
 
 .hud-score {
