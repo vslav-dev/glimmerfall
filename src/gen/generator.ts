@@ -6,7 +6,7 @@ import { type LevelPlan, planLevel } from '@/gen/plan';
 import type { TwinStyle } from '@/player/model';
 
 /** Bumped whenever the same request builds a different level: a replay needs the generator that built its level. */
-export const GEN_VERSION = 11;
+export const GEN_VERSION = 12;
 /** Levels everyone shares: the tutorial, and the first read of the player's style. */
 const COMMON_LEVELS = 5;
 /** How deliberate the shared levels assume the player to be. */
@@ -25,10 +25,13 @@ const SIMS = 48;
 const FINALE_RUNS = 8;
 const SIM_MAX_MOVES = 64;
 const MIN_MOVES = 14;
-const MAX_MOVES = 50;
+export const MAX_MOVES = 50;
 /** Twin length a level is tuned to at most, so a slow twin still fits the move cap with room for the target win rate. */
 const MAX_TWIN_LENGTH = 40;
 const MIN_COLORS = 4;
+/** Twin moves one pearl roughly takes to bring down: the first guess at a pearl goal, before the length tuner. */
+const PEARL_MOVES = 11;
+const MAX_PEARLS = 8;
 /** Score-goal levels can never be completed early during calibration. */
 const UNREACHABLE = Number.MAX_SAFE_INTEGER;
 /**
@@ -294,15 +297,16 @@ function medianFirstWin(results: SimResult[]): number {
 }
 
 /**
- * Moves every goal towards the intended length: scales collect amounts, and strengthens or weakens crates and ice.
+ * Moves every goal towards the intended length: scales collect and pearl amounts, and strengthens or weakens crates and ice.
  * A twin that never wins gets every goal halved. Returns whether it changed anything.
  */
 function adjustLength(level: LevelDef, median: number, length: number): boolean {
   const factor = Number.isFinite(median) ? Math.min(3, Math.max(0.5, length / median)) : 0.5;
   let changed = false;
   for (const o of level.objectives) {
-    if (o.kind === ObjectiveKind.Collect) {
-      const target = Math.max(8, Math.round(o.target * factor));
+    if (o.kind === ObjectiveKind.Collect || o.kind === ObjectiveKind.Pearl) {
+      const [min, max] = o.kind === ObjectiveKind.Collect ? [8, Infinity] : [1, MAX_PEARLS];
+      const target = Math.min(max, Math.max(min, Math.round(o.target * factor)));
       if (Math.abs(factor - 1) <= 0.15 || target === o.target) continue;
       o.target = target;
       changed = true;
@@ -372,13 +376,13 @@ function buildLayout(n: number, plan: LevelPlan, seed: number, craft: number, le
   const blockRng: RngHolder = { rng: hashSeed(seed, 22) };
   const goalRng: RngHolder = { rng: hashSeed(seed, 33) };
 
-  const cols = n <= 3 ? 7 : pick(shapeRng, [7, 8, 8]);
-  const rows = Math.min(9, cols + pick(shapeRng, [0, 1, 1]));
-  const mask = makeShape(rows, cols, n, craft, shapeRng);
-  const size = rows * cols;
-
   const colors = chooseColors(n, plan, craft, goalRng);
   const goals = chooseGoals(n, plan, craft, goalRng);
+
+  const cols = n <= 3 ? 7 : pick(shapeRng, [7, 8, 8]);
+  const rows = Math.min(9, cols + pick(shapeRng, [0, 1, 1]));
+  const mask = makeShape(rows, cols, n, craft, goals.includes(ObjectiveKind.Pearl), shapeRng);
+  const size = rows * cols;
   const collectCount = !goals.includes(ObjectiveKind.Collect) ? 0 : n >= 15 && random(goalRng) < 0.2 + 0.4 * craft ? 2 : 1;
   const collect = pickColors(goalRng, collectCount);
 
@@ -403,6 +407,8 @@ function buildLayout(n: number, plan: LevelPlan, seed: number, craft: number, le
       objectives.push({ kind: g, target: ice.filter((v) => v > 0).length, color: NO_COLOR });
     } else if (g === ObjectiveKind.Crate) {
       objectives.push({ kind: g, target: crate.filter((v) => v > 0).length, color: NO_COLOR });
+    } else if (g === ObjectiveKind.Pearl) {
+      objectives.push({ kind: g, target: Math.min(MAX_PEARLS, Math.max(1, Math.round(length / PEARL_MOVES))), color: NO_COLOR });
     } else {
       objectives.push({ kind: g, target: UNREACHABLE, color: NO_COLOR });
     }
@@ -443,6 +449,8 @@ function chooseGoals(n: number, plan: LevelPlan, craft: number, h: RngHolder): O
       return [ObjectiveKind.Crate];
     case Mechanic.Chain:
       return [ObjectiveKind.Collect];
+    case Mechanic.Pearl:
+      return [ObjectiveKind.Pearl];
     case Mechanic.DoubleGoal:
       return [ObjectiveKind.Collect, pick(h, [ObjectiveKind.Ice, ObjectiveKind.Crate])];
   }
@@ -455,6 +463,7 @@ function chooseGoals(n: number, plan: LevelPlan, craft: number, h: RngHolder): O
   ];
   if (plan.mechanics.has(Mechanic.Ice)) pool.push([ObjectiveKind.Ice, 3]);
   if (plan.mechanics.has(Mechanic.Crate)) pool.push([ObjectiveKind.Crate, 3]);
+  if (plan.mechanics.has(Mechanic.Pearl)) pool.push([ObjectiveKind.Pearl, 2]);
 
   const first = weighted(h, pool);
   if (first === ObjectiveKind.Score || !plan.mechanics.has(Mechanic.DoubleGoal) || random(h) >= 0.8 * craft) {
@@ -506,12 +515,17 @@ const SHAPES: ShapeRule[] = [
   (r, c, rows, cols) => !(edge(c, cols) === 0 && edge(r, rows) >= 2),
 ];
 
-function makeShape(rows: number, cols: number, n: number, craft: number, h: RngHolder): number[] {
+/**
+ * `pearls`: the level brings pearls down, so its bottom row stays wide. A pearl over a narrow bottom waits for
+ * a line of three across those few cells, which hardly ever comes: the level would hang on luck.
+ */
+function makeShape(rows: number, cols: number, n: number, craft: number, pearls: boolean, h: RngHolder): number[] {
   const options = n <= 3 ? [SHAPES[0]] : SHAPES.slice(0, 1 + Math.round(craft * (SHAPES.length - 1)));
   for (let attempt = 0; attempt < 10; attempt++) {
     const rule = pick(h, options);
     const mask = Array.from({ length: rows * cols }, (_, i) => (rule(Math.floor(i / cols), i % cols, rows, cols) ? 1 : 0));
-    if (mask.filter(Boolean).length >= rows * cols * 0.7 && isConnected(mask, rows, cols)) return mask;
+    const wide = !pearls || mask.slice(-cols).filter(Boolean).length >= cols - 2;
+    if (wide && mask.filter(Boolean).length >= rows * cols * 0.7 && isConnected(mask, rows, cols)) return mask;
   }
   return new Array<number>(rows * cols).fill(1);
 }

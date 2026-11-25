@@ -1,9 +1,10 @@
 import { type Charges, EARN, newCharges } from '@/app/boosters';
 import { DEFAULTS_ID, type SoundChoice } from '@/audio/sounds';
-import type { GameState } from '@/core/types';
+import { type GameState, Mechanic } from '@/core/types';
 import type { LevelDraft } from '@/gen/generator';
+import { introducedBefore } from '@/gen/plan';
 import { Difficulty } from '@/player/difficulty';
-import { newModel, type PlayerModel, MODEL_VERSION } from '@/player/model';
+import { newModel, type PlayerModel, upgradeModel } from '@/player/model';
 import { initialThreeStars } from '@/player/stars';
 import { loadJson, saveText } from '@/platform/platform';
 import { type AttemptRecord, newRecord } from '@/telemetry/attempt';
@@ -70,6 +71,8 @@ export interface SaveData {
   player: PlayerState;
   /** boosters saved up across levels */
   boosters: Charges;
+  /** mechanics the player has had explained: a level with one not met yet opens with its explanation */
+  met: Mechanic[];
   settings: Settings;
   current: CurrentLevel | null;
 }
@@ -82,6 +85,7 @@ export function defaultSave(): SaveData {
     stars: [],
     player: { model: newModel(), pace: 0, threeStars: initialThreeStars() },
     boosters: newCharges(),
+    met: [],
     settings: {
       sound: true,
       haptics: true,
@@ -107,6 +111,8 @@ export async function loadSave(): Promise<SaveData> {
     data = { ...data, version: VERSION, boosters: { ...data.boosters, meteor } };
   }
   const defaults = defaultSave();
+  // `met` came with the pearls: an older save met every mechanic introduced below its level, the pearls aside.
+  const met = data.met ?? introducedBefore(data.level).filter((m) => m !== Mechanic.Pearl);
   // Settings merge one level deeper: a setting added later gets its default in an older save.
   const settings = { ...defaults.settings, ...data.settings };
   // New sound defaults reach everyone: picks made over older ones (or before they were tracked) start over.
@@ -121,16 +127,16 @@ export async function loadSave(): Promise<SaveData> {
     // settings and the player's seed stay. The level in progress starts over (it may hold sparks), and so does
     // what was learned about the player: the moves it learned from are read differently now.
     const player = data.version === 5 ? { ...defaults.player, pace: data.player.pace, threeStars: data.player.threeStars } : defaults.player;
-    return { ...defaults, seed: data.version >= 4 ? data.seed : defaults.seed, level: data.level, stars: data.stars, player, settings };
+    return { ...defaults, seed: data.version >= 4 ? data.seed : defaults.seed, level: data.level, stars: data.stars, player, met, settings };
   }
   if (data.version !== VERSION) return defaults;
-  // Player fields merge too: one added later starts from its default; a model of another version starts over.
+  // Player fields merge too: one added later starts from its default; a model of another version is carried over or starts over.
   const player = { ...defaults.player, ...data.player };
-  if (player.model.version !== MODEL_VERSION) player.model = newModel();
+  player.model = upgradeModel(player.model);
   // Record fields merge as well: an attempt saved before a field was added gets its default.
   const attempt = data.current?.attempt;
   if (attempt) attempt.record = { ...newRecord(attempt.record.board), ...attempt.record };
-  return { ...defaults, ...data, player, settings };
+  return { ...defaults, ...data, player, met, settings };
 }
 
 /** Writes are serialized so a slow write never lands after a newer one. */

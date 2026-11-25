@@ -74,6 +74,8 @@ interface Gem {
   a: Actor;
   color: number;
   special: Special;
+  /** nothing breaks a pearl: it only falls, and leaves through the bottom */
+  pearl?: boolean;
 }
 
 interface Layer {
@@ -91,7 +93,7 @@ const topFirst = (a: Cell, b: Cell): number => a[0] - b[0] || a[1] - b[1];
 
 /**
  * A demo board and its script. The layout is a row per string, a token per cell: a color digit, with `h`, `v` or `b`
- * for a line or bomb special; `P` a prism; `x` an empty cell; `_` no cell at all (a row of them is a strip for labels).
+ * for a line or bomb special; `P` a prism; `O` a pearl; `x` an empty cell; `_` no cell at all (a row of them is a strip for labels).
  * The builders follow the game's rules (what a match, a blast or a strike does to each layer) and chain.
  */
 export class Scene {
@@ -128,6 +130,12 @@ export class Scene {
 
   public withChain(r: number, c: number): this {
     this.chains.set(this.key([r, c]), this.add(FrameName.chain(1), state(r, c), Z.Chain));
+    return this;
+  }
+
+  /** The bottom of every column is marked: pearls leave there. */
+  public withExits(): this {
+    for (let c = 0; c < COLS; c++) this.add(FrameName.Exit, state(this.rows - 1, c), Z.Ice);
     return this;
   }
 
@@ -325,6 +333,14 @@ export class Scene {
     return this;
   }
 
+  /** A pearl at the bottom leaves through it: it dips through the edge, shrinking and fading, in a glow. */
+  public sink(cell: Cell, t: number): this {
+    this.at(cell)!.a.tween(t, 300, { r: cell[0] + 0.5, s: 0.45, o: 0 }, 'ease-in');
+    this.put(cell, null);
+    this.glow([cell[0] + 0.5, cell[1]], t, 1);
+    return this;
+  }
+
   /** The piece turns into a special in place. */
   public turn(cell: Cell, special: Special, t: number): this {
     const gem = this.at(cell)!;
@@ -378,6 +394,7 @@ export class Scene {
     this.add((r + c) % 2 === 0 ? FrameName.TileA : FrameName.TileB, state(r, c), Z.Tile);
     if (token === 'x') return null;
     if (token === 'P') return this.addGem(r, c, NO_COLOR, Special.Prism);
+    if (token === 'O') return { a: this.add(FrameName.Pearl, state(r, c), Z.Gem), color: NO_COLOR, special: Special.None, pearl: true };
     return this.addGem(r, c, Number(token[0]), SPECIALS[token[1]] ?? Special.None);
   }
 
@@ -435,7 +452,7 @@ export class Scene {
       const at = t + steps(cell, origin) * WAVE_MS;
       const gem = this.at(cell);
       if (this.chains.has(this.key(cell))) this.breakChain(cell, at);
-      else if (gem && gem.special === Special.None) this.pop(cell, at);
+      else if (gem && gem.special === Special.None && !gem.pearl) this.pop(cell, at);
       else if (this.crates.has(this.key(cell))) this.hitCrate(this.key(cell), at);
     }
     return this;
@@ -448,7 +465,7 @@ export class Scene {
     const crate = this.crates.get(k);
     if (crate) this.crack(k, crate, 0, t);
     this.melt(cell, t, Infinity);
-    this.pop(cell, t);
+    if (!this.at(cell)?.pearl) this.pop(cell, t);
   }
 
   /** The chain flies off; the piece it held stays, with a little bump unless it goes too. */
@@ -769,6 +786,23 @@ export const SECTIONS: Section[] = [
     ],
   },
   {
+    title: H.pearls,
+    hint: H.pearlsHint,
+    demos: [
+      {
+        caption: H.pearl,
+        scene: () =>
+          new Scene(['3 0 O 2 1', '2 4 1 0 3', '0 3 4 1 4', '4 0 1 3 2'])
+            .withExits()
+            .swipe([2, 3], [2, 2], SWIPE)
+            .match([[1, 2], [2, 2], [3, 2]], MATCH)
+            .fall(FALL)
+            .sink([3, 2], FALL + 650)
+            .fall(FALL + 950),
+      },
+    ],
+  },
+  {
     title: H.boosters,
     hint: H.boostersHint,
     demos: [
@@ -850,6 +884,7 @@ export function helpHtml(icon: Icon): string {
     goal(`<img src="${icon(FrameName.gem(3, Special.None))}" alt="">`, H.goalWords.collect) +
     goal(`<img src="${icon(FrameName.ice(1))}" alt="">`, H.goalWords.ice) +
     goal(`<img src="${icon(FrameName.crate(3))}" alt="">`, H.goalWords.crate) +
+    goal(`<img src="${icon(FrameName.Pearl)}" alt="">`, H.goalWords.pearl) +
     goal('<b class="score-icon">★</b>', H.goalWords.score);
   const sections = SECTIONS.map(
     (s, k) =>

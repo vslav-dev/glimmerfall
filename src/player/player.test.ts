@@ -6,7 +6,7 @@ import { createGame, playMove } from '@/core/game';
 import { type LevelDef, LevelKind, ObjectiveKind } from '@/core/types';
 import { Difficulty, targetWinRate } from '@/player/difficulty';
 import { paceFactor, updatePace } from '@/player/pace';
-import { likelihood, newModel, observeMove, observeOutcome, type PlayerModel, twinOf } from '@/player/model';
+import { likelihood, MODEL_VERSION, newModel, observeMove, observeOutcome, type PlayerModel, twinOf, upgradeModel } from '@/player/model';
 import { initialThreeStars, updateThreeStars } from '@/player/stars';
 
 function level(): LevelDef {
@@ -67,6 +67,16 @@ describe('player model', () => {
     expect(expert.model.rank).toBeLessThan(0.15);
     expect(twinOf(expert.model).craft).toBeGreaterThan(0.7);
     expect(expert.after).toBeGreaterThan(expert.before);
+  });
+
+  it('carries a version 2 model over with the pearl at its prior, and starts any other over', () => {
+    const fresh = newModel();
+    const old: PlayerModel = { ...fresh, version: 2, weights: fresh.weights.slice(0, -1).map((w) => w + 1), strength: 0.4, moves: 120 };
+    const upgraded = upgradeModel(old);
+    expect(upgraded.version).toBe(MODEL_VERSION);
+    expect(upgraded.weights).toEqual([...old.weights, fresh.weights.at(-1)]);
+    expect(upgraded.strength).toBe(0.4);
+    expect(upgradeModel({ ...old, version: 1 })).toEqual(fresh);
   });
 
   it('strength follows outcomes against the prediction, and bounds itself', () => {

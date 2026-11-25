@@ -27,6 +27,9 @@ export const GEM_TINTS = GEM_PALETTES.map((p) => parseInt(p.base.slice(1), 16));
 export const FrameName = {
   gem: (color: number, special: Special): string => `gem-${color}-${special}`,
   Prism: 'prism',
+  Pearl: 'pearl',
+  /** a glowing lip with a chevron at the bottom edge of a column: where pearls leave */
+  Exit: 'exit',
   TileA: 'tile-a',
   TileB: 'tile-b',
   ice: (layers: number): string => `ice-${layers}`,
@@ -184,6 +187,8 @@ function buildPainters(): Map<string, Painter> {
     }
   }
   painters.set(FrameName.Prism, drawPrism);
+  painters.set(FrameName.Pearl, drawPearl);
+  painters.set(FrameName.Exit, drawExit);
   painters.set(FrameName.TileA, (ctx, s) => drawTile(ctx, s, 0.075));
   painters.set(FrameName.TileB, (ctx, s) => drawTile(ctx, s, 0.12));
   painters.set(FrameName.ice(1), (ctx, s) => drawIce(ctx, s, 1));
@@ -398,6 +403,88 @@ function drawPrism(ctx: CanvasRenderingContext2D, s: number): void {
   ctx.shadowBlur = r * 0.3;
   ctx.fillStyle = '#fff';
   drawSparkle(ctx, 0, 0, r * 0.55, 1);
+  ctx.restore();
+}
+
+/** Pearl tints: a milky white body whose sheen turns pink, lilac and mint, so it reads apart from the rainbow prism. */
+const PEARL = { light: '#fffdf8', base: '#efe6f2', dark: '#a493b4', rim: '#7d6c90' };
+
+/** A milky sphere with a soft iridescent sheen, a bright window highlight and a dark rim so it holds on any tile. */
+function drawPearl(ctx: CanvasRenderingContext2D, s: number): void {
+  const r = s * 0.37;
+  ctx.save();
+  ctx.translate(s / 2, s / 2);
+  ctx.save();
+  ctx.shadowColor = 'rgba(60,30,90,0.55)';
+  ctx.shadowBlur = s * 0.07;
+  ctx.shadowOffsetY = s * 0.035;
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  const body = ctx.createRadialGradient(-r * 0.35, -r * 0.4, r * 0.05, 0, 0, r * 1.05);
+  body.addColorStop(0, PEARL.light);
+  body.addColorStop(0.55, PEARL.base);
+  body.addColorStop(1, PEARL.dark);
+  ctx.fillStyle = body;
+  ctx.fill();
+  ctx.restore();
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.clip();
+  // Iridescence: faint pink, lilac and mint washes swept round the lower half, where the light comes through.
+  for (const [x, y, color] of [
+    [r * 0.45, r * 0.35, 'rgba(255,170,205,0.45)'],
+    [-r * 0.4, r * 0.45, 'rgba(170,235,215,0.4)'],
+    [r * 0.05, r * 0.75, 'rgba(190,170,255,0.45)'],
+  ] as [number, number, string][]) {
+    const wash = ctx.createRadialGradient(x, y, 0, x, y, r * 0.75);
+    wash.addColorStop(0, color);
+    wash.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = wash;
+    ctx.fillRect(-r, -r, r * 2, r * 2);
+  }
+  const shine = ctx.createRadialGradient(-r * 0.32, -r * 0.42, 0, -r * 0.32, -r * 0.42, r * 0.55);
+  shine.addColorStop(0, 'rgba(255,255,255,0.95)');
+  shine.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = shine;
+  ctx.beginPath();
+  ctx.ellipse(-r * 0.3, -r * 0.42, r * 0.42, r * 0.28, -0.6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  ctx.lineWidth = s * 0.022;
+  ctx.strokeStyle = PEARL.rim;
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,0.95)';
+  ctx.beginPath();
+  ctx.arc(-r * 0.38, -r * 0.45, r * 0.11, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+/** The bottom edge of a cell where pearls leave: a soft glowing lip and a small chevron pointing down, under the piece. */
+function drawExit(ctx: CanvasRenderingContext2D, s: number): void {
+  const lip = ctx.createLinearGradient(0, s * 0.72, 0, s);
+  lip.addColorStop(0, 'rgba(255,240,255,0)');
+  lip.addColorStop(1, 'rgba(255,240,255,0.5)');
+  ctx.fillStyle = lip;
+  roundRect(ctx, s * 0.1, s * 0.72, s * 0.8, s * 0.26, s * 0.1);
+  ctx.fill();
+  ctx.save();
+  ctx.shadowColor = 'rgba(255,220,255,0.9)';
+  ctx.shadowBlur = s * 0.04;
+  ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+  ctx.lineWidth = s * 0.04;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(s * 0.4, s * 0.885);
+  ctx.lineTo(s * 0.5, s * 0.955);
+  ctx.lineTo(s * 0.6, s * 0.885);
+  ctx.stroke();
   ctx.restore();
 }
 

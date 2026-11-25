@@ -11,6 +11,10 @@ import type { Particles } from '@/view/particles';
 import { Ease, type EaseFn, type Tweens } from '@/view/tween';
 
 export const WHITE = 0xffffff;
+/** the pearly light of a pearl arriving and leaving */
+export const PEARL_GLOW = 0xffe4ff;
+/** a pearl leaving through the bottom takes this long */
+export const SINK_MS = 340;
 
 export type Layer = 'ice' | 'crate' | 'chain';
 
@@ -393,6 +397,30 @@ export function popPiece(kit: FxKit, sprite: Sprite, color: number, tint: number
       sprite.scale.set(base * 1.18 * (1 - 0.55 * q));
       sprite.alpha = 1 - q;
     }, { ease: Ease.linear })
+    .then(() => sprite.destroy());
+}
+
+/**
+ * A pearl leaves through the bottom of its column: a pearly flash and ring open on the edge, and the pearl dips
+ * through it, shrinking and fading; the sprite is destroyed after.
+ */
+export function sinkPearl(kit: FxKit, sprite: Sprite): void {
+  if (sprite.destroyed) return;
+  const { x, y } = sprite;
+  const edge = y + kit.cell / 2;
+  flash(kit, x, edge, 1.5, PEARL_GLOW);
+  light(kit, FrameName.Shock, x, edge, PEARL_GLOW, 380, (s, k) => {
+    s.scale.set(0.3 + 1.2 * k);
+    s.alpha = 1 - k;
+  }, Ease.outCubic);
+  if (kit.on(Fx.Glitter)) kit.particles.emit(Burst.glitter, x, edge, { color: NO_COLOR, tint: WHITE, amount: 1.5 });
+  void kit.tweens
+    .run(SINK_MS, (k) => {
+      if (sprite.destroyed) return;
+      sprite.position.set(x, y + kit.cell * 0.6 * k);
+      sprite.scale.set(1 - 0.55 * k);
+      sprite.alpha = 1 - k;
+    }, { ease: Ease.inQuad })
     .then(() => sprite.destroy());
 }
 

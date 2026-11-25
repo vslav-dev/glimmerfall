@@ -10,7 +10,7 @@ function blast(kind: BlastKind, origin: Pos, cells: Pos[], order = 0): Blast {
 }
 
 function clear(blasts: Blast[], combo: Pos | null = null): ClearEvent {
-  return { type: 'clear', cascade: 0, removed: [], created: [], blasts, layers: [], popups: [], lit: [], combo };
+  return { type: 'clear', cascade: 0, removed: [], created: [], blasts, layers: [], popups: [], lit: [], combo, sunk: [] };
 }
 
 const ON = { wave: true, charge: true };

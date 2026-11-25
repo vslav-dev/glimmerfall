@@ -7,10 +7,10 @@ import { Sfx } from '@/audio/synth';
 import { goalsOf, type MoveOptions, moveOptions } from '@/bot/features';
 import { indexOf } from '@/core/board';
 import { addExtraMoves, advance, canAct, canRescue, canStrike, createGame, EXTRA_MOVES, makeMove, startFinale, starsFor, strike } from '@/core/game';
-import { BlastKind, Booster, type GameEvent, type GameState, LevelKind, type Pos } from '@/core/types';
+import { BlastKind, Booster, type GameEvent, type GameState, LevelKind, type Mechanic, ObjectiveKind, type Pos } from '@/core/types';
 import { LevelDrafts } from '@/gen/drafts';
 import { type DraftRequest, finalizeLevel, GEN_VERSION, isWinnable, twinMoves } from '@/gen/generator';
-import { planLevel } from '@/gen/plan';
+import { mechanicsOf, planLevel } from '@/gen/plan';
 import { DIFFICULTIES, targetWinRate } from '@/player/difficulty';
 import { paceFactor, updatePace } from '@/player/pace';
 import { observeMove, observeOutcome, twinOf } from '@/player/model';
@@ -222,7 +222,7 @@ export class GameApp {
       this.ui.showHud(game.level);
       this.ui.updateHud(game);
       this.boosters.show(this.save.boosters);
-      this.view.setBoard(game.board);
+      this.view.setBoard(game.board, game.level.objectives.some((o) => o.kind === ObjectiveKind.Pearl));
       this.showDebug();
     }));
     const game = this.game;
@@ -268,22 +268,30 @@ export class GameApp {
     location.reload();
   }
 
-  /** A new mechanic explains itself once; otherwise a short flash names the level. */
+  /**
+   * A mechanic's own level, and the first level with a mechanic the player has not met (one that came after they
+   * passed its level), open with the goals explained; otherwise a short flash names the level.
+   */
   private announce(game: GameState, fails: number): void {
     const def = game.level;
-    if (def.intro !== null && game.movesMade === 0) {
-      this.showGoals();
+    const { met } = this.save;
+    const fresh = mechanicsOf(def).filter((m) => !met.includes(m));
+    if (game.movesMade === 0 && (def.intro !== null || fresh.length > 0)) {
+      met.push(...fresh);
+      this.persist();
+      this.showGoals(fresh[0] ?? def.intro);
       return;
     }
     this.ui.flashText(fails >= 3 ? S.assist : def.kind === LevelKind.Hard ? S.hard : S.level(def.number));
   }
 
-  private showGoals(): void {
+  /** `intro`: the new mechanic the card names. */
+  private showGoals(intro: Mechanic | null): void {
     if (!this.game) return;
     this.mode = Mode.Pause;
     this.view.inputEnabled = false;
     this.view.cancelHint();
-    this.ui.showGoals(this.game);
+    this.ui.showGoals(this.game, intro);
   }
 
   /** Swaps are accepted while a cascade plays on, as long as both cells are calm (the view checks that). */
@@ -629,7 +637,7 @@ export class GameApp {
         await this.playLevel();
         break;
       case Action.Goals:
-        if (this.mode === Mode.Play) this.showGoals();
+        if (this.mode === Mode.Play && this.game) this.showGoals(this.game.level.intro);
         break;
       case Action.Update:
         this.openUpdate();
@@ -831,6 +839,8 @@ export class GameApp {
         const pitch = 2 ** (Math.min(ev.cascade, 8) / 6);
         if (ev.removed.length > 0) this.audio.play(Sfx.Match, pitch);
         if (ev.created.length > 0) this.audio.play(Sfx.Create);
+        // A pearl leaving the board rings like a star mark, a little lower.
+        if (ev.sunk.length > 0) this.audio.play(Sfx.Star, 0.8);
         const kinds = new Set(ev.blasts.map((b) => b.kind));
         if (kinds.has(BlastKind.Row) || kinds.has(BlastKind.Col)) this.audio.play(Sfx.Line);
         if (kinds.has(BlastKind.Star)) this.audio.play(Sfx.FallingStar);
@@ -841,7 +851,7 @@ export class GameApp {
         if (kinds.has(BlastKind.Meteor)) setTimeout(() => haptic(Haptic.Heavy), Timing.meteorFall);
         else if (kinds.has(BlastKind.Star)) setTimeout(() => haptic(Haptic.Medium), Timing.starFall);
         else if (kinds.has(BlastKind.Bomb) || kinds.has(BlastKind.Prism)) haptic(Haptic.Heavy);
-        else if (kinds.size > 0) haptic(Haptic.Medium);
+        else if (kinds.size > 0 || ev.sunk.length > 0) haptic(Haptic.Medium);
         else haptic(Haptic.Light);
         if (ev.cascade >= 2) this.ui.praise(ev.cascade - 2);
         break;

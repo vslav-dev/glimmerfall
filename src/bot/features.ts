@@ -34,10 +34,16 @@ export const Feature = {
   Low: 11,
   /** cells away from the previous move, capped: where the player is already looking */
   Far: 12,
+  /**
+   * how much closer the move brings pearls to the bottom while a pearl goal is open, in cells left under them:
+   * each cleared cell under a pearl lowers it one, and a pearl swapped moves by the cells under it there and here
+   * (down one; sideways onto a shorter column more; up, a step back)
+   */
+  Pearl: 13,
 } as const;
 export type Feature = (typeof Feature)[keyof typeof Feature];
-export const FEATURE_COUNT = 13;
-export const FEATURE_NAMES = ['cells', 'wanted', 'ice', 'crate', 'chain', 'used', 'line', 'bomb', 'prism', 'combo', 'setup', 'low', 'far'] as const;
+export const FEATURE_COUNT = 14;
+export const FEATURE_NAMES = ['cells', 'wanted', 'ice', 'crate', 'chain', 'used', 'line', 'bomb', 'prism', 'combo', 'setup', 'low', 'far', 'pearl'] as const;
 
 /** Distance cap, and the distance assumed when there is no previous move: a typical one. */
 const FAR_CAP = 8;
@@ -49,6 +55,7 @@ export interface Goals {
   wanted: number;
   ice: boolean;
   crate: boolean;
+  pearl: boolean;
 }
 
 /** Every valid move with its feature row: `features[m * FEATURE_COUNT + k]`. */
@@ -58,12 +65,13 @@ export interface MoveOptions {
 }
 
 export function goalsOf(state: GameState): Goals {
-  const goals: Goals = { wanted: 0, ice: false, crate: false };
+  const goals: Goals = { wanted: 0, ice: false, crate: false, pearl: false };
   state.level.objectives.forEach((o, k) => {
     if (state.progress[k] >= o.target) return;
     if (o.kind === ObjectiveKind.Collect) goals.wanted |= 1 << o.color;
     else if (o.kind === ObjectiveKind.Ice) goals.ice = true;
     else if (o.kind === ObjectiveKind.Crate) goals.crate = true;
+    else if (o.kind === ObjectiveKind.Pearl) goals.pearl = true;
   });
   return goals;
 }
@@ -85,6 +93,7 @@ export function moveOptions(b: Board, goals: Goals, last: number): MoveOptions {
     features[row + Feature.Far] = last < 0 ? FAR_UNKNOWN : Math.min(FAR_CAP, distance(b, last, i), distance(b, last, j));
     const pi = b.cells[i].piece!;
     const pj = b.cells[j].piece!;
+    if (goals.pearl) features[row + Feature.Pearl] = pi.pearl ? cellsUnder(b, i) - cellsUnder(b, j) : pj.pearl ? cellsUnder(b, j) - cellsUnder(b, i) : 0;
     if (isComboPair(pi, pj)) {
       features[row + Feature.Combo] = 1;
       features[row + Feature.Used] = 2;
@@ -128,6 +137,7 @@ function addGroup(b: Board, x: number, goals: Goals, seen: Int32Array, stamp: nu
     if (piece.special !== Special.None) f[row + Feature.Used]++;
     if (goals.wanted & (1 << piece.color)) f[row + Feature.Wanted]++;
     if (goals.ice && cell.ice > 0) f[row + Feature.Ice]++;
+    if (goals.pearl) f[row + Feature.Pearl] += pearlsAbove(b, i);
   }
   if (goals.crate) {
     for (let k = 0; k < scan.count; k++) {
@@ -162,6 +172,25 @@ function crateHit(b: Board, n: number, seen: Int32Array, stamp: number): number 
 function special(b: Board, n: number, seen: Int32Array, stamp: number): number {
   const piece = b.cells[n].piece;
   return piece && piece.special !== Special.None && seen[n] !== stamp ? 1 : 0;
+}
+
+/** Cells of the board under cell `i` in its column: how far a pearl there still has to go. */
+function cellsUnder(b: Board, i: number): number {
+  let count = 0;
+  for (let j = i + b.cols; j < b.cells.length; j += b.cols) if (b.cells[j].exists) count++;
+  return count;
+}
+
+/** Pearls the cell's piece holds up: above it in its column, holes skipped, up to a crate or a chain that stops the fall. */
+function pearlsAbove(b: Board, i: number): number {
+  let count = 0;
+  for (let j = i - b.cols; j >= 0; j -= b.cols) {
+    const cell = b.cells[j];
+    if (!cell.exists) continue;
+    if (cell.crate > 0 || cell.chain > 0) break;
+    if (cell.piece?.pearl) count++;
+  }
+  return count;
 }
 
 function distance(b: Board, a: number, c: number): number {

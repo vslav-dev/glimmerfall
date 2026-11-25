@@ -1,10 +1,11 @@
-import { LevelKind, Mechanic } from '@/core/types';
+import { type LevelDef, LevelKind, Mechanic, ObjectiveKind } from '@/core/types';
 
 /** Level where each mechanic first appears (an easy intro level). */
 const INTRODUCED_AT: Record<Mechanic, number> = {
   [Mechanic.Ice]: 4,
   [Mechanic.Crate]: 10,
   [Mechanic.Chain]: 16,
+  [Mechanic.Pearl]: 20,
   [Mechanic.DoubleGoal]: 24,
 };
 
@@ -24,6 +25,23 @@ export interface LevelPlan {
   mechanics: Set<Mechanic>;
   /** win probability the curve wants before the player's skill is considered */
   baseWinRate: number;
+}
+
+/** Mechanics introduced before level `n`. */
+export function introducedBefore(n: number): Mechanic[] {
+  return (Object.entries(INTRODUCED_AT) as [Mechanic, number][]).filter(([, at]) => at < n).map(([m]) => m);
+}
+
+/** The mechanics a level shows the player: its blockers, a pearl goal, a second goal. */
+export function mechanicsOf(level: LevelDef): Mechanic[] {
+  const has: Record<Mechanic, boolean> = {
+    [Mechanic.Ice]: level.ice.some(Boolean),
+    [Mechanic.Crate]: level.crate.some(Boolean),
+    [Mechanic.Chain]: level.chain.some(Boolean),
+    [Mechanic.Pearl]: level.objectives.some((o) => o.kind === ObjectiveKind.Pearl),
+    [Mechanic.DoubleGoal]: level.objectives.length > 1,
+  };
+  return (Object.keys(has) as Mechanic[]).filter((m) => has[m]);
 }
 
 export function planLevel(n: number): LevelPlan {

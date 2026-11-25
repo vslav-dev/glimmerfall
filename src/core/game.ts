@@ -1,5 +1,6 @@
 import { cellAt, indexOf, isAdjacent, isMovable, newPiece, randomFreeColor, swapPieces } from '@/core/board';
 import { canReachBlockers, hasMove, isValidSwap, shuffleBoard } from '@/core/moves';
+import { dropPearls, topCells } from '@/core/pearls';
 import { convertForFinale, lightAll, resolveStep, type Tally } from '@/core/resolve';
 import {
   type Board,
@@ -36,17 +37,20 @@ export function createBoard(level: LevelDef, seed: number): Board {
     cells,
     nextId: 1,
     rng: seed,
+    pearls: level.objectives.find((o) => o.kind === ObjectiveKind.Pearl)?.target ?? 0,
   };
   fillBoard(b);
   return b;
 }
 
 /**
- * Fills every free cell without ready matches; refills until a move exists and matches can reach every chain,
- * crate and ice. A layout no coloring opens up still gets a board with a move.
+ * Fills every free cell without ready matches, the first pearl on top of a random column; refills until a move
+ * exists and matches can reach every chain, crate and ice. A layout no coloring opens up still gets a board with a move.
  */
 function fillBoard(b: Board): void {
+  const pearls = b.pearls;
   for (let attempt = 0; attempt < 2 * FILL_TRIES; attempt++) {
+    b.pearls = pearls;
     for (const cell of b.cells) cell.piece = null;
     for (let r = 0; r < b.rows; r++) {
       for (let c = 0; c < b.cols; c++) {
@@ -54,6 +58,7 @@ function fillBoard(b: Board): void {
         if (cell.exists && cell.crate === 0) cell.piece = newPiece(b, randomFreeColor(b, r, c));
       }
     }
+    if (b.pearls) dropPearls(b, topCells(b));
     if (hasMove(b) && (attempt >= FILL_TRIES || canReachBlockers(b))) return;
   }
 }
@@ -252,5 +257,7 @@ function objectiveGain(o: Objective, tally: Tally): number {
       return tally.ice;
     case ObjectiveKind.Crate:
       return tally.crate;
+    case ObjectiveKind.Pearl:
+      return tally.pearls;
   }
 }

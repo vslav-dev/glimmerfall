@@ -5,7 +5,7 @@ import { posOf, swapPieces } from '@/core/board';
 import { createGame, playMove } from '@/core/game';
 import { findGroups, newGroupScan, scanGroup } from '@/core/matches';
 import { findMoves, isComboPair } from '@/core/moves';
-import { type LevelDef, LevelKind, ObjectiveKind } from '@/core/types';
+import { type LevelDef, LevelKind, NO_COLOR, ObjectiveKind } from '@/core/types';
 
 function level(overrides: Partial<LevelDef> = {}): LevelDef {
   const size = 64;
@@ -84,13 +84,39 @@ describe('moveOptions', () => {
   it('counts the wanted color only while it is a goal, and the distance from the last move', () => {
     const game = createGame(level(), 5);
     const options = moveOptions(game.board, goalsOf(game), 0);
-    const none = moveOptions(game.board, { wanted: 0, ice: false, crate: false }, 0);
+    const none = moveOptions(game.board, { wanted: 0, ice: false, crate: false, pearl: false }, 0);
     expect(options.moves.some((_, m) => at(options, m, Feature.Wanted) > 0)).toBe(true);
     expect(none.moves.every((_, m) => at(none, m, Feature.Wanted) === 0)).toBe(true);
     options.moves.forEach(([i, j], m) => {
       const d = Math.min(...[i, j].map((x) => Math.floor(x / 8) + (x % 8)));
       expect(at(options, m, Feature.Far)).toBe(Math.min(8, d));
     });
+  });
+});
+
+describe('pearl feature', () => {
+  const at = (o: ReturnType<typeof moveOptions>, m: number): number => o.features[m * FEATURE_COUNT + Feature.Pearl];
+
+  it('counts how much closer a move brings the pearl to the bottom, only while a pearl goal is open', () => {
+    const game = createGame(level({ objectives: [{ kind: ObjectiveKind.Pearl, target: 3, color: NO_COLOR }] }), 11);
+    const b = game.board;
+    const pearl = b.cells.findIndex((c) => c.piece?.pearl);
+    const column = pearl % b.cols;
+    const options = moveOptions(b, goalsOf(game), -1);
+    options.moves.forEach(([i, j], m) => {
+      // On a whole board a move with the pearl moves it by its own row change; any other lowers it by the cells it clears under it.
+      if (i === pearl || j === pearl) {
+        expect(at(options, m)).toBe(i === pearl ? Math.floor(j / b.cols) - Math.floor(i / b.cols) : -1);
+        return;
+      }
+      swapPieces(b, i, j);
+      const under = findGroups(b, []).flatMap((g) => g.cells).filter((x) => x % b.cols === column && x > pearl).length;
+      swapPieces(b, i, j);
+      expect(at(options, m)).toBe(under);
+    });
+    expect(options.moves.some((_, m) => at(options, m) > 0)).toBe(true);
+    const off = moveOptions(b, { ...goalsOf(game), pearl: false }, -1);
+    expect(off.moves.every((_, m) => at(off, m) === 0)).toBe(true);
   });
 });
 

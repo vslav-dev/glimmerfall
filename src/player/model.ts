@@ -1,5 +1,5 @@
 import { type BotStyle, EXPERT_BOT } from '@/bot/bot';
-import { FEATURE_COUNT, type MoveOptions, score } from '@/bot/features';
+import { Feature, FEATURE_COUNT, type MoveOptions, score } from '@/bot/features';
 
 /**
  * The player as a bot, learned from play. Two parts, learned from two different signals:
@@ -13,15 +13,16 @@ import { FEATURE_COUNT, type MoveOptions, score } from '@/bot/features';
  */
 
 /** Changes when the feature set or the meaning of the numbers changes: a stored model of another version is dropped. */
-export const MODEL_VERSION = 2;
+export const MODEL_VERSION = 3;
 
 /**
  * Population weights, fitted offline on recorded moves (plans/06). Order: see Feature.
  * Version 2 dropped the spark (squares make bombs now, plans/09): the rest kept their fitted values.
+ * Version 3 added the pearl (plans/13), not fitted yet: a guess near the other goal features, learned from there.
  */
-const PRIOR: readonly number[] = [0.205, 0.044, 0.394, 0.529, 0.296, 0.563, 1.282, 1.909, 2.135, 0.243, 0.257, 0.649, -0.35];
+const PRIOR: readonly number[] = [0.205, 0.044, 0.394, 0.529, 0.296, 0.563, 1.282, 1.909, 2.135, 0.243, 0.257, 0.649, -0.35, 1];
 /** Spread of each feature across options: learning steps are taken in these units, so every feature learns alike. */
-const SCALE: readonly number[] = [1.138, 0.924, 0.567, 0.539, 0.159, 0.502, 0.25, 0.12, 0.068, 0.215, 0.108, 0.281, 2.044];
+const SCALE: readonly number[] = [1.138, 0.924, 0.567, 0.539, 0.159, 0.502, 0.25, 0.12, 0.068, 0.215, 0.108, 0.281, 2.044, 0.5];
 /** Best prequential fit on recorded moves, learning from scratch (plans/06). */
 const TASTE_RATE = 0.01;
 const PULL = 0.01;
@@ -50,6 +51,13 @@ export interface TwinStyle extends BotStyle {
 
 export function newModel(): PlayerModel {
   return { version: MODEL_VERSION, weights: [...PRIOR], strength: 0, rank: 0.35, moves: 0 };
+}
+
+/** A stored model of another version: version 2 lacked only the pearl and keeps all it learned; any other starts over. */
+export function upgradeModel(model: PlayerModel): PlayerModel {
+  if (model.version === MODEL_VERSION) return model;
+  if (model.version === 2) return { ...model, version: MODEL_VERSION, weights: [...model.weights, PRIOR[Feature.Pearl]] };
+  return newModel();
 }
 
 let probs = new Float64Array(64);

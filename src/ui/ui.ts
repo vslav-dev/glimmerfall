@@ -1,6 +1,6 @@
 import { chosen, type SoundChoice, VARIANTS } from '@/audio/sounds';
 import { Sfx } from '@/audio/synth';
-import { type GameState, type LevelDef, type Objective, ObjectiveKind, Special } from '@/core/types';
+import { type GameState, type LevelDef, type Mechanic, type Objective, ObjectiveKind, Special } from '@/core/types';
 import { BoardSize, type Settings } from '@/app/save';
 import type { Update } from '@/app/updates';
 import { DIFFICULTIES } from '@/player/difficulty';
@@ -157,10 +157,13 @@ export class Ui {
     );
   }
 
-  /** What each goal means, in plain words; opens from the HUD goals at any time and on a mechanic's first level. */
-  public showGoals(state: GameState): void {
+  /**
+   * What each goal means, in plain words; opens from the HUD goals at any time and on a mechanic's first level.
+   * `intro`: the mechanic new to the player, named on a badge.
+   */
+  public showGoals(state: GameState, intro: Mechanic | null): void {
     const def = state.level;
-    const intro = def.intro !== null ? `<div class="badge intro">${S.intro[def.intro].title}</div>` : '';
+    const badge = intro !== null ? `<div class="badge intro">${S.intro[intro].title}</div>` : '';
     const goals = def.objectives
       .map((o, k) => {
         const left = Math.max(0, o.target - state.progress[k]);
@@ -176,7 +179,7 @@ export class Ui {
     this.show(
       `<div class="card goals-help">
         <h2>${S.goals}</h2>
-        ${intro}
+        ${badge}
         ${goals}
         ${blockers}
         <button class="btn primary big" data-action="${Action.Resume}">${S.gotIt}</button>
@@ -508,6 +511,8 @@ export class Ui {
         return `<img src="${this.icon(FrameName.ice(1))}" alt="">`;
       case ObjectiveKind.Crate:
         return `<img src="${this.icon(FrameName.crate(3))}" alt="">`;
+      case ObjectiveKind.Pearl:
+        return `<img src="${this.icon(FrameName.Pearl)}" alt="">`;
       case ObjectiveKind.Score:
         return `<span class="score-icon">★</span>`;
     }

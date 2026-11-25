@@ -2,6 +2,7 @@ import 'pixi.js/text-bitmap';
 import { BitmapFont, BitmapText, Container, Sprite, type Texture } from 'pixi.js';
 import { isAdjacent } from '@/core/board';
 import { findMoves } from '@/core/moves';
+import { isExit } from '@/core/pearls';
 import { strikeCells } from '@/core/resolve';
 import { BlastKind, type Board, Booster, type GameEvent, NO_COLOR, type Piece, type Pos, Special, type SwapEvent } from '@/core/types';
 import type { SwapInput } from '@/telemetry/attempt';
@@ -11,7 +12,7 @@ import { Atlas } from '@/view/atlas';
 import { Camera } from '@/view/fx/camera';
 import { blastPower, cascadeBoost, feel, METEOR_HITS } from '@/view/fx/impact';
 import { SpritePool } from '@/view/fx/pool';
-import { blastFx, breakLayer, comboCharge, createFx, flash, type FxKit, knock, land, type Layer, layerFx, popPiece, ray, strikeFall, WHITE } from '@/view/fx/stage';
+import { blastFx, breakLayer, comboCharge, createFx, flash, type FxKit, knock, land, type Layer, layerFx, PEARL_GLOW, popPiece, ray, SINK_MS, sinkPearl, strikeFall, WHITE } from '@/view/fx/stage';
 import { Fx, FxSwitches } from '@/view/fx/switches';
 import { planClear, strikeOf } from '@/view/fx/timeline';
 import { Particles } from '@/view/particles';
@@ -106,6 +107,8 @@ export class BoardView {
   private readonly boardRoot = new Container();
   private readonly tiles = new Container();
   private readonly iceLayer = new Container();
+  /** where pearls leave: over the tiles and the ice, under the pieces */
+  private readonly exitLayer = new Container();
   /** halos behind lit specials */
   private readonly litLayer = new Container();
   private readonly pieceLayer = new Container();
@@ -136,6 +139,8 @@ export class BoardView {
   /** piece per cell as the player currently sees it (lags the core board during playback) */
   private grid: (Piece | null)[] = [];
   private board: Board | null = null;
+  /** the level brings pearls down: the bottom of every column is marked */
+  private exits = false;
   private cell = 48;
   private originX = 0;
   private originY = 0;
@@ -168,7 +173,7 @@ export class BoardView {
     private readonly canvas: HTMLCanvasElement,
     private readonly input: BoardListener,
   ) {
-    this.boardRoot.addChild(this.tiles, this.iceLayer, this.litLayer, this.pieceLayer, this.crateLayer, this.chainLayer, this.matterLayer, this.lightLayer, this.aimLayer, this.textLayer);
+    this.boardRoot.addChild(this.tiles, this.iceLayer, this.exitLayer, this.litLayer, this.pieceLayer, this.crateLayer, this.chainLayer, this.matterLayer, this.lightLayer, this.aimLayer, this.textLayer);
     this.camera.view.addChild(this.boardRoot);
     this.glide.addChild(this.camera.view);
     scene.root.addChild(this.glide);
@@ -239,11 +244,13 @@ export class BoardView {
     this.layout(this.width, this.height);
   }
 
-  public setBoard(board: Board): void {
+  /** `exits`: the level brings pearls down, so the bottom of every column is marked. */
+  public setBoard(board: Board, exits: boolean): void {
     this.cancelHint();
     this.epoch++;
     this.locked.clear();
     this.board = board;
+    this.exits = exits;
     this.lit.clear();
     this.grid = board.cells.map((c) => c.piece);
     this.camera.reset();
@@ -271,7 +278,7 @@ export class BoardView {
   private wipe(): void {
     this.scene.tweens.finishAll();
     this.particles.clear();
-    for (const layer of [this.tiles, this.iceLayer, this.litLayer, this.pieceLayer, this.crateLayer, this.chainLayer, this.matterLayer, this.lightLayer]) {
+    for (const layer of [this.tiles, this.iceLayer, this.exitLayer, this.litLayer, this.pieceLayer, this.crateLayer, this.chainLayer, this.matterLayer, this.lightLayer]) {
       for (const child of layer.removeChildren()) child.destroy();
     }
     this.sprites.clear();
@@ -331,6 +338,7 @@ export class BoardView {
       if (cell.ice > 0) this.addLayer(this.ice, this.iceLayer, i, FrameName.ice(cell.ice), cell.ice);
       if (cell.crate > 0) this.addLayer(this.crates, this.crateLayer, i, FrameName.crate(cell.crate), cell.crate);
       if (cell.chain > 0) this.addLayer(this.chains, this.chainLayer, i, FrameName.chain(cell.chain), cell.chain);
+      if (this.exits && isExit(b, i)) this.exitLayer.addChild(this.sprite(FrameName.Exit, r, c));
     });
     this.grid.forEach((piece, i) => {
       if (piece) this.addPiece(piece, this.posOf(i));
@@ -394,7 +402,7 @@ export class BoardView {
           add(ev.b);
           break;
         case 'clear':
-          for (const x of [...ev.removed, ...ev.created, ...ev.layers]) add(x.pos);
+          for (const x of [...ev.removed, ...ev.created, ...ev.layers, ...ev.sunk]) add(x.pos);
           break;
         case 'fall':
           for (const m of ev.moves) m.path.forEach(add);
@@ -512,6 +520,17 @@ export class BoardView {
       end = Math.max(end, start + 120);
     });
 
+    // A pearl at the bottom leaves first, before anything in the step goes off.
+    for (const s of ev.sunk) {
+      const i = this.indexOf(s.pos);
+      if (this.grid[i]?.id === s.id) this.grid[i] = null;
+      const sprite = this.sprites.get(s.id);
+      if (!sprite) continue;
+      this.sprites.delete(s.id);
+      sinkPearl(this.kit, sprite);
+      end = Math.max(end, SINK_MS);
+    }
+
     for (const rm of ev.removed) {
       const i = this.indexOf(rm.pos);
       if (this.grid[i]?.id === rm.id) this.grid[i] = null;
@@ -611,7 +630,11 @@ export class BoardView {
           },
           { ease: FALL_EASE },
         )
-        .then(() => land(this.kit, sprite, total / this.cell));
+        .then(() => {
+          land(this.kit, sprite, total / this.cell);
+          // A new pearl drops in with a pearly glow, so the eye catches where it starts.
+          if (m.spawned && m.piece.pearl && !sprite.destroyed) flash(this.kit, sprite.x, sprite.y, 1.5, PEARL_GLOW);
+        });
       end = Math.max(end, duration);
     }
     await this.scene.tweens.wait(end + 40);
@@ -1013,6 +1036,7 @@ export class BoardView {
   }
 
   private pieceTexture(piece: Piece): Texture {
+    if (piece.pearl) return this.atlas.get(FrameName.Pearl);
     return this.atlas.get(piece.special === Special.Prism ? FrameName.Prism : FrameName.gem(piece.color, piece.special));
   }
 

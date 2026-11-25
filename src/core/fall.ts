@@ -1,10 +1,12 @@
 import { cellAt, holdsPiece, indexOf, isMovable, newPiece, spawnColor } from '@/core/board';
+import { dropPearls } from '@/core/pearls';
 import type { Board, FallMove, Piece, Pos } from '@/core/types';
 
 /**
  * Gravity and refill until nothing moves.
  * Pieces fall straight down through holes; under crates and chained pieces they slide in diagonally.
- * New pieces spawn at the top existing cell of each column that is open to the sky.
+ * New pieces spawn at the top existing cell of each column that is open to the sky; a pearl still to come
+ * drops in as one of them, landing at the top of its column.
  * Returns the path of every piece that moved, for playback.
  */
 export function settle(b: Board): FallMove[] {
@@ -89,6 +91,13 @@ export function settle(b: Board): FallMove[] {
 
   while (verticalPass() || diagonalPass()) {
     // keep settling
+  }
+  if (b.pearls) {
+    const tops = [...moves.values()].flatMap((m) => {
+      const at = m.path[m.path.length - 1];
+      return m.spawned && sourceRow(at.r, at.c) === -1 ? [indexOf(b, at.r, at.c)] : [];
+    });
+    dropPearls(b, tops);
   }
   return [...moves.values()];
 }

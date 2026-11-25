@@ -15,6 +15,8 @@ export interface Piece {
   id: number;
   color: number;
   special: Special;
+  /** a pearl: no color, matches nothing, nothing breaks it; it leaves through the bottom of its column */
+  pearl?: boolean;
 }
 
 export interface Cell {
@@ -42,6 +44,8 @@ export interface Board {
   cells: Cell[];
   nextId: number;
   rng: number;
+  /** pearls still to drop in (absent in saves made before pearls existed) */
+  pearls?: number;
 }
 
 export const ObjectiveKind = {
@@ -49,6 +53,8 @@ export const ObjectiveKind = {
   Collect: 'collect',
   Ice: 'ice',
   Crate: 'crate',
+  /** bring pearls down to the bottom */
+  Pearl: 'pearl',
 } as const;
 export type ObjectiveKind = (typeof ObjectiveKind)[keyof typeof ObjectiveKind];
 
@@ -72,6 +78,7 @@ export const Mechanic = {
   Crate: 'crate',
   Chain: 'chain',
   DoubleGoal: 'double-goal',
+  Pearl: 'pearl',
 } as const;
 export type Mechanic = (typeof Mechanic)[keyof typeof Mechanic];
 
@@ -126,6 +133,12 @@ export interface RemovedPiece {
   mergeInto: number;
 }
 
+/** A pearl that reached the bottom of its column and leaves the board. */
+export interface SunkPearl {
+  id: number;
+  pos: Pos;
+}
+
 export interface CreatedPiece {
   pos: Pos;
   piece: Piece;
@@ -175,6 +188,8 @@ export type GameEvent =
       lit: LitPiece[];
       /** where the player's two swapped specials met and went off together, or null */
       combo: Pos | null;
+      /** pearls that left through the bottom: they go first, before anything else in the step */
+      sunk: SunkPearl[];
     }
   /** pieces turn into specials: the finale's remaining moves, or a prism spreading its partner (`from`: the prism) */
   | { type: 'transform'; pieces: CreatedPiece[]; from: Pos | null }

@@ -2,6 +2,7 @@ import { neighbors4, newPiece, posOf } from '@/core/board';
 import { settle } from '@/core/fall';
 import { findGroups, type MatchGroup } from '@/core/matches';
 import { isComboPair } from '@/core/moves';
+import { isExit } from '@/core/pearls';
 import { random, shuffleInPlace } from '@/core/rng';
 import {
   type Blast,
@@ -22,10 +23,13 @@ import {
   type ScorePopup,
   Special,
   type Strike,
+  type SunkPearl,
 } from '@/core/types';
 
 const PIECE_POINTS = 10;
 const LAYER_POINTS = 20;
+/** a pearl leaving through the bottom */
+const PEARL_POINTS = 100;
 const MAX_MULTIPLIER = 5;
 /** Most moves the finale turns into specials; moves beyond it add nothing. */
 export const FINALE_CONVERSIONS = 12;
@@ -44,6 +48,7 @@ export interface Tally {
   collected: number[];
   ice: number;
   crate: number;
+  pearls: number;
 }
 
 /** What a step did: the playback script and its gains. */
@@ -82,20 +87,21 @@ interface Ctx {
   combo: Pos | null;
   /** matches create their specials; off once the moves are spent, the last move's own match included */
   specials: boolean;
+  sunk: SunkPearl[];
 }
 
 export function newTally(): Tally {
-  return { score: 0, collected: new Array<number>(MAX_COLORS).fill(0), ice: 0, crate: 0 };
+  return { score: 0, collected: new Array<number>(MAX_COLORS).fill(0), ice: 0, crate: 0, pearls: 0 };
 }
 
 /**
- * One board step: the player's pending move (a swap's combo or match, or a booster strike) and every ready match
- * clear together, one special goes off, pieces fall.
+ * One board step: pearls resting at the bottom leave, the player's pending move (a swap's combo or match,
+ * or a booster strike) and every ready match clear together, one special goes off, pieces fall.
  * Exactly one special goes off per step, so chain reactions play out one by one while the board refills:
  * a special hit by a blast is lit, stays on the board (falling with it) and is due from the next step on;
  * a matched special is due at once, but when another one goes off first it is lit and waits likewise.
  * With `specials` off, no match leaves a special behind: they just clear.
- * Null when nothing matches and nothing is lit: the board is calm.
+ * Null when nothing matches, nothing is lit and no pearl is at the bottom: the board is calm.
  */
 export function resolveStep(b: Board, move: PendingMove | null, cascadeLevel: number, fuse: number[], specials = true): Step | null {
   const step: Step = { events: [], tally: newTally() };
@@ -103,11 +109,11 @@ export function resolveStep(b: Board, move: PendingMove | null, cascadeLevel: nu
   return stepInto(ctx, move) ? step : null;
 }
 
-/** Finale opening: up to `count` random plain pieces turn into line specials. */
+/** Finale opening: up to `count` random plain pieces turn into line specials; a pearl stays a pearl. */
 export function convertForFinale(b: Board, count: number): CreatedPiece[] {
   const plain = shuffleInPlace(
     b,
-    b.cells.flatMap((cell, i) => (cell.piece && cell.chain === 0 && cell.piece.special === Special.None ? [i] : [])),
+    b.cells.flatMap((cell, i) => (cell.piece && cell.chain === 0 && cell.piece.special === Special.None && !cell.piece.pearl ? [i] : [])),
   );
   return plain.slice(0, Math.min(count, FINALE_CONVERSIONS)).map((i) => {
     const piece = b.cells[i].piece!;
@@ -138,11 +144,13 @@ function stepInto(ctx: Ctx, move: PendingMove | null): boolean {
   if (move && isStrike(move)) STRIKES[move.booster](ctx, move);
   // A combo goes off where the player's finger started, not where the moved piece landed.
   if (swap && isComboPair(b.cells[swap.to].piece!, b.cells[swap.from].piece!)) runCombo(ctx, swap.from, swap.to);
+  // A pearl is never part of a combo, so it leaves after: one the swap took to the bottom goes too.
+  sinkPearls(ctx);
   // The player's match is found before the fuse goes off, so a blast never steals it.
   const groups = findGroups(b, swap ? [swap.to, swap.from] : []);
   clearGroups(ctx, groups);
   const fired = fireNext(ctx, due);
-  if (ctx.removed.length === 0 && groups.length === 0 && !fired) return false;
+  if (ctx.removed.length === 0 && groups.length === 0 && !fired && ctx.sunk.length === 0) return false;
   finishStep(ctx);
   ctx.events.push({ type: 'fall', moves: settle(b) });
   return true;
@@ -190,6 +198,7 @@ function newCtx(b: Board, step: Step, cascadeLevel: number, fuse: number[], spec
     lit: [],
     combo: null,
     specials,
+    sunk: [],
   };
 }
 
@@ -215,6 +224,20 @@ function finishStep(ctx: Ctx): void {
     popups: ctx.popups,
     lit: ctx.lit,
     combo: ctx.combo,
+    sunk: ctx.sunk,
+  });
+}
+
+/** Pearls resting at the bottom of their column leave the board: each counts for the goal and scores. */
+function sinkPearls(ctx: Ctx): void {
+  const b = ctx.b;
+  b.cells.forEach((cell, i) => {
+    if (!cell.piece?.pearl || !isExit(b, i)) return;
+    const pos = posOf(b, i);
+    ctx.sunk.push({ id: cell.piece.id, pos });
+    cell.piece = null;
+    ctx.tally.pearls++;
+    ctx.popups.push({ ...pos, value: PEARL_POINTS, order: 0 });
   });
 }
 
@@ -261,12 +284,13 @@ type Damage = (ctx: Ctx, i: number, order: number) => number;
 
 /**
  * Damages whatever is in the cell: chain first, then the piece (and its ice), or a crate. Returns points.
- * A special is lit instead of removed: it goes off in a later step.
+ * A special is lit instead of removed: it goes off in a later step. A pearl takes no harm.
  */
 function hit(ctx: Ctx, i: number, order: number): number {
   const cell = ctx.b.cells[i];
   if (!cell.exists) return 0;
   if (cell.piece) {
+    if (cell.piece.pearl) return 0;
     if (cell.chain > 0) {
       cell.chain--;
       markLayer(ctx, i, order);
@@ -292,7 +316,7 @@ function matchHit(ctx: Ctx, i: number, order: number): number {
   return hit(ctx, i, order) + hitCratesAround(ctx, i, order);
 }
 
-/** A booster's hit: every layer in the cell breaks at once and the piece goes; a special is lit instead. */
+/** A booster's hit: every layer in the cell breaks at once and the piece goes; a special is lit instead, a pearl stays. */
 function smash(ctx: Ctx, i: number, order: number): number {
   const cell = ctx.b.cells[i];
   if (!cell.exists) return 0;
@@ -304,11 +328,11 @@ function smash(ctx: Ctx, i: number, order: number): number {
     cell.crate = 0;
     markLayer(ctx, i, order);
   }
-  if (cell.piece) {
+  if (cell.piece && !cell.piece.pearl) {
     if (cell.piece.special !== Special.None) light(ctx, i, order);
     else points += removePiece(ctx, i, order, -1, false);
   }
-  // Removing the piece took one layer of ice; the rest goes too.
+  // Removing the piece took one layer of ice; the rest goes too, under a pearl all of it.
   if (cell.ice > 0) {
     points += LAYER_POINTS * cell.ice;
     cell.ice = 0;

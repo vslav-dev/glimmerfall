@@ -4,8 +4,8 @@ import { FEATURE_COUNT, goalsOf, moveOptions } from '@/bot/features';
 import { posOf } from '@/core/board';
 import { advance, createGame, playMove, startFinale, starsFor } from '@/core/game';
 import { hasAnyMatch, hasMove } from '@/core/moves';
-import { LevelKind, ObjectiveKind } from '@/core/types';
-import { type DraftRequest, draftLevel, finalizeLevel, refillReachesAll } from '@/gen/generator';
+import { LevelKind, Mechanic, ObjectiveKind } from '@/core/types';
+import { type DraftRequest, draftLevel, finalizeLevel, MAX_MOVES, refillReachesAll } from '@/gen/generator';
 import { planLevel } from '@/gen/plan';
 import { newModel, type TwinStyle, twinOf } from '@/player/model';
 
@@ -28,7 +28,7 @@ describe('generator', () => {
     for (const n of [1, 2, 4, 9, 14, 22, 31, 47, 66]) {
       const level = finalizeLevel(draftLevel(req(n)), planLevel(n).baseWinRate);
       expect(level.moves).toBeGreaterThanOrEqual(10);
-      expect(level.moves).toBeLessThanOrEqual(45);
+      expect(level.moves).toBeLessThanOrEqual(MAX_MOVES);
       expect(level.objectives.length).toBeGreaterThan(0);
       for (const o of level.objectives) expect(o.target).toBeGreaterThan(0);
       if (level.objectives.some((o) => o.kind === ObjectiveKind.Score)) expect(level.objectives).toHaveLength(1);
@@ -105,7 +105,8 @@ describe('generator', () => {
     // Level 203 of a strong deliberate player (telemetry, 22.11): a crate or ice goal beside a collect one.
     // Only the collect was ever tuned, so the twin never won: 14 moves at any target, stars at 100 and 150.
     const style: TwinStyle = {
-      weights: [0.058, -0.169, 0.041, 0.311, -0.261, 0.862, 0.911, 0.129, 3.001, -0.342, 0.007, 0.801, -0.377],
+      // As learned then, with the pearl's prior added the way a stored model of that time is carried over.
+      weights: [0.058, -0.169, 0.041, 0.311, -0.261, 0.862, 0.911, 0.129, 3.001, -0.342, 0.007, 0.801, -0.377, 0.6],
       strength: 0.95,
       craft: 0.97,
     };
@@ -117,6 +118,15 @@ describe('generator', () => {
     expect(easy.moves).toBeGreaterThan(hard.moves);
     expect(hard.stars[2]).toBeGreaterThan(1000);
   }, 120_000);
+
+  it('introduces pearls on their own level, with a goal the twin wins as targeted', () => {
+    const level = finalizeLevel(draftLevel(req(20)), 0.85);
+    expect(level.intro).toBe(Mechanic.Pearl);
+    expect(level.objectives.map((o) => o.kind)).toEqual([ObjectiveKind.Pearl]);
+    expect(level.objectives[0].target).toBeGreaterThanOrEqual(1);
+    expect(level.targetWinRate).toBeGreaterThan(0.7);
+    expect(level.moves).toBeLessThanOrEqual(MAX_MOVES);
+  }, 60_000);
 
   it('gives more moves for a higher target win rate', () => {
     const draft = draftLevel(req(13));

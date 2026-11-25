@@ -3,18 +3,22 @@ import { indexOf, posOf, swapPieces } from '@/core/board';
 import { settle } from '@/core/fall';
 import { advance, canStrike, canSwap, createGame, makeMove, playMove, startFinale, strike } from '@/core/game';
 import { findGroups } from '@/core/matches';
-import { canReachBlockers, findMoves, hasAnyMatch, hasMove, isValidSwap } from '@/core/moves';
+import { canReachBlockers, findMoves, hasAnyMatch, hasMove, isComboPair, isValidSwap, shuffleBoard } from '@/core/moves';
 import { resolveStep } from '@/core/resolve';
-import { BlastKind, type Board, Booster, type GameEvent, type LevelDef, LevelKind, ObjectiveKind, type PendingSwap, Special } from '@/core/types';
+import { BlastKind, type Board, Booster, type GameEvent, type GameState, type LevelDef, LevelKind, NO_COLOR, ObjectiveKind, type PendingSwap, Special } from '@/core/types';
 
-/** Digits are colors, '.' is a hole, '#' a crate, '_' an empty cell. */
+/** Digits are colors, 'O' a pearl, '.' is a hole, '#' a crate, '_' an empty cell. */
 function boardFrom(rows: string[], colors = 6): Board {
   const b: Board = { rows: rows.length, cols: rows[0].length, colors, cells: [], nextId: 1, rng: 42 };
   for (const row of rows) {
     for (const ch of row) {
       b.cells.push({
         exists: ch !== '.',
-        piece: /\d/.test(ch) ? { id: b.nextId++, color: Number(ch), special: Special.None } : null,
+        piece: /\d/.test(ch)
+          ? { id: b.nextId++, color: Number(ch), special: Special.None }
+          : ch === 'O'
+            ? { id: b.nextId++, color: NO_COLOR, special: Special.None, pearl: true }
+            : null,
         ice: 0,
         crate: ch === '#' ? 1 : 0,
         chain: 0,
@@ -531,5 +535,67 @@ describe('blockers', () => {
       expect(canReachBlockers(board), `seed ${seed}`).toBe(true);
       expect(hasMove(board)).toBe(true);
     }
+  });
+});
+
+describe('pearls', () => {
+  const pearlCells = (b: Board): number[] => b.cells.flatMap((c, i) => (c.piece?.pearl ? [i] : []));
+  const pearlLevel = (target: number): LevelDef => level({ objectives: [{ kind: ObjectiveKind.Pearl, target, color: NO_COLOR }] });
+  /** Puts the board's pearl on the bottom of its column, as if it had fallen there. */
+  const sendDown = (game: GameState): void => {
+    const b = game.board;
+    const at = pearlCells(b)[0];
+    swapPieces(b, at, indexOf(b, b.rows - 1, posOf(b, at).c));
+  };
+
+  it('matches nothing, and no blast breaks it', () => {
+    const b = boardFrom(['01234', '12O01', '23401', '34012']);
+    const line = b.cells[indexOf(b, 1, 1)].piece!;
+    line.special = Special.LineH;
+    const pearl = b.cells[indexOf(b, 1, 2)].piece!;
+    const step = resolveStep(b, null, 0, [line.id]);
+    const clear = step?.events.find((e) => e.type === 'clear');
+    expect(clear?.type === 'clear' && clear.blasts[0].kind).toBe(BlastKind.Row);
+    expect(clear?.type === 'clear' && clear.removed.some((rm) => rm.id === pearl.id)).toBe(false);
+    expect(b.cells.some((c) => c.piece?.id === pearl.id)).toBe(true);
+  });
+
+  it('starts one on top of a column and keeps the rest to come', () => {
+    const game = createGame(pearlLevel(3), 7);
+    const cells = pearlCells(game.board);
+    expect(cells).toHaveLength(1);
+    expect(posOf(game.board, cells[0]).r).toBe(0);
+    expect(game.board.pearls).toBe(2);
+  });
+
+  it('one at the bottom leaves in the next step, counts for the goal, and the next drops in on top', () => {
+    const game = createGame(pearlLevel(2), 7);
+    sendDown(game);
+    const events = advance(game);
+    const clear = events?.find((e) => e.type === 'clear');
+    expect(clear?.type === 'clear' && clear.sunk).toHaveLength(1);
+    expect(game.progress[0]).toBe(1);
+    expect(game.board.pearls).toBe(0);
+    const next = pearlCells(game.board);
+    expect(next).toHaveLength(1);
+    expect(posOf(game.board, next[0]).r).toBe(0);
+    while (advance(game)) continue;
+    sendDown(game);
+    while (advance(game)) continue;
+    expect(game.progress[0]).toBe(2);
+    expect(game.status).toBe('won');
+    expect(pearlCells(game.board)).toHaveLength(0);
+  });
+
+  it('makes no combo with a prism, stays put in a shuffle and is never turned in the finale', () => {
+    const game = createGame(pearlLevel(1), 3);
+    const b = game.board;
+    const at = pearlCells(b)[0];
+    expect(isComboPair(b.cells[at].piece!, { id: 0, color: NO_COLOR, special: Special.Prism })).toBe(false);
+    shuffleBoard(b);
+    expect(pearlCells(b)).toEqual([at]);
+    game.status = 'won';
+    startFinale(game);
+    expect(b.cells[at].piece!.special).toBe(Special.None);
   });
 });

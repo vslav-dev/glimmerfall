@@ -5,7 +5,8 @@
  *  - specials made per move, by kind;
  *  - moves left at wins: what charges the star; the stars of wins: what charge the meteor;
  *  - how often a booster turns a lost run into a win, aimed greedily two moves before the end.
- * Runs only with GF_BALANCE=1.
+ * Runs only with GF_BALANCE=1. GF_GOAL=<goal kind> (e.g. `pearl`, plans/13) studies only levels with that goal:
+ * each level number takes the first player seed from GF_SEED on whose level it is.
  */
 import { describe, it } from 'vitest';
 import { EARN, winGain } from '@/app/boosters';
@@ -15,7 +16,7 @@ import { posOf } from '@/core/board';
 import { advance, createGame, playMove, startFinale, starsFor, strike } from '@/core/game';
 import { strikeCells } from '@/core/resolve';
 import { Booster, type GameState, type LevelDef, ObjectiveKind, Special } from '@/core/types';
-import { draftLevel, finalizeLevel } from '@/gen/generator';
+import { draftLevel, finalizeLevel, type LevelDraft } from '@/gen/generator';
 import { planLevel } from '@/gen/plan';
 import { Difficulty, targetWinRate } from '@/player/difficulty';
 import { newModel, type TwinStyle, twinOf } from '@/player/model';
@@ -23,6 +24,8 @@ import { newModel, type TwinStyle, twinOf } from '@/player/model';
 const AVERAGE: TwinStyle = { ...twinOf(newModel()), strength: 0.3 };
 const LEVELS = [6, 8, 9, 11, 12, 14, 15, 17, 18, 20, 21, 23, 26, 29, 33, 38, 41, 45, 50, 57];
 const RUNS = 40;
+/** player seeds tried per level number for a level with the studied goal */
+const GOAL_SEEDS = 40;
 /** the booster goes off this many moves before the end */
 const BOOST_AT = 2;
 
@@ -65,9 +68,22 @@ function play(level: LevelDef, seed: number, boost: Booster | null): Run {
   return { won, left, stars: starsFor(game), made, moves: game.movesMade };
 }
 
+/** The level number's draft for the average twin; with GF_GOAL, the first one from GF_SEED on with that goal, or null. */
+function draftFor(n: number): LevelDraft | null {
+  const seed = Number(process.env.GF_SEED ?? 777);
+  const goal = process.env.GF_GOAL;
+  for (let k = 0; k < (goal ? GOAL_SEEDS : 1); k++) {
+    const draft = draftLevel({ seed: seed + k, number: n, style: AVERAGE, pace: 1 });
+    if (!goal || draft.level.objectives.some((o) => o.kind === goal)) return draft;
+  }
+  return null;
+}
+
 /** The cell whose strike takes the most of what the open goals still need. */
 function bestCell(game: GameState, booster: Booster): number {
   const b = game.board;
+  // A strike under the pearl lowers it by every cell it clears there.
+  const pearl = b.cells.findIndex((c) => c.piece?.pearl);
   const value = (i: number): number => {
     const cell = b.cells[i];
     let v = 0;
@@ -77,6 +93,7 @@ function bestCell(game: GameState, booster: Booster): number {
       if (o.kind === ObjectiveKind.Ice) v += booster === Booster.Meteor ? Math.min(1, cell.ice) : cell.ice > 0 ? 1 : 0;
       if (o.kind === ObjectiveKind.Crate) v += booster === Booster.Meteor ? Math.min(1, cell.crate) : cell.crate > 0 ? 1 : 0;
       if (o.kind === ObjectiveKind.Score) v += 1;
+      if (o.kind === ObjectiveKind.Pearl && pearl >= 0 && i > pearl && i % b.cols === pearl % b.cols) v += 1;
     });
     return v + (cell.chain > 0 ? 0.2 : 0);
   };
@@ -111,7 +128,9 @@ describe.runIf(process.env.GF_BALANCE)('balance', () => {
     const rescue = { [Booster.Star]: [0, 0], [Booster.Meteor]: [0, 0] };
     for (const n of LEVELS) {
       const target = targetWinRate(planLevel(n).baseWinRate, Difficulty.Normal, 0);
-      const level = finalizeLevel(draftLevel({ seed: Number(process.env.GF_SEED ?? 777), number: n, style: AVERAGE, pace: 1 }), target);
+      const draft = draftFor(n);
+      if (!draft) continue;
+      const level = finalizeLevel(draft, target);
       twin.push(level.targetWinRate);
       granted.push(level.moves);
       let w = 0;

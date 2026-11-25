@@ -5,8 +5,9 @@ import { type Board, type CreatedPiece, type Piece, Special } from '@/core/types
 
 export type Move = [number, number];
 
-/** Two specials, or a prism with anything, make a combo that is valid without a match. */
+/** Two specials, or a prism with anything but a pearl, make a combo that is valid without a match. */
 export function isComboPair(a: Piece, b: Piece): boolean {
+  if (a.pearl || b.pearl) return false;
   return a.special === Special.Prism || b.special === Special.Prism || (a.special !== Special.None && b.special !== Special.None);
 }
 
@@ -126,10 +127,11 @@ export function hasAnyMatch(b: Board): boolean {
 
 /**
  * Rearranges movable pieces until the board has no ready matches and at least one move.
- * Falls back to recoloring plain pieces when the existing set cannot be arranged.
+ * Falls back to recoloring plain pieces when the existing set cannot be arranged. Pearls stay where they are:
+ * a shuffle must not throw one back up.
  */
 export function shuffleBoard(b: Board): CreatedPiece[] {
-  const slots = b.cells.flatMap((cell, i) => (isMovable(cell) ? [i] : []));
+  const slots = b.cells.flatMap((cell, i) => (isMovable(cell) && !cell.piece!.pearl ? [i] : []));
   const pieces = slots.map((i) => b.cells[i].piece!);
 
   let ok = false;
