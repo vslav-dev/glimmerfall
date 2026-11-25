@@ -190,7 +190,7 @@ export class BoardView {
         fontSize: 48,
         fontWeight: '800',
         fill: '#ffffff',
-        stroke: { color: '#3b1466', width: 8 },
+        stroke: { color: '#3b1466', width: 10 },
       },
     });
 
@@ -712,7 +712,7 @@ export class BoardView {
   private popup(r: number, c: number, value: number): void {
     const text = this.popupPool.pop() ?? new BitmapText({ text: '', style: { fontFamily: SCORE_FONT, fontSize: 24 } });
     text.text = `+${value}`;
-    text.style.fontSize = Math.round(this.cell * 0.42);
+    text.style.fontSize = Math.round(this.cell * 0.56);
     text.anchor.set(0.5);
     const x = this.x(c);
     const y0 = this.y(r);
@@ -721,11 +721,11 @@ export class BoardView {
     this.textLayer.addChild(text);
     void this.scene.tweens
       .run(
-        650,
+        1100,
         (k) => {
-          text.y = y0 - k * this.cell * 0.8;
-          text.alpha = k < 0.5 ? 1 : 1 - (k - 0.5) * 2;
-          text.scale.set(k < 0.15 ? 0.6 + (k / 0.15) * 0.4 : 1);
+          text.y = y0 - k * this.cell * 0.9;
+          text.alpha = k < 0.6 ? 1 : 1 - (k - 0.6) / 0.4;
+          text.scale.set(k < 0.12 ? 0.6 + (k / 0.12) * 0.6 : k < 0.24 ? 1.2 - ((k - 0.12) / 0.12) * 0.2 : 1);
         },
         { ease: Ease.outCubic },
       )
