@@ -123,7 +123,7 @@ export const S = {
   giveUp: 'Сдаться',
   boosterNames: { star: 'Падающая звезда', meteor: 'Метеорит' } satisfies Record<Booster, string>,
   /** a tap on a booster not charged yet says how it charges */
-  boosterHint: { star: 'Копится из оставшихся ходов', meteor: 'Копится за звёзды: три дают больше, две — немного' } satisfies Record<Booster, string>,
+  boosterHint: { star: 'Копится из оставшихся ходов', meteor: 'Копится за звёзды: чем больше звёзд, тем больше' } satisfies Record<Booster, string>,
   aim: { star: 'Куда упадёт звезда?', meteor: 'Куда ударит метеорит?' } satisfies Record<Booster, string>,
   update: {
     button: 'Обновление',

@@ -358,7 +358,7 @@ export class GameApp {
 
   /**
    * The bar follows the saved charges; once the level is won, the win's gain too, as its sparks land:
-   * the star fills from the moves left, the meteor from the second and third stars as the score reaches them.
+   * the star fills from the moves left, the meteor from each star mark the win and then the score reaches.
    */
   private updateBoosters(): void {
     const game = this.game;
@@ -482,7 +482,7 @@ export class GameApp {
     this.ui.flashText(S.win);
     // The moves left turn into specials on the board and, as the counter rolls down, fly off the orb to the star.
     const finale = movesAtWin > 0 ? startFinale(game) : [];
-    const none = { moves: 0, stars: 1 };
+    const none = { moves: 0, stars: 0 };
     const win: WinGain = { moves: movesAtWin, sent: none, landed: none, landing: Promise.resolve() };
     this.win = win;
     this.updateBoosters();

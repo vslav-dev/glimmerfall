@@ -11,7 +11,9 @@ import { timed } from '@/telemetry/perf';
 import type { FxChoice } from '@/view/fx/switches';
 
 const KEY = 'glimmerfall-save';
-const VERSION = 7;
+const VERSION = 8;
+/** the meteor's unit of charge in the saves that counted it differently */
+const OLD_METEOR_UNITS: Partial<Record<number, number>> = { 6: 3, 7: 20 };
 
 export interface Settings {
   sound: boolean;
@@ -97,9 +99,11 @@ export function defaultSave(): SaveData {
 export async function loadSave(): Promise<SaveData> {
   let data = await loadJson<SaveData>(KEY);
   if (!data) return defaultSave();
-  // v7 counts the meteor's charge in twentieths, not thirds: a v6 save keeps its share of the way and all the rest.
-  if (data.version === 6) {
-    const meteor = Math.round((data.boosters.meteor * EARN.meteor.unit) / 3);
+  // The meteor's charge was counted in thirds up to v6, in twentieths in v7, in eightieths since v8:
+  // an older save keeps its share of the way and all the rest.
+  const meteorUnit = OLD_METEOR_UNITS[data.version];
+  if (meteorUnit) {
+    const meteor = Math.round((data.boosters.meteor * EARN.meteor.unit) / meteorUnit);
     data = { ...data, version: VERSION, boosters: { ...data.boosters, meteor } };
   }
   const defaults = defaultSave();

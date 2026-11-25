@@ -3,7 +3,7 @@
  *  - the moves each level gets, the twin's win rate against the target, and 3-star wins: the rules changed (squares
  *    make bombs, no spark), calibration should keep the curve;
  *  - specials made per move, by kind;
- *  - moves left at wins: what charges the star; 3-star wins: what charges the meteor;
+ *  - moves left at wins: what charges the star; the stars of wins: what charge the meteor;
  *  - how often a booster turns a lost run into a win, aimed greedily two moves before the end.
  * Runs only with GF_BALANCE=1.
  */
