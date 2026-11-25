@@ -1,4 +1,4 @@
-import { EARN, spend, stock, winGain, withGain } from '@/app/boosters';
+import { type Charges, EARN, sparkCount, spend, stock, winGain, withGain } from '@/app/boosters';
 import { type Attempt, BoardSize, type CurrentLevel, type SaveData, defaultSave, flushSaves, loadSave, persist, randomSeed } from '@/app/save';
 import { type Update, UpdateWatch } from '@/app/updates';
 import { AudioBus } from '@/audio/audio';
@@ -20,6 +20,7 @@ import { flushPerf, perfContext, timed } from '@/telemetry/perf';
 import { exitApp, Haptic, haptic, isNative, onBackButton, onHidden, onVisible, setFullscreen, setHapticsEnabled } from '@/platform/platform';
 import { track } from '@/telemetry/telemetry';
 import { BOOSTER_FOOTER, BoosterBar } from '@/ui/boosterBar';
+import { Sparks } from '@/ui/sparks';
 import { Action, Ui } from '@/ui/ui';
 import { S } from '@/ui/strings';
 import { BoardView, type Layer } from '@/view/boardView';
@@ -59,10 +60,20 @@ const BOOSTED_WEIGHT = 0.5;
 
 const LAYER_SFX: Record<Layer, Sfx> = { ice: Sfx.Ice, crate: Sfx.Crate, chain: Sfx.Chain };
 
+/** A share of a win's gain: the moves left that feed the star, the stars that feed the meteor. */
+type WinShare = { moves: number; stars: number };
+
+/**
+ * A won level's gain flies into the bar: `moves` left at the win (the stars follow the score as the finale adds to it),
+ * the share that took off as sparks, the share that landed (what the bar shows), and the sparks still in the air.
+ */
+type WinGain = { moves: number; sent: WinShare; landed: WinShare; landing: Promise<void> };
+
 /** Game flow: screens, moves, results, persistence. Owns no rules (core) and draws nothing itself (view, ui). */
 export class GameApp {
   private readonly ui: Ui;
   private readonly boosters: BoosterBar;
+  private readonly sparks: Sparks;
   private readonly view: BoardView;
   private readonly audio = new AudioBus();
   private readonly drafts = new LevelDrafts();
@@ -86,8 +97,8 @@ export class GameApp {
   private lastTo = -1;
   /** the booster being aimed, or null */
   private aiming: Booster | null = null;
-  /** moves left when the level was won: what the star charges from once the finale used them up */
-  private winMoves: number | null = null;
+  /** the gain of the level being won, flying into the bar; null outside a win */
+  private win: WinGain | null = null;
   /** a newer build is live, once noticed */
   private update: Update | null = null;
   /** where the update notice returns to */
@@ -102,6 +113,7 @@ export class GameApp {
   ) {
     this.ui = new Ui(root, (action, item) => void this.onAction(action, item));
     this.boosters = new BoosterBar(root.querySelector<HTMLElement>('#boosters')!, () => this.audio.play(Sfx.Charged));
+    this.sparks = new Sparks(root.querySelector<HTMLElement>('#sparks')!, () => this.save.settings.effects[Fx.BoosterSparks] !== false);
     this.view = new BoardView(scene, canvas, {
       onSwap: (a, b, input) => void this.onSwap(a, b, input),
       onStrike: (at) => this.onStrike(at),
@@ -196,7 +208,7 @@ export class GameApp {
       this.rest = null;
       this.lastTo = -1;
       this.aiming = null;
-      this.winMoves = null;
+      this.win = null;
       if (this.debugEl) for (const b of Object.values(Booster)) this.save.boosters[b] = EARN[b].unit * EARN[b].max;
       perfContext({ level: game.level.number, board: `${game.board.cols}x${game.board.rows}` });
       this.view.inputEnabled = false;
@@ -345,16 +357,42 @@ export class GameApp {
   }
 
   /**
-   * The bar follows the saved charges; from the moment the level is won it shows what the win earns too,
-   * before the finale even starts: the star fills from the moves left, the meteor once the third star is in.
+   * The bar follows the saved charges; once the level is won, the win's gain too, as its sparks land:
+   * the star fills from the moves left, the meteor from the second and third stars as the score reaches them.
    */
   private updateBoosters(): void {
     const game = this.game;
     if (!game) return;
     const usable = this.mode === Mode.Play && canStrike(game) && this.running !== game;
     if (!usable) this.stopAim();
-    const gain = game.status === 'won' ? winGain(this.winMoves ?? game.movesLeft, starsFor(game)) : null;
-    this.boosters.update(gain ? withGain(this.save.boosters, gain) : this.save.boosters, usable, this.aiming);
+    if (this.win) this.sendGain(game, this.win);
+    const landed = this.win?.landed;
+    this.boosters.update(landed ? this.chargesWith(landed) : this.save.boosters, usable, this.aiming);
+  }
+
+  /** Sends off what of the win's gain has not flown yet: the moves left to the star, each new star mark to the meteor. */
+  private sendGain(game: GameState, win: WinGain): void {
+    if (win.moves > win.sent.moves) this.fly(win, Booster.Star, this.ui.movesOrb(), { ...win.sent, moves: win.moves });
+    const stars = starsFor(game);
+    for (let k = win.sent.stars + 1; k <= stars; k++) this.fly(win, Booster.Meteor, this.ui.starMark(k), { ...win.sent, stars: k });
+  }
+
+  /** One leg of the gain: a spark per fortieth of a booster it adds; the bar takes it in as the first spark lands. */
+  private fly(win: WinGain, b: Booster, from: HTMLElement | undefined, next: WinShare): void {
+    const count = sparkCount(b, this.chargesWith(win.sent), this.chargesWith(next));
+    win.sent = next;
+    const landing = this.sparks.fly(b, from, this.boosters.orb(b), count, (first) => {
+      if (count > 0) this.boosters.gulp(b);
+      if (!first || this.win !== win) return;
+      win.landed = { moves: Math.max(win.landed.moves, next.moves), stars: Math.max(win.landed.stars, next.stars) };
+      this.updateBoosters();
+    });
+    win.landing = Promise.all([win.landing, landing]).then(() => undefined);
+  }
+
+  /** The saved charges with a share of the win's gain added. */
+  private chargesWith(share: WinShare): Charges {
+    return withGain(this.save.boosters, winGain(share.moves, share.stars));
   }
 
   /** Plays board steps one by one until the board rests, then ends the level or waits for the player. */
@@ -440,23 +478,28 @@ export class GameApp {
   private async finishWin(game: GameState): Promise<void> {
     this.mode = Mode.Finale;
     const movesAtWin = game.movesLeft;
-    this.winMoves = movesAtWin;
-    this.updateBoosters();
     haptic(Haptic.Success);
     this.ui.flashText(S.win);
-    if (game.movesLeft > 0) {
+    // The moves left turn into specials on the board and, as the counter rolls down, fly off the orb to the star.
+    const finale = movesAtWin > 0 ? startFinale(game) : [];
+    const none = { moves: 0, stars: 1 };
+    const win: WinGain = { moves: movesAtWin, sent: none, landed: none, landing: Promise.resolve() };
+    this.win = win;
+    this.updateBoosters();
+    this.ui.updateHud(game);
+    if (movesAtWin > 0) {
       // The finale continues the winning chain: it opens at the speed that chain reached.
       this.scene.tweens.speed = chainSpeed(game.cascade);
-      await this.view.play(startFinale(game), (ev) => this.feedback(ev));
-      this.ui.updateHud(game);
+      await this.view.play(finale, (ev) => this.feedback(ev));
       await this.run(game);
       this.ui.updateHud(game);
     }
 
     const def = game.level;
     const stars = starsFor(game);
-    // The bar shows the win's gain as it fills; it is saved once the fill has played out.
+    // The bar shows the win's gain as its sparks land and the fill rises; it is saved once all of it has played out.
     this.updateBoosters();
+    await win.landing;
     await this.boosters.settled();
     this.save.boosters = withGain(this.save.boosters, winGain(movesAtWin, stars));
     this.endAttempt(game, AttemptEnd.Won, movesAtWin, stars);
@@ -464,6 +507,7 @@ export class GameApp {
     this.save.level = def.number + 1;
     this.save.current = null;
     this.game = null;
+    this.win = null;
     this.persist();
 
     await this.view.vanish();

@@ -103,6 +103,7 @@ export const S = {
     'hud-pop': 'Поп чисел в HUD',
     praise: 'Слова похвалы',
     'booster-glow': 'Дыхание готового бонуса',
+    'booster-sparks': 'Звёздочки и метеориты в бонусы при победе',
   } satisfies Record<Fx, string>,
   reset: 'Сбросить прогресс',
   resetConfirm: 'Точно сбросить?',

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EARN, newCharges, progress, spend, stock, winGain, withGain } from '@/app/boosters';
+import { EARN, newCharges, progress, sparkCount, spend, stock, winGain, withGain } from '@/app/boosters';
 import { Booster } from '@/core/types';
 
 describe('booster charges', () => {
@@ -27,5 +27,15 @@ describe('booster charges', () => {
     expect(stock(c, Booster.Star)).toBe(1);
     expect(progress(c, Booster.Star)).toBeCloseTo(3 / EARN.star.unit);
     expect(spend(c, Booster.Meteor)).toBe(false);
+  });
+
+  it('sends a spark per move to the star and two per twentieth to the meteor, none past the cap', () => {
+    const c = newCharges();
+    const won = (moves: number, stars: number) => withGain(c, winGain(moves, stars));
+    expect(sparkCount(Booster.Star, c, won(10, 1))).toBe(10);
+    expect(sparkCount(Booster.Meteor, won(10, 1), won(10, 2))).toBe(2);
+    expect(sparkCount(Booster.Meteor, won(10, 2), won(10, 3))).toBe(6);
+    const full = withGain(c, winGain(1000, 1));
+    expect(sparkCount(Booster.Star, full, withGain(full, winGain(10, 1)))).toBe(0);
   });
 });

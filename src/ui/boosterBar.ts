@@ -11,6 +11,13 @@ export const BOOSTER_FOOTER = 74;
 const FILL_MS = 900;
 const BURST_MS = 520;
 const BURST_EASE = 'cubic-bezier(0.2, 1.6, 0.4, 1)';
+/** a button gulps each spark that lands in it */
+const GULP_MS = 260;
+const GULP_FRAMES: Keyframe[] = [
+  { transform: 'scale(1)', easing: BURST_EASE },
+  { offset: 0.35, transform: 'scale(1.12)', easing: 'ease-out' },
+  { transform: 'scale(1)' },
+];
 
 const ACTIONS: Record<Booster, Action> = { [Booster.Star]: Action.Star, [Booster.Meteor]: Action.Meteor };
 
@@ -138,6 +145,16 @@ export class BoosterBar {
     this.el.classList.toggle('calm', !on);
   }
 
+  /** Where a booster's sparks fly into: its orb. */
+  public orb(b: Booster): HTMLElement {
+    return this.buttons[b].orbEl;
+  }
+
+  /** A spark landed in the booster: the button gulps it. */
+  public gulp(b: Booster): void {
+    this.buttons[b].gulp();
+  }
+
   /** Resolves once every gain has played out. */
   public settled(): Promise<void> {
     return Promise.all(Object.values(this.buttons).map((b) => b.settled)).then(() => undefined);
@@ -157,14 +174,17 @@ class BoosterButton {
   private stock = 0;
   private fill = 0;
   public settled: Promise<void> = Promise.resolve();
+  public readonly orbEl: HTMLElement;
   private readonly fillEl: HTMLElement;
   private readonly surfaceEl: HTMLElement;
   private readonly pips: HTMLElement[];
+  private gulping: Animation | null = null;
 
   public constructor(
     public readonly el: HTMLElement,
     private readonly onCharged: () => void,
   ) {
+    this.orbEl = el.querySelector('.orb')!;
     this.fillEl = el.querySelector('.fill')!;
     this.surfaceEl = el.querySelector('.surface')!;
     this.pips = [...el.querySelectorAll<HTMLElement>('.pips i')];
@@ -205,7 +225,13 @@ class BoosterButton {
       easing: 'ease-out',
       pseudoElement: '::after',
     });
-    this.el.querySelector('.orb')!.animate([{ transform: 'scale(1)', easing: BURST_EASE }, { offset: 0.4, transform: 'scale(1.22)', easing: BURST_EASE }, { transform: 'scale(1)' }], BURST_MS);
+    this.orbEl.animate([{ transform: 'scale(1)', easing: BURST_EASE }, { offset: 0.4, transform: 'scale(1.22)', easing: BURST_EASE }, { transform: 'scale(1)' }], BURST_MS);
+  }
+
+  /** Restarted by every spark that lands, also mid-way: a stream of them keeps the button swallowing. */
+  public gulp(): void {
+    this.gulping?.cancel();
+    this.gulping = this.el.animate(GULP_FRAMES, GULP_MS);
   }
 
   /** `animate` off jumps there at once: a fill starting over drops back without draining visibly. */

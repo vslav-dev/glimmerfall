@@ -401,6 +401,16 @@ export class Ui {
     this.hudGoalCounters = this.hudGoals.map((el) => new Counter(el.querySelector('b')!, pops));
   }
 
+  /** Where the star's sparks take off at a win: the moves orb, as the moves left roll down. */
+  public movesOrb(): HTMLElement | undefined {
+    return this.hud.querySelector<HTMLElement>('.hud-moves') ?? undefined;
+  }
+
+  /** The score bar's mark of the `stars`-th star: where the meteor's sparks take off once it is earned. */
+  public starMark(stars: number): HTMLElement | undefined {
+    return this.hudStars[stars - 1];
+  }
+
   public hideHud(): void {
     this.hud.classList.add('off');
   }

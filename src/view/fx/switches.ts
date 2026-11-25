@@ -22,10 +22,11 @@ export const Fx = {
   Bounce: 'bounce',
   SwapDepth: 'swap-depth',
   Popups: 'popups',
-  /** DOM, over the board: the HUD numbers' pop, the praise words, a ready booster's breathing halo */
+  /** DOM, over the board: the HUD numbers' pop, the praise words, a ready booster's breathing halo, a win's sparks into the boosters */
   HudPop: 'hud-pop',
   Praise: 'praise',
   BoosterGlow: 'booster-glow',
+  BoosterSparks: 'booster-sparks',
 } as const;
 export type Fx = (typeof Fx)[keyof typeof Fx];
 

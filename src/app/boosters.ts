@@ -17,6 +17,9 @@ export const EARN: Record<Booster, { unit: number; max: number }> = {
  */
 const METEOR_GAIN = [0, 0, 1, 4];
 
+/** A spark flying into a booster carries a fortieth of it: a move for the star, half a twentieth for the meteor. */
+const SPARKS_PER_BOOSTER = 40;
+
 /** Charge saved up per booster. */
 export type Charges = Record<Booster, number>;
 
@@ -44,6 +47,11 @@ export function winGain(movesLeft: number, stars: number): Charges {
 export function withGain(charges: Charges, gain: Charges): Charges {
   const capped = (b: Booster): number => Math.min(EARN[b].unit * EARN[b].max, charges[b] + gain[b]);
   return { [Booster.Star]: capped(Booster.Star), [Booster.Meteor]: capped(Booster.Meteor) };
+}
+
+/** Sparks that carry booster `b` from one charge to another: none for charge lost past the cap. */
+export function sparkCount(b: Booster, before: Charges, after: Charges): number {
+  return Math.round(((after[b] - before[b]) / EARN[b].unit) * SPARKS_PER_BOOSTER);
 }
 
 /** Takes one booster from the stock; false when there is none. */

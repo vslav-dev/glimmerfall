@@ -1018,6 +1018,87 @@ body {
   animation: mark-pop 0.45s cubic-bezier(0.2, 1.6, 0.4, 1);
 }
 
+/* ---------- sparks: a win's gain flying into the boosters ---------- */
+
+/*
+ * Over the HUD and the board, under the cards. A spark flies by one Web Animation of transform and opacity:
+ * a layer of its own the compositor moves, painted once. Nothing in it repaints or lays out in flight.
+ */
+#sparks {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  contain: strict;
+}
+
+/* A spark points right, its head on its point: the flight turns it along the path, so the tail trails behind. */
+.spark {
+  position: absolute;
+  left: 0;
+  top: 0;
+  opacity: 0;
+}
+
+/* the glow under the head */
+.spark::before {
+  content: '';
+  position: absolute;
+  left: -13px;
+  top: -13px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 226, 140, 0.7), rgba(255, 200, 80, 0.2) 45%, transparent 70%);
+}
+
+/* the tail, from just inside the head */
+.spark::after {
+  content: '';
+  position: absolute;
+  right: 3px;
+  top: -2px;
+  width: 30px;
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, rgba(255, 214, 110, 0.85));
+}
+
+/* a little golden star, the star booster's own colors */
+.spark b {
+  position: absolute;
+  left: -7px;
+  top: -7px;
+  width: 14px;
+  height: 14px;
+  background: radial-gradient(circle at 50% 55%, #fff, #fff0b0 35%, #ffc940 70%, #f09a1c);
+  clip-path: polygon(50% 0, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
+}
+
+.spark.meteor::before {
+  background: radial-gradient(circle, rgba(255, 150, 60, 0.7), rgba(255, 90, 30, 0.2) 45%, transparent 70%);
+}
+
+/* the meteor's flame: long, tapered at both ends, red fading into the dark */
+.spark.meteor::after {
+  top: -3px;
+  width: 38px;
+  height: 6px;
+  border-radius: 50%;
+  background: linear-gradient(90deg, transparent, rgba(194, 24, 91, 0.45) 35%, #ff5a1f 75%, #ffd27a);
+}
+
+/* a hot rock, its face glowing ahead */
+.spark.meteor b {
+  left: -6px;
+  top: -6px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 70% 45%, #fff1a8, #ffb347 30%, #d4501e 62%, #57261a);
+  clip-path: none;
+}
+
 /* ---------- update notice ---------- */
 
 .card.update .releases {
