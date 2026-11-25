@@ -146,7 +146,7 @@ export function advance(state: GameState): GameEvent[] | null {
   const level = pending ? 0 : state.cascade;
   state.pending = null;
   // Once the moves are spent, nothing new appears: cascades, the last chance and the finale clear matches
-  // without leaving specials. Only the player's own swap still makes one.
+  // without leaving specials, the last move's own match included.
   const specials = state.movesLeft > 0;
   let step = resolveStep(board, pending, level, fuse, specials);
   const events: GameEvent[] = [];
@@ -187,7 +187,7 @@ export function advance(state: GameState): GameEvent[] | null {
 }
 
 /**
- * Out of moves with goals left: the specials the player built and left on the board are lit and go off one by one.
+ * Out of moves with goals left: the specials already on the board are lit and go off one by one.
  * It adds nothing: with no moves left, its cascades create no specials. A special hit by a blast still goes off.
  * Without specials there is no last chance and the level is lost. Once per level.
  * The bot plays by the same rule, so calibration already prices it into the move count.

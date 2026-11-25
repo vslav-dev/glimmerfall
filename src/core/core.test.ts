@@ -442,18 +442,16 @@ describe('game', () => {
     }
   });
 
-  it('after the last move only the swap itself makes a special; its cascades make none', () => {
+  it('after the last move nothing makes a special, the swap itself included', () => {
     const game = createGame(level({ moves: 1 }), 7);
-    // Swapping (1,3) up completes 0000 in row 0 (a special from the swap); row 3 is a ready 1111 for the cascade.
+    // Swapping (1,3) up completes 0000 in row 0; row 3 is a ready 1111 for the cascade.
     game.board = boardFrom(['00020', '12301', '23412', '41111', '34123']);
     expect(makeMove(game, { r: 1, c: 3 }, { r: 0, c: 3 })?.valid).toBe(true);
     expect(game.movesLeft).toBe(0);
-    const first = advance(game)!;
-    const created = first.flatMap((e) => (e.type === 'clear' ? e.created : []));
-    expect(created.map((c) => c.pos)).toEqual([{ r: 0, c: 3 }]);
-    const later: GameEvent[] = [];
-    for (let step = advance(game); step; step = advance(game)) later.push(...step);
-    expect(later.flatMap((e) => (e.type === 'clear' ? e.created : []))).toEqual([]);
+    const events: GameEvent[] = [];
+    for (let step = advance(game); step; step = advance(game)) events.push(...step);
+    expect(events.flatMap((e) => (e.type === 'clear' ? e.created : []))).toEqual([]);
+    expect(events.filter((e) => e.type === 'lastChance')).toEqual([]);
   });
 
   it('without specials on the board, running out of moves is a plain loss', () => {

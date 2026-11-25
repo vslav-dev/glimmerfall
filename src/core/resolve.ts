@@ -16,7 +16,6 @@ import {
   MAX_COLORS,
   NO_COLOR,
   type PendingMove,
-  type PendingSwap,
   type Piece,
   type Pos,
   type RemovedPiece,
@@ -81,7 +80,7 @@ interface Ctx {
   lit: LitPiece[];
   /** center of the player's combo this step */
   combo: Pos | null;
-  /** matches other than the player's own create their specials; off once the moves are spent */
+  /** matches create their specials; off once the moves are spent, the last move's own match included */
   specials: boolean;
 }
 
@@ -95,7 +94,7 @@ export function newTally(): Tally {
  * Exactly one special goes off per step, so chain reactions play out one by one while the board refills:
  * a special hit by a blast is lit, stays on the board (falling with it) and is due from the next step on;
  * a matched special is due at once, but when another one goes off first it is lit and waits likewise.
- * With `specials` off, only the player's own match leaves a special behind; the others just clear.
+ * With `specials` off, no match leaves a special behind: they just clear.
  * Null when nothing matches and nothing is lit: the board is calm.
  */
 export function resolveStep(b: Board, move: PendingMove | null, cascadeLevel: number, fuse: number[], specials = true): Step | null {
@@ -141,7 +140,7 @@ function stepInto(ctx: Ctx, move: PendingMove | null): boolean {
   if (swap && isComboPair(b.cells[swap.to].piece!, b.cells[swap.from].piece!)) runCombo(ctx, swap.from, swap.to);
   // The player's match is found before the fuse goes off, so a blast never steals it.
   const groups = findGroups(b, swap ? [swap.to, swap.from] : []);
-  clearGroups(ctx, groups, swap);
+  clearGroups(ctx, groups);
   const fired = fireNext(ctx, due);
   if (ctx.removed.length === 0 && groups.length === 0 && !fired) return false;
   finishStep(ctx);
@@ -219,11 +218,9 @@ function finishStep(ctx: Ctx): void {
   });
 }
 
-function clearGroups(ctx: Ctx, groups: MatchGroup[], swap: PendingSwap | null): void {
+function clearGroups(ctx: Ctx, groups: MatchGroup[]): void {
   for (const g of groups) {
-    // The player's own match always earns its special; other matches only while `specials` is on.
-    const own = swap !== null && (g.cells.includes(swap.to) || g.cells.includes(swap.from));
-    const special = (own || ctx.specials) && g.special !== Special.None ? newPiece(ctx.b, g.color, g.special) : null;
+    const special = ctx.specials && g.special !== Special.None ? newPiece(ctx.b, g.color, g.special) : null;
     let points = 0;
     for (const i of g.cells) {
       const cell = ctx.b.cells[i];
