@@ -19,6 +19,18 @@ const GULP_FRAMES: Keyframe[] = [
   { transform: 'scale(1)' },
 ];
 
+/** a press on a booster that moves this far is a drag, not a tap */
+const DRAG_PX = 10;
+
+/** A booster dragged out of its button onto the board. */
+export interface BoosterDrag {
+  /** the drag begins: false when the booster cannot be aimed now, and the press stays a tap */
+  start(b: Booster): boolean;
+  move(x: number, y: number): void;
+  /** let go at this point of the screen, or null when the gesture was cancelled */
+  drop(at: { x: number; y: number } | null): void;
+}
+
 const ACTIONS: Record<Booster, Action> = { [Booster.Star]: Action.Star, [Booster.Meteor]: Action.Meteor };
 
 /** A golden star falling down left, three tapered streaks of its tail up right. */
@@ -69,6 +81,7 @@ const UPDATE_ICON = `<svg viewBox="0 0 48 48" aria-hidden="true">
  * The two booster buttons under the board, at its right edge. Each icon fills with color from below as its
  * charge grows, with no numbers: the player reads how far it is. A ready booster glows; the star shows its
  * stock as pips. Gains play out: the fill rises, a finished booster bursts and the next one starts filling.
+ * A booster is aimed by a tap (then the board takes the strike) or dragged straight onto the board.
  */
 export class BoosterBar {
   private readonly glide: Glide;
@@ -79,6 +92,7 @@ export class BoosterBar {
   public constructor(
     private readonly el: HTMLElement,
     onCharged: () => void,
+    drag: BoosterDrag,
   ) {
     this.glide = new Glide(el);
     el.innerHTML =
@@ -101,6 +115,7 @@ export class BoosterBar {
     this.giveUpEl = el.querySelector<HTMLElement>('.give-up')!;
     const button = (b: Booster): BoosterButton => new BoosterButton(el.querySelector<HTMLElement>(`.booster.${b}`)!, onCharged);
     this.buttons = { [Booster.Star]: button(Booster.Star), [Booster.Meteor]: button(Booster.Meteor) };
+    for (const b of Object.values(Booster)) draggable(b, this.buttons[b].el, drag);
   }
 
   /** Shows the bar with these charges as they are: a new level opens without replaying old gains. */
@@ -246,6 +261,44 @@ class BoosterButton {
     this.pips.forEach((pip, k) => pip.classList.toggle('on', k < stock));
     if (!animate) void this.el.offsetWidth;
   }
+}
+
+/**
+ * A press that moves past DRAG_PX drags the booster: the button holds the pointer, so the finger is followed
+ * over the board, and letting go drops it there. The click that may follow a drag does not reach the bar.
+ */
+function draggable(b: Booster, el: HTMLElement, drag: BoosterDrag): void {
+  let from: { x: number; y: number } | null = null;
+  let dragging = false;
+  let dragged = false;
+  const end = (at: { x: number; y: number } | null): void => {
+    if (dragging) drag.drop(at);
+    from = null;
+    dragging = false;
+  };
+  el.addEventListener('pointerdown', (e) => {
+    from = { x: e.clientX, y: e.clientY };
+    dragging = dragged = false;
+    el.setPointerCapture(e.pointerId);
+  });
+  el.addEventListener('pointermove', (e) => {
+    if (!from) return;
+    if (!dragging) {
+      if (Math.hypot(e.clientX - from.x, e.clientY - from.y) < DRAG_PX) return;
+      dragging = dragged = drag.start(b);
+      if (!dragging) {
+        from = null;
+        return;
+      }
+    }
+    drag.move(e.clientX, e.clientY);
+  });
+  el.addEventListener('pointerup', (e) => end({ x: e.clientX, y: e.clientY }));
+  el.addEventListener('pointercancel', () => end(null));
+  el.addEventListener('click', (e) => {
+    if (dragged) e.stopPropagation();
+    dragged = false;
+  });
 }
 
 function wait(ms: number): Promise<void> {

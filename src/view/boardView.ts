@@ -798,6 +798,16 @@ export class BoardView {
     this.drawAim();
   }
 
+  /** A booster dragged out of its button: the aim follows the finger over the board. */
+  public dragAim(x: number, y: number): void {
+    if (this.aiming && this.inputEnabled) this.pointAim(this.cellAt(x, y));
+  }
+
+  /** The dragged booster was let go here: the cell it strikes, or null off the board. */
+  public dropAim(x: number, y: number): Pos | null {
+    return this.aiming && this.inputEnabled ? this.cellAt(x, y) : null;
+  }
+
   private pointAim(pos: Pos | null): void {
     if (pos?.r === this.aimAt?.r && pos?.c === this.aimAt?.c) return;
     this.aimAt = pos;
@@ -884,7 +894,7 @@ export class BoardView {
 
   private onDown(e: PointerEvent): void {
     if (!this.inputEnabled) return;
-    const pos = this.pointToCell(e);
+    const pos = this.cellAt(e.clientX, e.clientY);
     if (this.aiming) {
       this.aimDown = true;
       this.pointAim(pos);
@@ -909,7 +919,7 @@ export class BoardView {
 
   private onMove(e: PointerEvent): void {
     // A mouse aims by hovering; a finger by touching and sliding.
-    if (this.aiming && this.inputEnabled && (this.aimDown || e.pointerType === 'mouse')) this.pointAim(this.pointToCell(e));
+    if (this.aiming && this.inputEnabled && (this.aimDown || e.pointerType === 'mouse')) this.pointAim(this.cellAt(e.clientX, e.clientY));
     if (!this.drag || !this.inputEnabled) return;
     const dx = e.clientX - this.drag.x;
     const dy = e.clientY - this.drag.y;
@@ -926,7 +936,7 @@ export class BoardView {
     this.drag = null;
     if (!this.aiming || !this.aimDown) return;
     this.aimDown = false;
-    const pos = this.pointToCell(e);
+    const pos = this.cellAt(e.clientX, e.clientY);
     if (pos && this.inputEnabled) this.input.onStrike(pos);
     else this.pointAim(null);
   }
@@ -946,12 +956,13 @@ export class BoardView {
     return this.grid[i] !== null && !this.locked.has(i);
   }
 
-  private pointToCell(e: PointerEvent): Pos | null {
+  /** The cell under a point of the screen, or null off the board. */
+  private cellAt(x: number, y: number): Pos | null {
     const b = this.board;
     if (!b) return null;
     const rect = this.canvas.getBoundingClientRect();
-    const c = Math.floor((e.clientX - rect.left - this.originX) / this.cell);
-    const r = Math.floor((e.clientY - rect.top - this.originY) / this.cell);
+    const c = Math.floor((x - rect.left - this.originX) / this.cell);
+    const r = Math.floor((y - rect.top - this.originY) / this.cell);
     if (r < 0 || r >= b.rows || c < 0 || c >= b.cols || !b.cells[r * b.cols + c].exists) return null;
     return { r, c };
   }

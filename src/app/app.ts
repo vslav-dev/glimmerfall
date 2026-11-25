@@ -112,7 +112,11 @@ export class GameApp {
     canvas: HTMLCanvasElement,
   ) {
     this.ui = new Ui(root, (action, item) => void this.onAction(action, item));
-    this.boosters = new BoosterBar(root.querySelector<HTMLElement>('#boosters')!, () => this.audio.play(Sfx.Charged));
+    this.boosters = new BoosterBar(root.querySelector<HTMLElement>('#boosters')!, () => this.audio.play(Sfx.Charged), {
+      start: (b) => this.startAim(b),
+      move: (x, y) => this.view.dragAim(x, y),
+      drop: (at) => this.dropAim(at),
+    });
     this.sparks = new Sparks(root.querySelector<HTMLElement>('#sparks')!, () => this.save.settings.effects[Fx.BoosterSparks] !== false);
     this.view = new BoardView(scene, canvas, {
       onSwap: (a, b, input) => void this.onSwap(a, b, input),
@@ -334,18 +338,38 @@ export class GameApp {
 
   /** A tap on a booster: aims it, or stops aiming it. One not charged yet says how it charges. */
   private toggleAim(booster: Booster): void {
-    const game = this.game;
-    if (this.mode !== Mode.Play || !game) return;
+    if (this.mode !== Mode.Play || !this.game) return;
     if (this.aiming === booster) {
       this.stopAim();
+      this.updateInput();
     } else if (stock(this.save.boosters, booster) < 1) {
       this.ui.flashText(S.boosterHint[booster]);
-      return;
-    } else if (canStrike(game) && this.running !== game) {
+    } else {
+      this.startAim(booster);
+    }
+  }
+
+  /** Aims a booster, by a tap or a drag out of its button; false when it cannot strike now. */
+  private startAim(booster: Booster): boolean {
+    const game = this.game;
+    if (this.mode !== Mode.Play || !game || stock(this.save.boosters, booster) < 1 || !canStrike(game) || this.running === game) return false;
+    if (this.aiming !== booster) {
       this.aiming = booster;
       this.view.aim(booster);
       this.ui.flashText(S.aim[booster]);
     }
+    this.updateInput();
+    return true;
+  }
+
+  /** A dragged booster let go: over a cell it strikes there, anywhere else it goes back to its button. */
+  private dropAim(at: { x: number; y: number } | null): void {
+    const cell = at && this.view.dropAim(at.x, at.y);
+    if (cell) {
+      this.onStrike(cell);
+      return;
+    }
+    this.stopAim();
     this.updateInput();
   }
 
