@@ -185,9 +185,12 @@ export class BoosterBar {
 }
 
 class BoosterButton {
-  /** the stock and fill the button is heading to; `settled` resolves once it got there */
+  /** the stock and fill the button is heading to, and the stock it shows; `settled` resolves once it got there */
   private stock = 0;
   private fill = 0;
+  private shown = 0;
+  /** a finished booster is filling up and bursting: the fill catches up with the target after it */
+  private crossing = false;
   public settled: Promise<void> = Promise.resolve();
   public readonly orbEl: HTMLElement;
   private readonly fillEl: HTMLElement;
@@ -206,30 +209,36 @@ class BoosterButton {
   }
 
   public reset(stock: number, fill: number): void {
-    this.stock = stock;
+    this.stock = this.shown = stock;
     this.fill = fill;
     this.settled = Promise.resolve();
     this.render(stock, fill, false);
   }
 
+  /** A fill that moves within the same stock heads there at once: a stream of small gains rises with each one. */
   public set(stock: number, fill: number): void {
     if (stock === this.stock && fill === this.fill) return;
-    const from = this.stock;
     this.stock = stock;
     this.fill = fill;
-    this.settled = this.settled.then(async () => {
-      // Each booster finished on the way fills up to the top and bursts; then the rest fills.
-      for (let k = from + 1; k <= stock; k++) {
-        this.render(k - 1, 1, true);
-        await wait(FILL_MS);
-        this.burst();
-        const last = k === stock;
-        this.render(k, last && fill === 1 ? 1 : 0, false);
-        if (!last || fill < 1) await wait(BURST_MS / 2);
-      }
-      this.render(stock, fill, true);
+    if (!this.crossing) this.settled = this.follow();
+  }
+
+  /** Each booster finished on the way fills up to the top and bursts; then the fill rises to wherever the target is by then. */
+  private async follow(): Promise<void> {
+    this.crossing = true;
+    while (this.shown < this.stock) {
+      this.render(this.shown, 1, true);
       await wait(FILL_MS);
-    });
+      this.burst();
+      this.shown++;
+      const last = this.shown === this.stock;
+      this.render(this.shown, last && this.fill === 1 ? 1 : 0, false);
+      if (!last || this.fill < 1) await wait(BURST_MS / 2);
+    }
+    this.crossing = false;
+    this.shown = this.stock;
+    this.render(this.stock, this.fill, true);
+    await wait(FILL_MS);
   }
 
   /** A ring of light bursts out and the button pops: Web Animations, transform and opacity only. */

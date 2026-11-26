@@ -33,11 +33,13 @@ export class Sparks {
   ) {}
 
   /**
-   * Sends `count` sparks of booster `b` from one element into another. `onLand` runs as each one lands, `true` for
-   * the first; with nothing to fly it runs once, right after this call. Resolves once every spark has landed.
+   * Sends `count` sparks of booster `b` from one element into another. `onLand` runs as each one lands, with the one
+   * unit of charge it carries; with no flight to show (the effect off, no source) it runs once, right after this call,
+   * with all `count`. Resolves once every spark has landed.
    */
-  public fly(b: Booster, from: Element | undefined, to: Element, count: number, onLand: (first: boolean) => void): Promise<void> {
-    if (count <= 0 || !from || !this.on()) return Promise.resolve().then(() => onLand(true));
+  public fly(b: Booster, from: Element | undefined, to: Element, count: number, onLand: (units: number) => void): Promise<void> {
+    if (count <= 0) return Promise.resolve();
+    if (!from || !this.on()) return Promise.resolve().then(() => onLand(count));
     const a = center(from);
     const z = center(to);
     const flight = FLIGHTS[b];
@@ -53,17 +55,13 @@ export class Sparks {
     }
     this.layer.append(fragment);
     let longest = 0;
-    let first = true;
     const landings = sparks.map((el, k) => {
       const duration = within(flight.ms);
       const delay = k * gap;
       longest = Math.max(longest, delay + duration);
       // `backwards`: a spark waiting for its turn sits invisible at its take-off point
       const anim = el.animate(path(a, z, flight), { duration, delay, fill: 'backwards' });
-      return anim.finished.then(() => {
-        onLand(first);
-        first = false;
-      });
+      return anim.finished.then(() => onLand(1));
     });
     perfFlagFor('hud', longest);
     return Promise.all(landings).then(() => {

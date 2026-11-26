@@ -1,4 +1,4 @@
-import { type Charges, EARN, sparkCount, spend, stock, winGain, withGain } from '@/app/boosters';
+import { type Charges, EARN, newCharges, sparkCount, spend, stock, winGain, withGain } from '@/app/boosters';
 import { type Attempt, BoardSize, type CurrentLevel, type SaveData, defaultSave, flushSaves, loadSave, persist, randomSeed } from '@/app/save';
 import { type Update, UpdateWatch } from '@/app/updates';
 import { AudioBus } from '@/audio/audio';
@@ -65,9 +65,10 @@ type WinShare = { moves: number; stars: number };
 
 /**
  * A won level's gain flies into the bar: `moves` left at the win (the stars follow the score as the finale adds to it),
- * the share that took off as sparks, the share that landed (what the bar shows), and the sparks still in the air.
+ * the share that took off as sparks, the charge their landed sparks carried in (what the bar adds), and the sparks
+ * still in the air.
  */
-type WinGain = { moves: number; sent: WinShare; landed: WinShare; landing: Promise<void> };
+type WinGain = { moves: number; sent: WinShare; landed: Charges; landing: Promise<void> };
 
 /** Game flow: screens, moves, results, persistence. Owns no rules (core) and draws nothing itself (view, ui). */
 export class GameApp {
@@ -389,7 +390,7 @@ export class GameApp {
   }
 
   /**
-   * The bar follows the saved charges; once the level is won, the win's gain too, as its sparks land:
+   * The bar follows the saved charges; once the level is won, the win's gain too, a unit with each spark that lands:
    * the star fills from the moves left, the meteor from each star mark the win and then the score reaches.
    */
   private updateBoosters(): void {
@@ -399,7 +400,7 @@ export class GameApp {
     if (!usable) this.stopAim();
     if (this.win) this.sendGain(game, this.win);
     const landed = this.win?.landed;
-    this.boosters.update(landed ? this.chargesWith(landed) : this.save.boosters, usable, this.aiming);
+    this.boosters.update(landed ? withGain(this.save.boosters, landed) : this.save.boosters, usable, this.aiming);
   }
 
   /** Sends off what of the win's gain has not flown yet: the moves left to the star, each new star mark to the meteor. */
@@ -409,14 +410,14 @@ export class GameApp {
     for (let k = win.sent.stars + 1; k <= stars; k++) this.fly(win, Booster.Meteor, this.ui.starMark(k), { ...win.sent, stars: k });
   }
 
-  /** One leg of the gain: a spark per fortieth of a booster it adds; the bar takes it in as the first spark lands. */
+  /** One leg of the gain: a spark per unit of charge it adds; the bar takes each unit in as its spark lands. */
   private fly(win: WinGain, b: Booster, from: HTMLElement | undefined, next: WinShare): void {
     const count = sparkCount(b, this.chargesWith(win.sent), this.chargesWith(next));
     win.sent = next;
-    const landing = this.sparks.fly(b, from, this.boosters.orb(b), count, (first) => {
-      if (count > 0) this.boosters.gulp(b);
-      if (!first || this.win !== win) return;
-      win.landed = { moves: Math.max(win.landed.moves, next.moves), stars: Math.max(win.landed.stars, next.stars) };
+    const landing = this.sparks.fly(b, from, this.boosters.orb(b), count, (units) => {
+      this.boosters.gulp(b);
+      if (this.win !== win) return;
+      win.landed = { ...win.landed, [b]: win.landed[b] + units };
       this.updateBoosters();
     });
     win.landing = Promise.all([win.landing, landing]).then(() => undefined);
@@ -514,8 +515,7 @@ export class GameApp {
     this.ui.flashText(S.win);
     // The moves left turn into specials on the board and, as the counter rolls down, fly off the orb to the star.
     const finale = movesAtWin > 0 ? startFinale(game) : [];
-    const none = { moves: 0, stars: 0 };
-    const win: WinGain = { moves: movesAtWin, sent: none, landed: none, landing: Promise.resolve() };
+    const win: WinGain = { moves: movesAtWin, sent: { moves: 0, stars: 0 }, landed: newCharges(), landing: Promise.resolve() };
     this.win = win;
     this.updateBoosters();
     this.ui.updateHud(game);
