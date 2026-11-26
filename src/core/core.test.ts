@@ -524,6 +524,13 @@ describe('blockers', () => {
     expect(canReachBlockers(chain(boardFrom(['012', '.3.', '.4.', '.4.']), [1]))).toBe(false);
   });
 
+  it('the refill falls through a gap in the board into the part below', () => {
+    // The lower part is fed through the hole row: its ice is in reach.
+    const b = boardFrom(['012', '...', '345', '120']);
+    for (let c = 0; c < 3; c++) b.cells[indexOf(b, 3, c)].ice = 1;
+    expect(canReachBlockers(b)).toBe(true);
+  });
+
   it('a fresh board always opens up when a coloring can', () => {
     const lv = level({ colors: 6 });
     for (let c = 0; c < lv.cols; c++) {

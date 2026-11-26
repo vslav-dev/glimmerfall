@@ -155,7 +155,7 @@ export interface AttemptReport {
  * and how the attempt went. `rules` is the game code that played it: replays need the same.
  */
 export function trackAttempt(r: AttemptReport): void {
-  const { request, variant } = r.draft;
+  const { request, variant, archetype } = r.draft;
   const { game } = r;
   const level = game.level;
   const replayed = request.seed % 100 < REPLAY_PERCENT;
@@ -165,6 +165,8 @@ export function trackAttempt(r: AttemptReport): void {
     seed: request.seed,
     n: request.number,
     variant,
+    shape: archetype ?? null,
+    size: `${level.cols}x${level.rows}`,
     style: request.style,
     pace: request.pace,
     difficulty: r.difficulty,

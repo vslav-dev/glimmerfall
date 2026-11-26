@@ -633,6 +633,8 @@ export class BoardView {
       const total = lengths.reduce((a, b) => a + b, 0);
       const duration = 90 + 95 * Math.sqrt(total / this.cell);
       const fadeIn = m.spawned;
+      // A column whose top is a hole takes its pieces in at its first cell, not at the board's top edge.
+      const edge = fadeIn ? this.topRow(m.path[m.path.length - 1].c) * this.cell : 0;
       if (fadeIn) sprite.alpha = 0;
       void this.scene.tweens
         .run(
@@ -645,8 +647,8 @@ export class BoardView {
             const to = points[seg + 1];
             const t = lengths[seg] > 0 ? Math.min(1, d / lengths[seg]) : 1;
             sprite.position.set(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t);
-            // Spawned pieces fade in as they cross the top edge instead of using a mask.
-            if (fadeIn) sprite.alpha = Math.max(0, Math.min(1, sprite.y / this.cell + 0.5));
+            // Spawned pieces fade in as they cross the column's top edge instead of using a mask.
+            if (fadeIn) sprite.alpha = Math.max(0, Math.min(1, (sprite.y - edge) / this.cell + 0.5));
           },
           { ease: FALL_EASE },
         )
@@ -1039,6 +1041,14 @@ export class BoardView {
 
   private y(r: number): number {
     return (r + 0.5) * this.cell;
+  }
+
+  /** The first row of the board in column `c`. */
+  private topRow(c: number): number {
+    const b = this.board!;
+    let r = 0;
+    while (r < b.rows - 1 && !b.cells[r * b.cols + c].exists) r++;
+    return r;
   }
 
   private indexOf(p: Pos): number {

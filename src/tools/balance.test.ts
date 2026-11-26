@@ -5,7 +5,8 @@
  *  - specials made per move, by kind;
  *  - moves left at wins: what charges the star; the stars of wins: what charge the meteor;
  *  - how often a booster turns a lost run into a win, aimed greedily two moves before the end.
- * Runs only with GF_BALANCE=1. GF_GOAL=<goal kind> (e.g. `pearl`, plans/13) studies only levels with that goal:
+ * Runs only with GF_BALANCE=1; GF_SHIFT=<n> studies the levels n further on.
+ * GF_GOAL=<goal kind> (e.g. `pearl`, plans/13) studies only levels with that goal:
  * each level number takes the first player seed from GF_SEED on whose level it is.
  */
 import { describe, it } from 'vitest';
@@ -22,7 +23,8 @@ import { Difficulty, targetWinRate } from '@/player/difficulty';
 import { newModel, type TwinStyle, twinOf } from '@/player/model';
 
 const AVERAGE: TwinStyle = { ...twinOf(newModel()), strength: 0.3 };
-const LEVELS = [6, 8, 9, 11, 12, 14, 15, 17, 18, 20, 21, 23, 26, 29, 33, 38, 41, 45, 50, 57];
+/** GF_SHIFT moves the study down the curve; a multiple of 6 keeps each level's place in the cycle. */
+const LEVELS = [6, 8, 9, 11, 12, 14, 15, 17, 18, 20, 21, 23, 26, 29, 33, 38, 41, 45, 50, 57].map((n) => n + Number(process.env.GF_SHIFT ?? 0));
 const RUNS = 40;
 /** player seeds tried per level number for a level with the studied goal */
 const GOAL_SEEDS = 40;
@@ -166,7 +168,7 @@ describe.runIf(process.env.GF_BALANCE)('balance', () => {
       three += t;
       leftAtWin.push(...left);
       const goals = level.objectives.map((o) => `${o.kind}${o.kind === ObjectiveKind.Collect ? o.color : ''}:${o.target}`).join(',');
-      console.log(`📊 L${n} ${level.kind} moves=${level.moves} target=${round(target)} twin=${round(level.targetWinRate)} won=${round(w / RUNS)} 3★/win=${round(t / Math.max(1, w))} left=${round(mean(left), 1)} ${goals}${iceOf(level)}`);
+      console.log(`📊 L${n} ${level.kind} ${draft.archetype} ${level.cols}x${level.rows} moves=${level.moves} target=${round(target)} twin=${round(level.targetWinRate)} won=${round(w / RUNS)} 3★/win=${round(t / Math.max(1, w))} left=${round(mean(left), 1)} ${goals}${iceOf(level)}`);
     }
     const perWin = mean(leftAtWin);
     console.log(`🎯 win rate ${round(wins / runs)} (twin predicts ${round(mean(twin))}, moves ${round(mean(granted), 1)}) | 3★ per win ${round(three / wins)} | moves left per win ${round(perWin, 1)} (median ${[...leftAtWin].sort((a, b) => a - b)[Math.floor(leftAtWin.length / 2)]})`);

@@ -92,7 +92,10 @@ function linesOfThree(b: Board): number[][] {
   return lines;
 }
 
-/** Free cells linked through free cells to the top cell of a column, where the refill comes in. */
+/**
+ * Free cells linked through free cells to the top cell of a column, where the refill comes in.
+ * Pieces fall through holes, so a live cell also feeds the next cell of its column below a hole.
+ */
 function liveCells(b: Board, chained: boolean[], crated: boolean[]): boolean[] {
   const free = (i: number): boolean => b.cells[i].exists && !chained[i] && !crated[i];
   const live = b.cells.map(() => false);
@@ -104,8 +107,14 @@ function liveCells(b: Board, chained: boolean[], crated: boolean[]): boolean[] {
       queue.push(top);
     }
   }
+  const acrossHole = (i: number): number[] => {
+    if (i + b.cols >= b.cells.length || b.cells[i + b.cols].exists) return [];
+    for (let j = i + 2 * b.cols; j < b.cells.length; j += b.cols) if (b.cells[j].exists) return [j];
+    return [];
+  };
   while (queue.length > 0) {
-    for (const j of neighbors4(b, queue.pop()!)) {
+    const i = queue.pop()!;
+    for (const j of [...neighbors4(b, i), ...acrossHole(i)]) {
       if (live[j] || !free(j)) continue;
       live[j] = true;
       queue.push(j);

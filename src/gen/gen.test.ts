@@ -42,12 +42,18 @@ describe('generator', () => {
     // Full calibrations: seconds on a laptop, several times slower on CI runners.
   }, 120_000);
 
-  it('gives a random tapper whole boards and a planner more intricate ones', () => {
-    const levels = [8, 20, 33, 51, 70];
+  it('gives a random tapper the same forms, opened up, and a planner deeper cuts', () => {
+    const levels = [8, 9, 13, 14, 15, 19, 21, 22, 27, 33];
     const holes = (style: TwinStyle): number =>
       levels.reduce((sum, n) => sum + draftLevel(req(n, 7, style)).level.mask.filter((m) => m === 0).length, 0);
-    expect(holes(TAPPER)).toBe(0);
-    expect(holes(PLANNER)).toBeGreaterThan(0);
+    expect(holes(TAPPER)).toBeGreaterThan(0);
+    expect(holes(PLANNER)).toBeGreaterThan(holes(TAPPER));
+  }, 120_000);
+
+  it('gives the levels of a player boards of many forms and sizes', () => {
+    const drafts = Array.from({ length: 12 }, (_, k) => draftLevel(req(30 + k, 99)));
+    expect(new Set(drafts.map((d) => d.archetype)).size).toBeGreaterThanOrEqual(8);
+    expect(new Set(drafts.map((d) => `${d.level.cols}x${d.level.rows}`)).size).toBeGreaterThanOrEqual(5);
   }, 120_000);
 
   it('never walls a free cell off from the refill with crates and chains', () => {

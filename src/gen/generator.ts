@@ -3,10 +3,11 @@ import { FINALE_CONVERSIONS } from '@/core/resolve';
 import { hashSeed, pick, randInt, random, type RngHolder } from '@/core/rng';
 import { type LevelDef, LevelKind, Mechanic, NO_COLOR, ObjectiveKind } from '@/core/types';
 import { type LevelPlan, planLevel } from '@/gen/plan';
+import { type Archetype, ARCHETYPES, archetypeOf, makeShape, orbitOf, plainShape } from '@/gen/shapes';
 import type { TwinStyle } from '@/player/model';
 
 /** Bumped whenever the same request builds a different level: a replay needs the generator that built its level. */
-export const GEN_VERSION = 13;
+export const GEN_VERSION = 14;
 /** Levels everyone shares: the tutorial, and the first read of the player's style. */
 const COMMON_LEVELS = 5;
 /** How deliberate the shared levels assume the player to be. */
@@ -25,9 +26,11 @@ const SIMS = 48;
 const FINALE_RUNS = 8;
 const SIM_MAX_MOVES = 64;
 const MIN_MOVES = 14;
-export const MAX_MOVES = 50;
+export const MAX_MOVES = 56;
 /** Twin length a level is tuned to at most, so a slow twin still fits the move cap with room for the target win rate. */
-const MAX_TWIN_LENGTH = 40;
+const MAX_TWIN_LENGTH = 46;
+/** A candidate whose tuned twin's slow runs (the upper quartile) still take this many times its intended length is out of the choice. */
+const TOO_SLOW = 2;
 const MIN_COLORS = 4;
 /** Twin moves one pearl roughly takes to bring down: the first guess at a pearl goal, before the length tuner. */
 const PEARL_MOVES = 11;
@@ -79,6 +82,8 @@ export interface LevelDraft {
   request: DraftRequest;
   /** which candidate layout won */
   variant: number;
+  /** the board's archetype (plans/16); absent in drafts saved before archetypes existed */
+  archetype?: string;
   level: LevelDef;
   calibration: Calibration;
 }
@@ -91,28 +96,38 @@ export function draftLevel(req: DraftRequest): LevelDraft {
   const seed = common ? 0 : req.seed;
   const craft = common ? COMMON_CRAFT : req.style.craft;
   // A new mechanic is introduced on its plain layout: the lesson matters more than the fit.
-  const count = common || plan.intro ? 1 : CANDIDATES;
+  const plain = common || plan.intro !== null;
+  const count = plain ? 1 : CANDIDATES;
+  // Candidates share the level's archetype: the fit picks among boards of one form, the deck keeps the forms varied.
+  const archetype = plain ? null : archetypeOf(seed, n);
 
-  // The twin plays slower or faster than the player: its length is the player's, scaled by their pace.
-  const length = Math.min(MAX_TWIN_LENGTH, Math.round(playerLength(n) * req.pace));
-  let best: LevelDef | null = null;
+  let best: Layout | null = null;
   let bestFit = -Infinity;
   let variant = 0;
   for (let v = 0; v < count; v++) {
-    const { level, iceOrder } = buildLayout(n, plan, hashSeed(seed, n, v), craft, length);
-    const twin = shapeGoals(level, iceOrder, req.style, length, hashSeed(seed, n, v, 1));
+    // The twin plays slower or faster than the player: its length is the player's, scaled by their pace.
+    const layout = buildLayout(n, plan, archetype, hashSeed(seed, n, v), craft, req.pace);
+    const twin = shapeGoals(layout, req.style, hashSeed(seed, n, v, 1));
     if (count === 1) {
-      best = level;
+      best = layout;
       break;
     }
-    const fit = fitness(level, twin, craft, hashSeed(seed, n, v, 2));
+    // A board whose slow runs drag on far past its length is a lottery: luck decides it, the moves can only guess.
+    const fit = twin.slow > layout.length * TOO_SLOW ? -Infinity : fitness(layout.level, twin.efficiencies, craft, hashSeed(seed, n, v, 2));
     if (best === null || fit > bestFit) {
-      best = level;
+      best = layout;
       bestFit = fit;
       variant = v;
     }
   }
-  return { version: GEN_VERSION, request: req, variant, level: best!, calibration: calibrate(best!, req.style, hashSeed(seed, n, 3)) };
+  if (count > 1 && bestFit === -Infinity) {
+    // No board of this form suits the level's goals: it gets an everyday one.
+    variant = count;
+    best = buildLayout(n, plan, ARCHETYPES[0], hashSeed(seed, n, variant), craft, req.pace);
+    shapeGoals(best, req.style, hashSeed(seed, n, variant, 1));
+  }
+  const { level, archetype: form } = best!;
+  return { version: GEN_VERSION, request: req, variant, archetype: form, level, calibration: calibrate(level, req.style, hashSeed(seed, n, 3)) };
 }
 
 /**
@@ -236,15 +251,22 @@ function firstWin(r: SimResult): number {
   return Math.min(r.needed ?? Infinity, r.chances[0]?.[0] ?? Infinity);
 }
 
-/** Tunes the goals so the twin's typical run lasts `length` moves. Returns the twin's efficiencies. */
-function shapeGoals(level: LevelDef, iceOrder: number[], style: BotStyle, length: number, seed: number): number[] {
-  if (isScoreLevel(level)) return runs(level, style, fixedMovesOf(level.number), SHAPE_SIMS, seed).map((r) => efficiency(level, r));
+/**
+ * Tunes the goals so the twin's typical run lasts the layout's length. Returns the twin's efficiencies and
+ * how long its slow runs take, the upper quartile of the first winning move counts (a score level: 0).
+ */
+function shapeGoals(layout: Layout, style: BotStyle, seed: number): { efficiencies: number[]; slow: number } {
+  const { level } = layout;
+  if (isScoreLevel(level)) {
+    return { efficiencies: runs(level, style, fixedMovesOf(level.number), SHAPE_SIMS, seed).map((r) => efficiency(level, r)), slow: 0 };
+  }
   // The last chance can finish a level well before play would: the length is the first move count that wins.
   let results = runs(level, style, SIM_MAX_MOVES, SHAPE_SIMS, seed, RunKind.Length);
-  for (let pass = 0; pass < SHAPE_PASSES && adjustLength(level, iceOrder, medianFirstWin(results), length); pass++) {
+  for (let pass = 0; pass < SHAPE_PASSES && adjustLength(layout, medianFirstWin(results)); pass++) {
     results = runs(level, style, SIM_MAX_MOVES, SHAPE_SIMS, seed, RunKind.Length);
   }
-  return results.map((r) => efficiency(level, r));
+  const sorted = results.map(firstWin).sort((a, b) => a - b);
+  return { efficiencies: results.map((r) => efficiency(level, r)), slow: sorted[Math.floor(sorted.length * 0.75)] };
 }
 
 /**
@@ -300,7 +322,8 @@ function medianFirstWin(results: SimResult[]): number {
  * Moves every goal towards the intended length: scales collect and pearl amounts and the ice's layers,
  * and strengthens or weakens crates. A twin that never wins gets every goal halved. Returns whether it changed anything.
  */
-function adjustLength(level: LevelDef, iceOrder: number[], median: number, length: number): boolean {
+function adjustLength(layout: Layout, median: number): boolean {
+  const { level, iceOrder, length } = layout;
   const factor = Number.isFinite(median) ? Math.min(3, Math.max(0.5, length / median)) : 0.5;
   let changed = false;
   for (const o of level.objectives) {
@@ -312,14 +335,14 @@ function adjustLength(level: LevelDef, iceOrder: number[], median: number, lengt
       changed = true;
     } else if (o.kind === ObjectiveKind.Ice) {
       const layers = level.ice.reduce((sum, v) => sum + v, 0);
-      const next = Math.min(iceOrder.length, Math.max(1, Math.round(layers * factor)));
+      const next = Math.min(layersIn(iceOrder), Math.max(1, Math.round(layers * factor)));
       if (Math.abs(factor - 1) <= 0.15 || next === layers) continue;
       o.target = layIce(level, iceOrder, next);
       changed = true;
     } else if (o.kind === ObjectiveKind.Crate) {
       // Crate layers are coarse: they change only when the length is well off. Too quick: thicker. Too slow: thinner, then fewer.
       if (median < length * 0.75) changed = thicken(level.crate, 3) || changed;
-      else if (median > length * 1.5) changed = (thin(level.crate) || drop(level, level.crate, factor)) || changed;
+      else if (median > length * 1.5) changed = (thin(level.crate) || drop(level.crate, factor, layout.orbit)) || changed;
       o.target = level.crate.filter((v) => v > 0).length;
     }
   }
@@ -349,21 +372,19 @@ function thin(layer: number[]): boolean {
 }
 
 /**
- * Keeps about `share` of the layer's cells, at least one: the lowest rows go first, a cell with its mirror twin.
+ * Keeps about `share` of the layer's cells, at least one: the lowest rows go first, a cell with its orbit.
  * Fewer crates never cut the refill off.
  */
-function drop(level: LevelDef, layer: number[], share: number): boolean {
-  const { rows, cols } = level;
-  const keep = Math.max(1, Math.round(layer.filter((v) => v > 0).length * share));
+function drop(layer: number[], share: number, orbit: (i: number) => number[]): boolean {
   let count = layer.filter((v) => v > 0).length;
   const before = count;
-  for (let r = rows - 1; r >= 0 && count > keep; r--) {
-    for (let c = 0; c < Math.ceil(cols / 2) && count > keep; c++) {
-      for (const i of new Set([r * cols + c, r * cols + cols - 1 - c])) {
-        if (layer[i] === 0) continue;
-        layer[i] = 0;
-        count--;
-      }
+  const keep = Math.max(1, Math.round(count * share));
+  for (let i = layer.length - 1; i >= 0 && count > keep; i--) {
+    if (layer[i] === 0) continue;
+    for (const j of orbit(i)) {
+      if (layer[j] === 0) continue;
+      layer[j] = 0;
+      count--;
     }
   }
   return count < before;
@@ -371,43 +392,60 @@ function drop(level: LevelDef, layer: number[], share: number): boolean {
 
 // ---------- layout ----------
 
-/** A candidate level with the order its ice grows and shrinks in while the goals are tuned. */
+/** A candidate level with what its goals are tuned along. */
 interface Layout {
   level: LevelDef;
+  archetype: string;
   /** see `iceOrderOf`; empty without an ice goal */
-  iceOrder: number[];
+  iceOrder: number[][];
+  /** the cells the layout treats as one with a cell: its images under the board's symmetry */
+  orbit: (i: number) => number[];
+  /** the twin's intended moves */
+  length: number;
+}
+
+/** Free cells of an everyday board, where a level lasts its plain length; bigger boards last longer, smaller ones less. */
+const BOARD_CELLS = 62;
+
+/** The twin's intended moves: the player's length scaled by their pace and, past the plain boards, by the board's size. */
+function twinLength(n: number, pace: number, cells: number | null): number {
+  const size = cells === null ? 1 : Math.min(1.25, Math.max(0.8, Math.sqrt(cells / BOARD_CELLS)));
+  return Math.min(MAX_TWIN_LENGTH, Math.round(playerLength(n) * pace * size));
 }
 
 /**
- * One candidate layout with goals. `craft` (0 random taps … 1 planning) sets how intricate it gets:
- * holes in the board, crate shelves, chains, thick crates, a sixth color, double goals.
- * `length`, the twin's intended moves, sizes the crate and ice goals: their amount is the layout itself.
+ * One candidate layout with goals. The archetype (null: the plain board) gives the board its form;
+ * `craft` (0 random taps … 1 planning) sets how intricate it gets: how deep the cuts go, crate shelves,
+ * chains, thick crates, a sixth color, double goals. The intended length sizes the crate and ice goals:
+ * their amount is the layout itself.
  */
-function buildLayout(n: number, plan: LevelPlan, seed: number, craft: number, length: number): Layout {
+function buildLayout(n: number, plan: LevelPlan, archetype: Archetype | null, seed: number, craft: number, pace: number): Layout {
   const shapeRng: RngHolder = { rng: hashSeed(seed, 11) };
   const blockRng: RngHolder = { rng: hashSeed(seed, 22) };
   const goalRng: RngHolder = { rng: hashSeed(seed, 33) };
 
-  const colors = chooseColors(n, plan, craft, goalRng);
   const goals = chooseGoals(n, plan, craft, goalRng);
-
-  const cols = n <= 3 ? 7 : pick(shapeRng, [7, 8, 8]);
-  const rows = Math.min(9, cols + pick(shapeRng, [0, 1, 1]));
-  const mask = makeShape(rows, cols, n, craft, goals.includes(ObjectiveKind.Pearl), shapeRng);
+  const shape = archetype ? makeShape(archetype, craft, goals.includes(ObjectiveKind.Pearl), shapeRng) : plainShape(n, shapeRng);
+  const { rows, cols, mask } = shape;
   const size = rows * cols;
+  const cells = mask.filter(Boolean).length;
+  const length = twinLength(n, pace, archetype ? cells : null);
+  const colors = chooseColors(n, plan, craft, cells, goalRng);
   const collectCount = !goals.includes(ObjectiveKind.Collect) ? 0 : n >= 15 && random(goalRng) < 0.2 + 0.4 * craft ? 2 : 1;
   const collect = pickColors(goalRng, collectCount);
 
   const crate = new Array<number>(size).fill(0);
   const ice = new Array<number>(size).fill(0);
   const chain = new Array<number>(size).fill(0);
-  const grid: Grid = { rows, cols, mask, blocked: (i) => crate[i] > 0 || chain[i] > 0 };
+  const orbit = (i: number): number[] => orbitOf(i, rows, cols, shape.symmetry);
+  const plot: Plot = { rows, cols, mask, blocked: (i) => crate[i] > 0 || chain[i] > 0, orbit };
+  const focus = focusOf(plot, plan.kind, blockRng);
   if (goals.includes(ObjectiveKind.Crate) || (plan.mechanics.has(Mechanic.Crate) && n >= 25 && random(blockRng) < 0.6 * craft)) {
-    placeCrates(grid, crate, n, craft, length, blockRng);
+    placeCrates(plot, crate, n, craft, length, focus, blockRng);
   }
-  const iceOrder = goals.includes(ObjectiveKind.Ice) ? iceOrderOf(grid, crate, plan.intro === Mechanic.Ice, blockRng) : [];
+  const iceOrder = goals.includes(ObjectiveKind.Ice) ? iceOrderOf(plot, crate, plan.intro === Mechanic.Ice, focus, blockRng) : [];
   if (plan.intro === Mechanic.Chain || (plan.mechanics.has(Mechanic.Chain) && random(blockRng) < 0.25 + 0.4 * craft)) {
-    placeChains(grid, chain, crate, n, craft, blockRng);
+    placeChains(plot, chain, crate, n, craft, blockRng);
   }
 
   const level: LevelDef = {
@@ -440,16 +478,20 @@ function buildLayout(n: number, plan: LevelPlan, seed: number, craft: number, le
       level.objectives.push({ kind: g, target: UNREACHABLE, color: NO_COLOR });
     }
   }
-  return { level, iceOrder };
+  return { level, archetype: shape.archetype, iceOrder, orbit, length };
 }
 
-/** Random tappers get four colors more often (more cascades, more show); deliberate players meet a sixth. */
-function chooseColors(n: number, plan: LevelPlan, craft: number, h: RngHolder): number {
+/**
+ * Random tappers get four colors more often (more cascades, more show); deliberate players meet a sixth.
+ * A small board holds fewer: six colors on forty cells leave hardly a move.
+ */
+function chooseColors(n: number, plan: LevelPlan, craft: number, cells: number, h: RngHolder): number {
   if (n <= 2) return MIN_COLORS;
   const four = Math.max(0, 0.5 - 2 * craft);
   const six = n > 30 ? (plan.kind === LevelKind.Hard ? 0.5 : n > 60 ? 0.25 : 0) * 2 * craft : 0;
   const roll = random(h);
-  return roll < four ? 4 : roll >= 1 - six ? 6 : 5;
+  const most = cells <= 42 ? 4 : cells <= 56 ? 5 : 6;
+  return Math.min(most, roll < four ? 4 : roll >= 1 - six ? 6 : 5);
 }
 
 function chooseGoals(n: number, plan: LevelPlan, craft: number, h: RngHolder): ObjectiveKind[] {
@@ -510,74 +552,17 @@ export interface Grid {
   blocked: (i: number) => boolean;
 }
 
-type ShapeRule = (r: number, c: number, rows: number, cols: number) => boolean;
-
-/**
- * Board shapes, plainest first; every rule is mirror-symmetric because it only looks at distances from the edges.
- * The player's craft decides how far down the list a level may reach.
- */
-const SHAPES: ShapeRule[] = [
-  () => true,
-  (r, c, rows, cols) => !(edge(r, rows) === 0 && edge(c, cols) === 0),
-  (r, c, rows, cols) => edge(r, rows) + edge(c, cols) > 1,
-  (r, c, rows, cols) => !(edge(c, cols) === 0 && Math.abs(r - (rows - 1) / 2) < 1),
-  (r, c, rows, cols) => !(Math.abs(r - (rows - 1) / 2) < 1 && Math.abs(c - (cols - 1) / 2) < 1),
-  (r, c, rows, cols) => !(edge(c, cols) === 1 && Math.abs(r - (rows - 1) / 2) < 1.5),
-  (r, c, rows, cols) => !(edge(c, cols) === 0 && edge(r, rows) >= 2),
-];
-
-/**
- * `pearls`: the level brings pearls down, so its bottom row stays wide. A pearl over a narrow bottom waits for
- * a line of three across those few cells, which hardly ever comes: the level would hang on luck.
- */
-function makeShape(rows: number, cols: number, n: number, craft: number, pearls: boolean, h: RngHolder): number[] {
-  const options = n <= 3 ? [SHAPES[0]] : SHAPES.slice(0, 1 + Math.round(craft * (SHAPES.length - 1)));
-  for (let attempt = 0; attempt < 10; attempt++) {
-    const rule = pick(h, options);
-    const mask = Array.from({ length: rows * cols }, (_, i) => (rule(Math.floor(i / cols), i % cols, rows, cols) ? 1 : 0));
-    const wide = !pearls || mask.slice(-cols).filter(Boolean).length >= cols - 2;
-    if (wide && mask.filter(Boolean).length >= rows * cols * 0.7 && isConnected(mask, rows, cols)) return mask;
-  }
-  return new Array<number>(rows * cols).fill(1);
+/** A grid being laid out: blockers go on whole orbits, so a symmetric board keeps its symmetry. */
+interface Plot extends Grid {
+  orbit: (i: number) => number[];
 }
 
-function edge(x: number, size: number): number {
-  return Math.min(x, size - 1 - x);
-}
-
-function isConnected(mask: number[], rows: number, cols: number): boolean {
-  const start = mask.indexOf(1);
-  if (start === -1) return false;
-  const seen = new Set([start]);
-  const stack = [start];
-  while (stack.length > 0) {
-    const i = stack.pop()!;
-    const r = Math.floor(i / cols);
-    const c = i % cols;
-    for (const [dr, dc] of [
-      [-1, 0],
-      [1, 0],
-      [0, -1],
-      [0, 1],
-    ]) {
-      const y = r + dr;
-      const x = c + dc;
-      const j = y * cols + x;
-      if (y >= 0 && y < rows && x >= 0 && x < cols && mask[j] === 1 && !seen.has(j)) {
-        seen.add(j);
-        stack.push(j);
-      }
-    }
-  }
-  return seen.size === mask.filter(Boolean).length;
-}
-
-/** Sets a blocker on a cell and its mirror twin, unless that would cut some free cell off from the refill. */
-function setBlocker(grid: Grid, layer: number[], r: number, c: number, value: number): void {
-  const cells = [c, grid.cols - 1 - c].map((x) => r * grid.cols + x).filter((i) => grid.mask[i] === 1);
-  const before = cells.map((i) => layer[i]);
-  for (const i of cells) layer[i] = value;
-  if (!refillReachesAll(grid)) cells.forEach((i, k) => (layer[i] = before[k]));
+/** Sets a blocker on a cell and its orbit, where they are free, unless that would cut some free cell off from the refill. */
+function setBlocker(plot: Plot, layer: number[], i: number, value: number): void {
+  const cells = plot.orbit(i).filter((j) => plot.mask[j] === 1 && !plot.blocked(j));
+  const before = cells.map((j) => layer[j]);
+  for (const j of cells) layer[j] = value;
+  if (!refillReachesAll(plot)) cells.forEach((j, k) => (layer[j] = before[k]));
 }
 
 /**
@@ -602,25 +587,104 @@ export function refillReachesAll(grid: Grid): boolean {
   return true;
 }
 
+/** How many cells of the board are above each cell in its column: the refill comes in at depth 0. */
+function depthsOf(grid: Grid): number[] {
+  const { cols, mask } = grid;
+  const depth = new Array<number>(mask.length).fill(0);
+  for (let i = cols; i < mask.length; i++) depth[i] = depth[i - cols] + mask[i - cols];
+  return depth;
+}
+
+/** Where the goals' blockers gather, by the level's place in the curve (plans/16). */
+const Focus = {
+  /** around the board's middle: in plain sight, many lines through every cell */
+  Center: 'center',
+  /** the cells hardest to reach: few lines of three through them, far from the middle */
+  Pocket: 'pocket',
+  /** a cluster around a random cell */
+  Anchor: 'anchor',
+  /** anywhere */
+  Scatter: 'scatter',
+} as const;
+type Focus = (typeof Focus)[keyof typeof Focus];
+
+/**
+ * A rank per cell, lower first: the order the goals' crates and the ice's first pass take the board in.
+ * An easy level keeps them in the middle, a hard one tucks them away in its corners and pockets.
+ */
+function focusOf(grid: Grid, kind: LevelKind, h: RngHolder): number[] {
+  const { rows, cols, mask } = grid;
+  const mode: Focus =
+    kind === LevelKind.Hard
+      ? Focus.Pocket
+      : kind === LevelKind.Relief || kind === LevelKind.Intro
+        ? Focus.Center
+        : pick(h, [Focus.Anchor, Focus.Anchor, Focus.Scatter, Focus.Center, Focus.Pocket]);
+  const cells = mask.flatMap((m, i) => (m === 1 ? [i] : []));
+  const rowOf = (i: number): number => Math.floor(i / cols);
+  const colOf = (i: number): number => i % cols;
+  const cy = cells.reduce((s, i) => s + rowOf(i), 0) / cells.length;
+  const cx = cells.reduce((s, i) => s + colOf(i), 0) / cells.length;
+  const dist = (i: number): number => Math.hypot(rowOf(i) - cy, colOf(i) - cx);
+  const far = Math.max(1, ...cells.map(dist));
+  const anchor = pick(h, cells);
+  const rank = new Array<number>(mask.length).fill(Infinity);
+  for (const i of cells) {
+    const noise = random(h);
+    switch (mode) {
+      case Focus.Center:
+        rank[i] = dist(i) / far + 0.25 * noise;
+        break;
+      case Focus.Pocket:
+        rank[i] = (0.6 * linesThrough(grid, i)) / 6 + 0.4 * (1 - dist(i) / far) + 0.2 * noise;
+        break;
+      case Focus.Anchor:
+        rank[i] = (Math.abs(rowOf(i) - rowOf(anchor)) + Math.abs(colOf(i) - colOf(anchor))) / (rows + cols) + 0.15 * noise;
+        break;
+      case Focus.Scatter:
+        rank[i] = noise;
+    }
+  }
+  return rank;
+}
+
+/** Lines of three across the board's cells that take in cell `i`: 0 … 6. */
+function linesThrough(grid: Grid, i: number): number {
+  const { rows, cols, mask } = grid;
+  const r = Math.floor(i / cols);
+  const c = i % cols;
+  const at = (y: number, x: number): boolean => y >= 0 && y < rows && x >= 0 && x < cols && mask[y * cols + x] === 1;
+  let lines = 0;
+  for (let k = -2; k <= 0; k++) {
+    if ([0, 1, 2].every((d) => at(r, c + k + d))) lines++;
+    if ([0, 1, 2].every((d) => at(r + k + d, c))) lines++;
+  }
+  return lines;
+}
+
 /** Twin length the base amounts of crates and ice were set for; longer levels get proportionally more. */
 const LAYER_LENGTH = 18;
 
-function placeCrates(grid: Grid, crate: number[], n: number, craft: number, length: number, h: RngHolder): void {
+function placeCrates(plot: Plot, crate: number[], n: number, craft: number, length: number, focus: number[], h: RngHolder): void {
+  const { rows, cols, mask } = plot;
   const cap = 1 + Math.round(2 * craft);
   const strength = (): number => Math.min(cap, n < 15 ? 1 : n < 40 ? 1 + randInt(h, 2) : 1 + randInt(h, 3));
-  const half = Math.ceil(grid.cols / 2);
   if (random(h) < craft) {
-    // A shelf: one row of crates from the walls inwards, leaving the middle open; what is under it is hard to reach.
-    const r = 3 + randInt(h, Math.max(1, grid.rows - 5));
-    const width = 1 + randInt(h, Math.max(1, half - 2));
+    // A shelf: one row of crates from a wall inwards, leaving the middle open; what is under it is hard to reach.
+    const r = 3 + randInt(h, Math.max(1, rows - 5));
+    const width = 1 + randInt(h, Math.max(1, Math.ceil(cols / 2) - 2));
+    const right = random(h) < 0.5;
     const s = strength();
-    for (let c = 0; c < width; c++) setBlocker(grid, crate, r, c, s);
+    for (let c = 0; c < width; c++) setBlocker(plot, crate, r * cols + (right ? cols - 1 - c : c), s);
   }
   // Capped well below the board: the refill check refuses crates that would wall cells off anyway.
-  const target = Math.min(Math.round(grid.rows * grid.cols * 0.4), Math.round((6 + Math.min(12, Math.floor(n / 5))) * (length / LAYER_LENGTH)));
-  for (let guard = 0; guard < 100 && crate.filter(Boolean).length < target; guard++) {
-    const r = 2 + randInt(h, Math.max(1, grid.rows - 3));
-    setBlocker(grid, crate, r, randInt(h, half), strength());
+  const target = Math.min(Math.round(rows * cols * 0.4), Math.round((6 + Math.min(12, Math.floor(n / 5))) * (length / LAYER_LENGTH)));
+  // The top two cells of a column stay free: the refill comes in there.
+  const depth = depthsOf(plot);
+  const order = mask.flatMap((m, i) => (m === 1 && depth[i] >= 2 ? [i] : [])).sort((a, b) => focus[a] - focus[b]);
+  for (const i of order) {
+    if (crate.filter(Boolean).length >= target) break;
+    setBlocker(plot, crate, i, strength());
   }
 }
 
@@ -643,41 +707,55 @@ const ICE_SPREADS: IceSpread[] = [
   (r, c, rows, cols) => edge(c, cols) * rows + fromMiddle(r, rows),
 ];
 
+/** Share of ice levels whose first layer grows from the level's focus rather than by a pattern. */
+const ICE_FOCUSED = 0.6;
+
 /**
- * The order ice is laid in, one layer per entry: every free cell once by one spread, then every one again by another.
- * However much ice a level gets, a cell has a second layer only once the first covers the whole board.
- * The intro teaches a single layer, so its order stops after the first pass.
+ * The order ice is laid in, one orbit of cells per entry: every free cell once, from the level's focus or by a
+ * pattern, then every one again by a pattern. However much ice a level gets, a cell has a second layer only once
+ * the first covers the whole board. The intro teaches a single layer, so its order stops after the first pass.
  */
-function iceOrderOf(grid: Grid, crate: number[], intro: boolean, h: RngHolder): number[] {
-  const { rows, cols, mask } = grid;
-  const free = mask.flatMap((m, i) => (m === 1 && crate[i] === 0 ? [i] : []));
-  const spread = (rank: IceSpread): number[] => {
-    const key = (i: number): number => rank(Math.floor(i / cols), i % cols, rows, cols);
-    // Equal ranks keep a cell beside its mirror twin, so a cut through them can take both.
-    const pair = (i: number): number => i - (i % cols) + edge(i % cols, cols);
-    return [...free].sort((a, b) => key(a) - key(b) || pair(a) - pair(b) || a - b);
+function iceOrderOf(plot: Plot, crate: number[], intro: boolean, focus: number[], h: RngHolder): number[][] {
+  const { rows, cols, mask } = plot;
+  const free = (i: number): boolean => mask[i] === 1 && crate[i] === 0;
+  const orbits = new Map<number, number[]>();
+  for (let i = 0; i < mask.length; i++) {
+    if (!free(i)) continue;
+    const members = plot.orbit(i).filter(free);
+    orbits.set(Math.min(...members), members);
+  }
+  const spread = (rank: (i: number) => number): number[][] => {
+    const key = (members: number[]): number => Math.min(...members.map(rank));
+    return [...orbits.entries()].sort(([a, x], [b, y]) => key(x) - key(y) || a - b).map(([, members]) => members);
   };
-  const first = spread(pick(h, ICE_SPREADS));
-  return intro ? first : [...first, ...spread(pick(h, ICE_SPREADS))];
+  const pattern = (): number[][] => {
+    const rank = pick(h, ICE_SPREADS);
+    return spread((i) => rank(Math.floor(i / cols), i % cols, rows, cols));
+  };
+  const first = random(h) < ICE_FOCUSED ? spread((i) => focus[i]) : pattern();
+  return intro ? first : [...first, ...pattern()];
 }
 
 /** Layers a layout's ice starts with: a share of the free cells that grows with the intended length and, slowly, with the level. */
-function iceLayers(order: number[], n: number, length: number): number {
+function iceLayers(order: number[][], n: number, length: number): number {
   const share = ICE_SHARE * (length / LAYER_LENGTH) * (1 + Math.min(0.5, n / 400));
-  return Math.min(order.length, Math.max(1, Math.round(new Set(order).size * share)));
+  return Math.min(layersIn(order), Math.max(1, Math.round(new Set(order.flat()).size * share)));
 }
 
-/**
- * Lays the first `layers` entries of the order and returns how many cells are iced: the goal.
- * A cut between a cell and its mirror twin takes the twin too, so a symmetric spread stays symmetric.
- */
-function layIce(level: LevelDef, order: number[], layers: number): number {
-  const { cols, ice } = level;
-  const twin = (i: number): number => i - (i % cols) + cols - 1 - (i % cols);
-  let count = Math.min(layers, order.length);
-  if (count > 0 && count < order.length && order[count] === twin(order[count - 1])) count++;
+function layersIn(order: number[][]): number {
+  return order.reduce((sum, members) => sum + members.length, 0);
+}
+
+/** Lays the order's orbits until `layers` layers lie, a whole orbit at a time, and returns how many cells are iced: the goal. */
+function layIce(level: LevelDef, order: number[][], layers: number): number {
+  const { ice } = level;
   ice.fill(0);
-  for (let k = 0; k < count; k++) ice[order[k]]++;
+  let laid = 0;
+  for (const members of order) {
+    if (laid >= layers) break;
+    for (const i of members) ice[i]++;
+    laid += members.length;
+  }
   return ice.filter((v) => v > 0).length;
 }
 
@@ -685,14 +763,19 @@ function fromMiddle(x: number, size: number): number {
   return Math.abs(x - (size - 1) / 2);
 }
 
-function placeChains(grid: Grid, chain: number[], crate: number[], n: number, craft: number, h: RngHolder): void {
+function edge(x: number, size: number): number {
+  return Math.min(x, size - 1 - x);
+}
+
+function placeChains(plot: Plot, chain: number[], crate: number[], n: number, craft: number, h: RngHolder): void {
   const target = 4 + Math.min(8, Math.floor(n / 10));
-  const half = Math.ceil(grid.cols / 2);
+  // Never the top cell of a column, where the refill comes in.
+  const depth = depthsOf(plot);
+  const cells = plot.mask.flatMap((m, i) => (m === 1 && depth[i] >= 1 ? [i] : []));
   for (let guard = 0; guard < 100 && chain.filter(Boolean).length < target; guard++) {
-    const r = 1 + randInt(h, grid.rows - 1);
-    const c = randInt(h, half);
-    if (crate[r * grid.cols + c] > 0) continue;
-    setBlocker(grid, chain, r, c, n >= 50 && random(h) < 0.6 * craft ? 2 : 1);
+    const i = pick(h, cells);
+    if (crate[i] > 0) continue;
+    setBlocker(plot, chain, i, n >= 50 && random(h) < 0.6 * craft ? 2 : 1);
   }
 }
 
