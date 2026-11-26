@@ -60,3 +60,8 @@
 - nginx: сайт `games` (`deploy/nginx/games.vslav.dev.conf`), `root /var/www/games`; каждая игра — симлинк `/var/www/games/<игра>` → её `current`. Сайт `glimmerfall` отключён.
 - Деплой не менялся: CI пишет в `/var/www/glimmerfall`, симлинк `current` переключается так же.
 - Телеметрия: веб шлёт на относительный `./api/ingest/glimmerfall` (= `/glimmerfall/api/ingest/glimmerfall`), натив — на полный адрес нового домена; nginx проксирует в `/api/ingest/glimmerfall` megaback.
+
+## Конфиг nginx уходит из репо (26.11.2026)
+- `deploy/nginx/games.vslav.dev.conf` удалён: это настройка сервера на весь домен, не игры. Хранить его здесь значило тащить в репо маршруты других игр.
+- Источник теперь — `configs/vps-31/nginx/games.vslav.dev.conf` в `/Users/user/code/SERVERS`. Отменяет упоминания `deploy/nginx/...` выше.
+- На сервере ничего не менялось: живой конфиг совпадал с перенесённым байт в байт.
