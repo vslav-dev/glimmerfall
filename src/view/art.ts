@@ -520,8 +520,8 @@ function drawIce(ctx: CanvasRenderingContext2D, s: number, layers: number): void
   const strong = layers > 1;
   roundRect(ctx, s * 0.05, s * 0.05, s * 0.9, s * 0.9, s * 0.16);
   const g = ctx.createLinearGradient(0, 0, s, s);
-  g.addColorStop(0, strong ? 'rgba(220,245,255,0.85)' : 'rgba(210,240,255,0.6)');
-  g.addColorStop(1, strong ? 'rgba(120,190,255,0.75)' : 'rgba(140,200,255,0.42)');
+  g.addColorStop(0, strong ? 'rgba(220,245,255,0.43)' : 'rgba(220,245,255,0.85)');
+  g.addColorStop(1, strong ? 'rgba(120,190,255,0.38)' : 'rgba(120,190,255,0.75)');
   ctx.fillStyle = g;
   ctx.fill();
   ctx.lineWidth = s * 0.03;
