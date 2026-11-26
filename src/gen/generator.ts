@@ -1,12 +1,12 @@
 import { type BotStyle, EXPERT_BOT, RANDOM_BOT, type SimResult, simulate } from '@/bot/bot';
 import { FINALE_CONVERSIONS } from '@/core/resolve';
 import { hashSeed, pick, randInt, random, type RngHolder } from '@/core/rng';
-import { type LevelDef, LevelKind, Mechanic, NO_COLOR, type Objective, ObjectiveKind } from '@/core/types';
+import { type LevelDef, LevelKind, Mechanic, NO_COLOR, ObjectiveKind } from '@/core/types';
 import { type LevelPlan, planLevel } from '@/gen/plan';
 import type { TwinStyle } from '@/player/model';
 
 /** Bumped whenever the same request builds a different level: a replay needs the generator that built its level. */
-export const GEN_VERSION = 12;
+export const GEN_VERSION = 13;
 /** Levels everyone shares: the tutorial, and the first read of the player's style. */
 const COMMON_LEVELS = 5;
 /** How deliberate the shared levels assume the player to be. */
@@ -99,8 +99,8 @@ export function draftLevel(req: DraftRequest): LevelDraft {
   let bestFit = -Infinity;
   let variant = 0;
   for (let v = 0; v < count; v++) {
-    const level = buildLayout(n, plan, hashSeed(seed, n, v), craft, length);
-    const twin = shapeGoals(level, req.style, length, hashSeed(seed, n, v, 1));
+    const { level, iceOrder } = buildLayout(n, plan, hashSeed(seed, n, v), craft, length);
+    const twin = shapeGoals(level, iceOrder, req.style, length, hashSeed(seed, n, v, 1));
     if (count === 1) {
       best = level;
       break;
@@ -237,11 +237,11 @@ function firstWin(r: SimResult): number {
 }
 
 /** Tunes the goals so the twin's typical run lasts `length` moves. Returns the twin's efficiencies. */
-function shapeGoals(level: LevelDef, style: BotStyle, length: number, seed: number): number[] {
+function shapeGoals(level: LevelDef, iceOrder: number[], style: BotStyle, length: number, seed: number): number[] {
   if (isScoreLevel(level)) return runs(level, style, fixedMovesOf(level.number), SHAPE_SIMS, seed).map((r) => efficiency(level, r));
   // The last chance can finish a level well before play would: the length is the first move count that wins.
   let results = runs(level, style, SIM_MAX_MOVES, SHAPE_SIMS, seed, RunKind.Length);
-  for (let pass = 0; pass < SHAPE_PASSES && adjustLength(level, medianFirstWin(results), length); pass++) {
+  for (let pass = 0; pass < SHAPE_PASSES && adjustLength(level, iceOrder, medianFirstWin(results), length); pass++) {
     results = runs(level, style, SIM_MAX_MOVES, SHAPE_SIMS, seed, RunKind.Length);
   }
   return results.map((r) => efficiency(level, r));
@@ -297,10 +297,10 @@ function medianFirstWin(results: SimResult[]): number {
 }
 
 /**
- * Moves every goal towards the intended length: scales collect and pearl amounts, and strengthens or weakens crates and ice.
- * A twin that never wins gets every goal halved. Returns whether it changed anything.
+ * Moves every goal towards the intended length: scales collect and pearl amounts and the ice's layers,
+ * and strengthens or weakens crates. A twin that never wins gets every goal halved. Returns whether it changed anything.
  */
-function adjustLength(level: LevelDef, median: number, length: number): boolean {
+function adjustLength(level: LevelDef, iceOrder: number[], median: number, length: number): boolean {
   const factor = Number.isFinite(median) ? Math.min(3, Math.max(0.5, length / median)) : 0.5;
   let changed = false;
   for (const o of level.objectives) {
@@ -310,12 +310,17 @@ function adjustLength(level: LevelDef, median: number, length: number): boolean 
       if (Math.abs(factor - 1) <= 0.15 || target === o.target) continue;
       o.target = target;
       changed = true;
-    } else if (o.kind === ObjectiveKind.Crate || o.kind === ObjectiveKind.Ice) {
-      const [layer, max] = o.kind === ObjectiveKind.Crate ? [level.crate, 3] : [level.ice, 2];
-      // Layers are coarse: they change only when the length is well off. Too quick: thicker. Too slow: thinner, then fewer.
-      if (median < length * 0.75) changed = thicken(layer, max) || changed;
-      else if (median > length * 1.5) changed = (thin(layer) || drop(level, layer, factor)) || changed;
-      o.target = layer.filter((v) => v > 0).length;
+    } else if (o.kind === ObjectiveKind.Ice) {
+      const layers = level.ice.reduce((sum, v) => sum + v, 0);
+      const next = Math.min(iceOrder.length, Math.max(1, Math.round(layers * factor)));
+      if (Math.abs(factor - 1) <= 0.15 || next === layers) continue;
+      o.target = layIce(level, iceOrder, next);
+      changed = true;
+    } else if (o.kind === ObjectiveKind.Crate) {
+      // Crate layers are coarse: they change only when the length is well off. Too quick: thicker. Too slow: thinner, then fewer.
+      if (median < length * 0.75) changed = thicken(level.crate, 3) || changed;
+      else if (median > length * 1.5) changed = (thin(level.crate) || drop(level, level.crate, factor)) || changed;
+      o.target = level.crate.filter((v) => v > 0).length;
     }
   }
   return changed;
@@ -366,12 +371,19 @@ function drop(level: LevelDef, layer: number[], share: number): boolean {
 
 // ---------- layout ----------
 
+/** A candidate level with the order its ice grows and shrinks in while the goals are tuned. */
+interface Layout {
+  level: LevelDef;
+  /** see `iceOrderOf`; empty without an ice goal */
+  iceOrder: number[];
+}
+
 /**
  * One candidate layout with goals. `craft` (0 random taps … 1 planning) sets how intricate it gets:
- * holes in the board, crate shelves, chains, thick layers, a sixth color, double goals.
+ * holes in the board, crate shelves, chains, thick crates, a sixth color, double goals.
  * `length`, the twin's intended moves, sizes the crate and ice goals: their amount is the layout itself.
  */
-function buildLayout(n: number, plan: LevelPlan, seed: number, craft: number, length: number): LevelDef {
+function buildLayout(n: number, plan: LevelPlan, seed: number, craft: number, length: number): Layout {
   const shapeRng: RngHolder = { rng: hashSeed(seed, 11) };
   const blockRng: RngHolder = { rng: hashSeed(seed, 22) };
   const goalRng: RngHolder = { rng: hashSeed(seed, 33) };
@@ -393,28 +405,12 @@ function buildLayout(n: number, plan: LevelPlan, seed: number, craft: number, le
   if (goals.includes(ObjectiveKind.Crate) || (plan.mechanics.has(Mechanic.Crate) && n >= 25 && random(blockRng) < 0.6 * craft)) {
     placeCrates(grid, crate, n, craft, length, blockRng);
   }
-  if (goals.includes(ObjectiveKind.Ice)) placeIce(grid, ice, crate, n, craft, length, blockRng);
+  const iceOrder = goals.includes(ObjectiveKind.Ice) ? iceOrderOf(grid, crate, plan.intro === Mechanic.Ice, blockRng) : [];
   if (plan.intro === Mechanic.Chain || (plan.mechanics.has(Mechanic.Chain) && random(blockRng) < 0.25 + 0.4 * craft)) {
     placeChains(grid, chain, crate, n, craft, blockRng);
   }
 
-  const objectives: Objective[] = [];
-  for (const g of goals) {
-    if (g === ObjectiveKind.Collect) {
-      const each = Math.round(Math.min(40, 12 + n * 0.3) * (collect.length > 1 ? 0.7 : 1) * (colors >= 6 ? 0.85 : 1));
-      for (const color of collect) objectives.push({ kind: g, target: each, color });
-    } else if (g === ObjectiveKind.Ice) {
-      objectives.push({ kind: g, target: ice.filter((v) => v > 0).length, color: NO_COLOR });
-    } else if (g === ObjectiveKind.Crate) {
-      objectives.push({ kind: g, target: crate.filter((v) => v > 0).length, color: NO_COLOR });
-    } else if (g === ObjectiveKind.Pearl) {
-      objectives.push({ kind: g, target: Math.min(MAX_PEARLS, Math.max(1, Math.round(length / PEARL_MOVES))), color: NO_COLOR });
-    } else {
-      objectives.push({ kind: g, target: UNREACHABLE, color: NO_COLOR });
-    }
-  }
-
-  return {
+  const level: LevelDef = {
     number: n,
     rows,
     cols,
@@ -424,12 +420,27 @@ function buildLayout(n: number, plan: LevelPlan, seed: number, craft: number, le
     chain,
     colors,
     moves: SIM_MAX_MOVES,
-    objectives,
+    objectives: [],
     stars: [0, 0, 0],
     kind: plan.kind,
     intro: plan.intro,
     targetWinRate: plan.baseWinRate,
   };
+  for (const g of goals) {
+    if (g === ObjectiveKind.Collect) {
+      const each = Math.round(Math.min(40, 12 + n * 0.3) * (collect.length > 1 ? 0.7 : 1) * (colors >= 6 ? 0.85 : 1));
+      for (const color of collect) level.objectives.push({ kind: g, target: each, color });
+    } else if (g === ObjectiveKind.Ice) {
+      level.objectives.push({ kind: g, target: layIce(level, iceOrder, iceLayers(iceOrder, n, length)), color: NO_COLOR });
+    } else if (g === ObjectiveKind.Crate) {
+      level.objectives.push({ kind: g, target: crate.filter((v) => v > 0).length, color: NO_COLOR });
+    } else if (g === ObjectiveKind.Pearl) {
+      level.objectives.push({ kind: g, target: Math.min(MAX_PEARLS, Math.max(1, Math.round(length / PEARL_MOVES))), color: NO_COLOR });
+    } else {
+      level.objectives.push({ kind: g, target: UNREACHABLE, color: NO_COLOR });
+    }
+  }
+  return { level, iceOrder };
 }
 
 /** Random tappers get four colors more often (more cascades, more show); deliberate players meet a sixth. */
@@ -613,30 +624,65 @@ function placeCrates(grid: Grid, crate: number[], n: number, craft: number, leng
   }
 }
 
-function placeIce(grid: Grid, ice: number[], crate: number[], n: number, craft: number, length: number, h: RngHolder): void {
-  const { rows, cols } = grid;
-  const fraction = Math.min(0.5, (0.22 + Math.min(0.25, n / 400)) * Math.sqrt(length / LAYER_LENGTH));
-  const cr = (rows - 1) / 2;
-  const cc = (cols - 1) / 2;
-  const patterns: ((r: number, c: number) => boolean)[] = [
-    (r, c) => Math.abs(r - cr) <= rows * fraction && Math.abs(c - cc) <= cols * fraction + 0.5,
-    (r) => r >= rows - Math.max(2, Math.round(rows * fraction * 1.3)),
-    (r, c) => edge(r, rows) === 0 || edge(c, cols) === 0,
-    (r, c) => (r + c) % 2 === 0 && Math.abs(r - cr) <= rows * fraction * 1.4,
-    (r, c) => edge(c, cols) <= 1 && Math.abs(r - cr) <= rows * fraction * 1.5,
-  ];
-  const pattern = pick(h, patterns);
-  const thick = n >= 40 && random(h) < 0.7 * craft;
-  for (let i = 0; i < ice.length; i++) {
-    const r = Math.floor(i / cols);
-    const c = i % cols;
-    if (grid.mask[i] === 1 && crate[i] === 0 && pattern(r, c)) {
-      ice[i] = thick && edge(r, rows) >= 2 && edge(c, cols) >= 2 ? 2 : 1;
-    }
-  }
-  if (!ice.some(Boolean)) {
-    for (let i = 0; i < ice.length; i++) if (grid.mask[i] === 1 && crate[i] === 0 && Math.floor(i / cols) >= rows - 2) ice[i] = 1;
-  }
+/** Share of the free cells under ice on an early level at the base length: the start the length tuner works from. */
+const ICE_SHARE = 0.4;
+
+/** A rank per cell for one way ice spreads over a board: lower ranks freeze first, and every spread ends with the whole board. */
+type IceSpread = (r: number, c: number, rows: number, cols: number) => number;
+
+const ICE_SPREADS: IceSpread[] = [
+  // A rectangle growing from the middle; each ring of it from the middles of its sides to its corners.
+  (r, c, rows, cols) => Math.max(fromMiddle(r, rows) / rows, fromMiddle(c, cols) / cols) + (fromMiddle(r, rows) + fromMiddle(c, cols)) / 1000,
+  // Row by row from the bottom up, each row from its middle out.
+  (r, c, rows, cols) => rows - 1 - r + fromMiddle(c, cols) / cols,
+  // Ring by ring from the walls inwards, each ring from its corners.
+  (r, c, rows, cols) => Math.min(edge(r, rows), edge(c, cols)) - (fromMiddle(r, rows) / rows + fromMiddle(c, cols) / cols) / 4,
+  // A checkerboard from the middle rows out, then the cells between.
+  (r, c, rows) => ((r + c) % 2) * rows + fromMiddle(r, rows),
+  // Column by column from the walls inwards, each column from its middle out.
+  (r, c, rows, cols) => edge(c, cols) * rows + fromMiddle(r, rows),
+];
+
+/**
+ * The order ice is laid in, one layer per entry: every free cell once by one spread, then every one again by another.
+ * However much ice a level gets, a cell has a second layer only once the first covers the whole board.
+ * The intro teaches a single layer, so its order stops after the first pass.
+ */
+function iceOrderOf(grid: Grid, crate: number[], intro: boolean, h: RngHolder): number[] {
+  const { rows, cols, mask } = grid;
+  const free = mask.flatMap((m, i) => (m === 1 && crate[i] === 0 ? [i] : []));
+  const spread = (rank: IceSpread): number[] => {
+    const key = (i: number): number => rank(Math.floor(i / cols), i % cols, rows, cols);
+    // Equal ranks keep a cell beside its mirror twin, so a cut through them can take both.
+    const pair = (i: number): number => i - (i % cols) + edge(i % cols, cols);
+    return [...free].sort((a, b) => key(a) - key(b) || pair(a) - pair(b) || a - b);
+  };
+  const first = spread(pick(h, ICE_SPREADS));
+  return intro ? first : [...first, ...spread(pick(h, ICE_SPREADS))];
+}
+
+/** Layers a layout's ice starts with: a share of the free cells that grows with the intended length and, slowly, with the level. */
+function iceLayers(order: number[], n: number, length: number): number {
+  const share = ICE_SHARE * (length / LAYER_LENGTH) * (1 + Math.min(0.5, n / 400));
+  return Math.min(order.length, Math.max(1, Math.round(new Set(order).size * share)));
+}
+
+/**
+ * Lays the first `layers` entries of the order and returns how many cells are iced: the goal.
+ * A cut between a cell and its mirror twin takes the twin too, so a symmetric spread stays symmetric.
+ */
+function layIce(level: LevelDef, order: number[], layers: number): number {
+  const { cols, ice } = level;
+  const twin = (i: number): number => i - (i % cols) + cols - 1 - (i % cols);
+  let count = Math.min(layers, order.length);
+  if (count > 0 && count < order.length && order[count] === twin(order[count - 1])) count++;
+  ice.fill(0);
+  for (let k = 0; k < count; k++) ice[order[k]]++;
+  return ice.filter((v) => v > 0).length;
+}
+
+function fromMiddle(x: number, size: number): number {
+  return Math.abs(x - (size - 1) / 2);
 }
 
 function placeChains(grid: Grid, chain: number[], crate: number[], n: number, craft: number, h: RngHolder): void {

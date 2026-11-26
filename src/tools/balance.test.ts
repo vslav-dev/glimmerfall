@@ -110,6 +110,14 @@ function bestCell(game: GameState, booster: Booster): number {
   return best;
 }
 
+/** The ice of a level: the share of its free cells under ice, and how many of them have two layers (plans/15). */
+function iceOf(level: LevelDef): string {
+  const free = level.mask.filter((m, i) => m === 1 && level.crate[i] === 0).length;
+  const iced = level.ice.filter(Boolean).length;
+  if (iced === 0) return '';
+  return ` 🧊 ${round(iced / free)} of ${free}, double ${level.ice.filter((v) => v > 1).length}`;
+}
+
 const round = (v: number, d = 2): number => Math.round(v * 10 ** d) / 10 ** d;
 const mean = (xs: number[]): number => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
 
@@ -158,7 +166,7 @@ describe.runIf(process.env.GF_BALANCE)('balance', () => {
       three += t;
       leftAtWin.push(...left);
       const goals = level.objectives.map((o) => `${o.kind}${o.kind === ObjectiveKind.Collect ? o.color : ''}:${o.target}`).join(',');
-      console.log(`📊 L${n} ${level.kind} moves=${level.moves} target=${round(target)} twin=${round(level.targetWinRate)} won=${round(w / RUNS)} 3★/win=${round(t / Math.max(1, w))} left=${round(mean(left), 1)} ${goals}`);
+      console.log(`📊 L${n} ${level.kind} moves=${level.moves} target=${round(target)} twin=${round(level.targetWinRate)} won=${round(w / RUNS)} 3★/win=${round(t / Math.max(1, w))} left=${round(mean(left), 1)} ${goals}${iceOf(level)}`);
     }
     const perWin = mean(leftAtWin);
     console.log(`🎯 win rate ${round(wins / runs)} (twin predicts ${round(mean(twin))}, moves ${round(mean(granted), 1)}) | 3★ per win ${round(three / wins)} | moves left per win ${round(perWin, 1)} (median ${[...leftAtWin].sort((a, b) => a - b)[Math.floor(leftAtWin.length / 2)]})`);

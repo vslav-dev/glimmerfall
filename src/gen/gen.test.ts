@@ -58,6 +58,28 @@ describe('generator', () => {
     }
   }, 120_000);
 
+  it('lays a second layer of ice only once the first covers the whole board', () => {
+    let iced = 0;
+    let doubled = 0;
+    for (const [n, style, pace] of [[4, AVERAGE, 1], [9, AVERAGE, 1], [21, TAPPER, 2], [41, PLANNER, 3], [77, PLANNER, 3]] as const) {
+      for (let seed = 1; seed <= 12; seed++) {
+        const { level } = draftLevel(req(n, seed, style, pace));
+        if (!level.objectives.some((o) => o.kind === ObjectiveKind.Ice)) continue;
+        const free = level.ice.filter((_, i) => level.mask[i] === 1 && level.crate[i] === 0);
+        if (n === 4) expect(Math.max(...free)).toBe(1);
+        if (free.some((v) => v > 1)) {
+          expect(free.every((v) => v > 0), `level ${n}, seed ${seed}`).toBe(true);
+          doubled++;
+        }
+        iced++;
+        break;
+      }
+    }
+    expect(iced).toBe(5);
+    // A fast planner's long levels need more ice than one layer over the board.
+    expect(doubled).toBeGreaterThan(0);
+  }, 120_000);
+
   it('predicts each twin run at the finalized moves, wins about as targeted, and keeps 3 stars rare', () => {
     const level = finalizeLevel(draftLevel(req(26)), 0.7);
     const runs = 80;
