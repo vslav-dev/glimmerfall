@@ -330,7 +330,6 @@ function drawGem(ctx: CanvasRenderingContext2D, s: number, color: number, specia
   bounce.addColorStop(1, `${p.light}00`);
   ctx.fillStyle = bounce;
   ctx.fillRect(-r * 1.2, -r * 1.2, r * 2.4, r * 2.4);
-  drawSpecialMark(ctx, r, special);
   const shine = ctx.createRadialGradient(-r * 0.3, -r * 0.5, 0, -r * 0.3, -r * 0.5, r * 0.7);
   shine.addColorStop(0, 'rgba(255,255,255,0.75)');
   shine.addColorStop(1, 'rgba(255,255,255,0)');
@@ -345,6 +344,8 @@ function drawGem(ctx: CanvasRenderingContext2D, s: number, color: number, specia
   ctx.arc(-r * 0.3, -r * 0.32, r * 0.08, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
+  // The mark of a special glows over the gem and past its edge: it must read at a glance.
+  drawSpecialMark(ctx, r, special);
   ctx.restore();
 }
 
@@ -356,10 +357,11 @@ function drawSpecialMark(ctx: CanvasRenderingContext2D, r: number, special: Spec
   ctx.strokeStyle = 'rgba(255,255,255,0.95)';
   switch (special) {
     case Special.LineH:
-      for (const y of [-0.22, 0.22]) ctx.fillRect(-r * 1.2, r * (y - 0.06), r * 2.4, r * 0.12);
+      drawLineMark(ctx, r);
       break;
     case Special.LineV:
-      for (const x of [-0.22, 0.22]) ctx.fillRect(r * (x - 0.06), -r * 1.2, r * 0.12, r * 2.4);
+      ctx.rotate(Math.PI / 2);
+      drawLineMark(ctx, r);
       break;
     case Special.Bomb:
       ctx.lineWidth = r * 0.14;
@@ -372,6 +374,21 @@ function drawSpecialMark(ctx: CanvasRenderingContext2D, r: number, special: Spec
       break;
   }
   ctx.restore();
+}
+
+/** Two bright stripes along the line, with arrow tips at both ends: it fires both ways. */
+function drawLineMark(ctx: CanvasRenderingContext2D, r: number): void {
+  for (const y of [-0.22, 0.22]) ctx.fillRect(-r * 0.95, r * (y - 0.06), r * 1.9, r * 0.12);
+  ctx.lineWidth = r * 0.13;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  for (const x of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(x * r * 0.74, -r * 0.44);
+    ctx.lineTo(x * r * 1.02, 0);
+    ctx.lineTo(x * r * 0.74, r * 0.44);
+    ctx.stroke();
+  }
 }
 
 function drawPrism(ctx: CanvasRenderingContext2D, s: number): void {
