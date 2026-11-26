@@ -133,9 +133,9 @@ export class Scene {
     return this;
   }
 
-  /** The bottom of every column is marked: pearls leave there. */
-  public withExits(): this {
-    for (let c = 0; c < COLS; c++) this.add(FrameName.Exit, state(this.rows - 1, c), Z.Ice);
+  /** The bottom of the pearl's column `c` is marked: the pearl leaves there. */
+  public withExit(c: number): this {
+    this.add(FrameName.Exit, state(this.rows - 1, c), Z.Ice);
     return this;
   }
 
@@ -793,7 +793,7 @@ export const SECTIONS: Section[] = [
         caption: H.pearl,
         scene: () =>
           new Scene(['3 0 O 2 1', '2 4 1 0 3', '0 3 4 1 4', '4 0 1 3 2'])
-            .withExits()
+            .withExit(2)
             .swipe([2, 3], [2, 2], SWIPE)
             .match([[1, 2], [2, 2], [3, 2]], MATCH)
             .fall(FALL)

@@ -139,8 +139,10 @@ export class BoardView {
   /** piece per cell as the player currently sees it (lags the core board during playback) */
   private grid: (Piece | null)[] = [];
   private board: Board | null = null;
-  /** the level brings pearls down: the bottom of every column is marked */
+  /** the level brings pearls down: the bottom of a pearl's column is marked */
   private exits = false;
+  /** the exit mark at the bottom of each column, by column (pearl levels only) */
+  private exitMarks: Sprite[] = [];
   private cell = 48;
   private originX = 0;
   private originY = 0;
@@ -244,7 +246,7 @@ export class BoardView {
     this.layout(this.width, this.height);
   }
 
-  /** `exits`: the level brings pearls down, so the bottom of every column is marked. */
+  /** `exits`: the level brings pearls down, so the bottom of a pearl's column is marked. */
   public setBoard(board: Board, exits: boolean): void {
     this.cancelHint();
     this.epoch++;
@@ -282,6 +284,7 @@ export class BoardView {
       for (const child of layer.removeChildren()) child.destroy();
     }
     this.sprites.clear();
+    this.exitMarks = [];
     // Lit ids survive a rebuild; their halos come back on the next frame.
     for (const id of this.lit.keys()) this.lit.set(id, null);
     this.ice.clear();
@@ -338,10 +341,22 @@ export class BoardView {
       if (cell.ice > 0) this.addLayer(this.ice, this.iceLayer, i, FrameName.ice(cell.ice), cell.ice);
       if (cell.crate > 0) this.addLayer(this.crates, this.crateLayer, i, FrameName.crate(cell.crate), cell.crate);
       if (cell.chain > 0) this.addLayer(this.chains, this.chainLayer, i, FrameName.chain(cell.chain), cell.chain);
-      if (this.exits && isExit(b, i)) this.exitLayer.addChild(this.sprite(FrameName.Exit, r, c));
+      if (this.exits && isExit(b, i)) this.exitMarks[c] = this.exitLayer.addChild(this.sprite(FrameName.Exit, r, c));
     });
     this.grid.forEach((piece, i) => {
       if (piece) this.addPiece(piece, this.posOf(i));
+    });
+    this.markExits();
+  }
+
+  /** Only the column a pearl is in shows its exit, as the player sees the board. */
+  private markExits(): void {
+    if (this.exitMarks.length === 0) return;
+    const cols = this.board!.cols;
+    for (const mark of this.exitMarks) if (mark) mark.visible = false;
+    this.grid.forEach((piece, i) => {
+      const mark = piece?.pearl ? this.exitMarks[i % cols] : undefined;
+      if (mark) mark.visible = true;
     });
   }
 
@@ -473,6 +488,7 @@ export class BoardView {
     };
     if (ev.valid) {
       [this.grid[ia], this.grid[ib]] = [this.grid[ib], this.grid[ia]];
+      this.markExits();
       await this.scene.tweens.run(150, move, { ease: Ease.outQuad });
       return;
     }
@@ -530,6 +546,7 @@ export class BoardView {
       sinkPearl(this.kit, sprite);
       end = Math.max(end, SINK_MS);
     }
+    this.markExits();
 
     for (const rm of ev.removed) {
       const i = this.indexOf(rm.pos);
@@ -604,9 +621,12 @@ export class BoardView {
       const i = this.indexOf(m.path[0]);
       if (this.grid[i]?.id === m.piece.id) this.grid[i] = null;
     }
-    let end = 0;
     for (const m of ev.moves) {
       this.grid[this.indexOf(m.path[m.path.length - 1])] = m.piece;
+    }
+    this.markExits();
+    let end = 0;
+    for (const m of ev.moves) {
       const sprite = this.sprites.get(m.piece.id) ?? this.addPiece(m.piece, m.path[0]);
       const points = m.path.map((p) => ({ x: this.x(p.c), y: this.y(p.r) }));
       const lengths = points.slice(1).map((p, k) => Math.hypot(p.x - points[k].x, p.y - points[k].y));
