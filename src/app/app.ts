@@ -499,7 +499,7 @@ export class GameApp {
     if (!current || !attempt || attempt.game !== game) return;
     const { player, settings } = this.save;
     const { record, target, threeStars } = attempt;
-    trackAttempt({ draft: current.draft, game, record, end, left, stars, fails: current.fails, difficulty: settings.difficulty, target, threeStars, model: player.model });
+    trackAttempt({ draft: current.draft, game, record, end, left, stars, fails: current.fails, difficulty: settings.difficulty, target, threeStars, model: player.model, view: this.view.fit, boardSize: settings.boardSize });
     // An abandoned attempt has no outcome: it teaches neither strength nor stars.
     const weight = game.strikes > 0 ? BOOSTED_WEIGHT : 1;
     if (end !== AttemptEnd.Restart) observeOutcome(player.model, end === AttemptEnd.Won, game.level.targetWinRate, weight);

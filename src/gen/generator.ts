@@ -7,7 +7,7 @@ import { type Archetype, ARCHETYPES, archetypeOf, makeShape, orbitOf, plainShape
 import type { TwinStyle } from '@/player/model';
 
 /** Bumped whenever the same request builds a different level: a replay needs the generator that built its level. */
-export const GEN_VERSION = 14;
+export const GEN_VERSION = 15;
 /** Levels everyone shares: the tutorial, and the first read of the player's style. */
 const COMMON_LEVELS = 5;
 /** How deliberate the shared levels assume the player to be. */
@@ -405,7 +405,7 @@ interface Layout {
 }
 
 /** Free cells of an everyday board, where a level lasts its plain length; bigger boards last longer, smaller ones less. */
-const BOARD_CELLS = 62;
+const BOARD_CELLS = 60;
 
 /** The twin's intended moves: the player's length scaled by their pace and, past the plain boards, by the board's size. */
 function twinLength(n: number, pace: number, cells: number | null): number {

@@ -18,8 +18,13 @@ describe('shapes', () => {
         const pearls = k % 2 === 0;
         const s = makeShape(a, k % 3 === 0 ? 0 : 1, pearls, { rng: hashSeed(k, 5) });
         const label = `${a.name} #${k}`;
-        expect(s.cols, label).toBeLessThanOrEqual(9);
+        expect(s.cols, label).toBeLessThanOrEqual(8);
+        expect(s.rows, label).toBeLessThanOrEqual(12);
         expect(s.rows * s.cols, label).toBeLessThanOrEqual(99);
+        // No edge row or column is all holes: the board takes no room on the screen it does not use.
+        const rowUsed = (r: number): boolean => s.mask.slice(r * s.cols, (r + 1) * s.cols).some(Boolean);
+        const colUsed = (c: number): boolean => s.mask.some((m, i) => m === 1 && i % s.cols === c);
+        expect([rowUsed(0), rowUsed(s.rows - 1), colUsed(0), colUsed(s.cols - 1)], label).toEqual([true, true, true, true]);
         expect(isPlayable(s.mask, s.rows, s.cols), label).toBe(true);
         s.mask.forEach((m, i) => {
           for (const j of orbitOf(i, s.rows, s.cols, s.symmetry)) expect(s.mask[j], label).toBe(m);

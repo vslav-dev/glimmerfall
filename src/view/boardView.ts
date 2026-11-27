@@ -30,6 +30,27 @@ type TransformEvent = Extract<GameEvent, { type: 'transform' }>;
 type LightEvent = Extract<GameEvent, { type: 'light' }>;
 
 const MAX_CELL = 84;
+/**
+ * A board narrower than this gets the cells of one this wide (plans/17): 7 and 8 columns fill the width,
+ * 6 leave a strip at the sides instead of blowing the pieces up.
+ */
+const FIT_COLS = 7;
+
+/** What sets the size of a cell: the width of the screen, its height, or the cap for big screens. */
+export const CellFit = {
+  Width: 'width',
+  Height: 'height',
+  Max: 'max',
+} as const;
+export type CellFit = (typeof CellFit)[keyof typeof CellFit];
+
+/** How the board sits on the screen, CSS pixels: the area it is fitted into (the booster bar left out), its cell and what set the cell. */
+export interface BoardFit {
+  area: [number, number];
+  cell: number;
+  fit: CellFit;
+}
+
 /** Time constant of the drift after a viewport change: ~95% of the way in three of these. */
 const GLIDE_TAU = 90;
 const HINT_DELAY = 5000;
@@ -144,6 +165,7 @@ export class BoardView {
   /** the exit mark at the bottom of each column, by column (pearl levels only) */
   private exitMarks: Sprite[] = [];
   private cell = 48;
+  private cellFit: CellFit = CellFit.Width;
   private originX = 0;
   private originY = 0;
   private width = 1;
@@ -309,13 +331,22 @@ export class BoardView {
     g.scale.set(scale);
   }
 
+  /** How the board sits on the screen now, for telemetry. */
+  public get fit(): BoardFit {
+    return { area: [Math.round(this.width), Math.round(this.height - this.footer)], cell: this.cell, fit: this.cellFit };
+  }
+
   /** Fits the board into the canvas area (CSS pixels). */
   public layout(width: number, height: number, forceRebuild = false): void {
     this.width = width;
     this.height = height;
     const b = this.board;
     if (!b) return;
-    const cell = Math.max(16, Math.floor(Math.min(width / b.cols, (height - this.footer) / b.rows, MAX_CELL) * this.scale));
+    const byWidth = width / Math.max(b.cols, FIT_COLS);
+    const byHeight = (height - this.footer) / b.rows;
+    const fitted = Math.min(byWidth, byHeight, MAX_CELL);
+    this.cellFit = fitted === MAX_CELL ? CellFit.Max : fitted === byWidth ? CellFit.Width : CellFit.Height;
+    const cell = Math.max(16, Math.floor(fitted * this.scale));
     this.cell = cell;
     this.originX = Math.round((width - cell * b.cols) / 2);
     this.originY = Math.round((height - this.footer - cell * b.rows) / 2);

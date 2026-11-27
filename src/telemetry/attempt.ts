@@ -5,6 +5,7 @@ import { GEN_VERSION, type LevelDraft } from '@/gen/generator';
 import type { Difficulty } from '@/player/difficulty';
 import type { PlayerModel } from '@/player/model';
 import { track } from '@/telemetry/telemetry';
+import type { BoardFit } from '@/view/boardView';
 
 /**
  * One attempt as the least that replays it: the game is deterministic, so the starting board seed and
@@ -147,6 +148,10 @@ export interface AttemptReport {
   /** the 3-star quantile it was finalized with */
   threeStars: number;
   model: PlayerModel;
+  /** how the board sat on the screen when the attempt ended */
+  view: BoardFit;
+  /** the board size setting, percent: the scale of its cells */
+  boardSize: number;
 }
 
 /**
@@ -167,6 +172,7 @@ export function trackAttempt(r: AttemptReport): void {
     variant,
     shape: archetype ?? null,
     size: `${level.cols}x${level.rows}`,
+    view: { ...r.view, scale: r.boardSize },
     style: request.style,
     pace: request.pace,
     difficulty: r.difficulty,

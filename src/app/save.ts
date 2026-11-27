@@ -21,7 +21,7 @@ export interface Settings {
   haptics: boolean;
   /** hide the phone's status and navigation bars */
   fullscreen: boolean;
-  /** board size, percent of the space it may take */
+  /** piece size, percent of the cell the screen gives the board: the board scales with it */
   boardSize: number;
   difficulty: Difficulty;
   /** debug sound menu: the variant picked for each sound */

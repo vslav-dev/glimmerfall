@@ -45,13 +45,17 @@ export function orbitOf(i: number, rows: number, cols: number, symmetry: Symmetr
   }
 }
 
-/** [cols, rows]. At most 9 columns (cells stay big enough for a finger) and 99 cells (telemetry packs a cell in 7 bits). */
+/**
+ * [cols, rows]. 6–8 columns, so a cell's size on a screen barely changes from level to level (plans/17): the view
+ * draws 6 columns as wide as 7. Big boards grow in height instead: up to 12 rows, what a phone's height holds
+ * at the width of 8 columns. At most 99 cells (telemetry packs a cell in 7 bits).
+ */
 type Size = readonly [number, number];
-const STANDARD: Size[] = [[7, 8], [8, 8], [8, 9], [7, 9], [8, 10]];
-const BIG: Size[] = [[9, 9], [9, 10], [9, 11], [8, 11]];
-const TALL: Size[] = [[5, 9], [5, 10], [6, 9], [6, 10], [6, 11], [7, 11]];
-const WIDE: Size[] = [[9, 7], [9, 8], [8, 7]];
-const TINY: Size[] = [[6, 6], [6, 7], [7, 6], [5, 7]];
+const STANDARD: Size[] = [[7, 8], [8, 8], [8, 9], [7, 9], [8, 10], [7, 10]];
+const BIG: Size[] = [[8, 11], [8, 12], [7, 12]];
+const TALL: Size[] = [[6, 9], [6, 10], [6, 11], [6, 12], [7, 11]];
+const WIDE: Size[] = [[8, 7], [8, 8]];
+const TINY: Size[] = [[6, 6], [6, 7], [7, 6]];
 
 /** Whether the cell at (r, c) is a hole. */
 type Hole = (r: number, c: number) => boolean;
@@ -138,12 +142,13 @@ const towers: Cut = (_rows, cols, _depth, h) => {
 };
 
 /** Every other or third column cut short at the bottom or the top. */
-const teeth: Cut = (rows, _cols, depth, h) => {
+const teeth: Cut = (rows, cols, depth, h) => {
   const every = pick(h, [2, 3]);
   const phase = randInt(h, every);
   const deep = 1 + Math.round(depth);
   const bottom = random(h) < 0.5;
-  return (r, c) => c % every === phase && (bottom ? rows - 1 - r : r) < deep;
+  // Counted from the nearer wall: a mirror over the teeth keeps them, where on an even width it filled the gaps between.
+  return (r, c) => edge(c, cols) % every === phase && (bottom ? rows - 1 - r : r) < deep;
 };
 
 /** Rows shifted step by step: a parallelogram, leaning one way or the other. */
@@ -181,7 +186,8 @@ const arch: Cut = (rows, cols, depth, h) => {
   const tall = 2 + Math.round(depth);
   const half = 1 + Math.round(depth * 0.6 * random(h));
   const at = mid(cols) + (random(h) < 0.3 ? randInt(h, 3) - 1 : 0);
-  return (r, c) => rows - 1 - r < tall && Math.abs(c - at) <= half;
+  // The walls stay legs: an opening off the middle, mirrored, would otherwise span a narrow board.
+  return (r, c) => rows - 1 - r < tall && Math.abs(c - at) <= half && edge(c, cols) > 0;
 };
 
 /** Two lobes on top, a point below. */
@@ -250,7 +256,7 @@ export const ARCHETYPES: Archetype[] = [
   { name: 'stairs', sizes: [...STANDARD, ...BIG], symmetries: [Turn, None, Mirror], cut: stairs },
   { name: 'cheese', sizes: [...STANDARD, ...BIG], symmetries: [Quad, Turn, None], cut: cheese },
   { name: 'arch', sizes: [...STANDARD, ...BIG, ...WIDE], symmetries: [Mirror], cut: arch },
-  { name: 'heart', sizes: [[8, 9], ...BIG], symmetries: [Mirror], cut: heart },
+  { name: 'heart', sizes: [[8, 9], [8, 10], [8, 11]], symmetries: [Mirror], cut: heart },
   { name: 'wild', sizes: [...STANDARD, ...BIG, ...TALL, ...WIDE, ...TINY], symmetries: [None], cut: wild },
   { name: 'stitch', sizes: [...STANDARD, ...BIG], symmetries: [None], cut: stitch },
 ];
@@ -302,9 +308,28 @@ export function makeShape(archetype: Archetype, craft: number, pearls: boolean, 
     const raw = Array.from({ length: rows * cols }, (_, i) => (hole(Math.floor(i / cols), i % cols) ? 0 : 1));
     // The symmetry laid over the cut: a hole anywhere in an orbit opens the whole orbit, so no cut is lost.
     const mask = prune(raw.map((_, i) => (orbitOf(i, rows, cols, symmetry).every((j) => raw[j] === 1) ? 1 : 0)), rows, cols, symmetry, pearls);
-    if (isPlayable(mask, rows, cols)) return { archetype: archetype.name, rows, cols, mask, symmetry };
+    if (isPlayable(mask, rows, cols)) return crop({ archetype: archetype.name, rows, cols, mask, symmetry });
   }
   return { archetype: archetype.name, rows, cols, mask: new Array<number>(rows * cols).fill(1), symmetry };
+}
+
+/**
+ * The board cut down to its cells: whole empty rows and columns at its edges would only take room on the screen.
+ * The mask holds whole orbits, so an empty edge comes with its images and the symmetry holds on the smaller board.
+ */
+function crop(s: Shape): Shape {
+  const { rows, cols, mask } = s;
+  const rowUsed = (r: number): boolean => mask.slice(r * cols, (r + 1) * cols).some(Boolean);
+  const colUsed = (c: number): boolean => mask.some((m, i) => m === 1 && i % cols === c);
+  let [top, bottom, left, right] = [0, rows - 1, 0, cols - 1];
+  while (!rowUsed(top)) top++;
+  while (!rowUsed(bottom)) bottom--;
+  while (!colUsed(left)) left++;
+  while (!colUsed(right)) right--;
+  const width = right - left + 1;
+  const height = bottom - top + 1;
+  const cropped = Array.from({ length: width * height }, (_, i) => mask[(top + Math.floor(i / width)) * cols + left + (i % width)]);
+  return { ...s, rows: height, cols: width, mask: cropped };
 }
 
 /** The plain board: the first levels and a mechanic's lesson, sized as the game always had them. */

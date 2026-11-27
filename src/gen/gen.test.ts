@@ -68,7 +68,7 @@ describe('generator', () => {
     let iced = 0;
     let doubled = 0;
     for (const [n, style, pace] of [[4, AVERAGE, 1], [9, AVERAGE, 1], [21, TAPPER, 2], [41, PLANNER, 3], [77, PLANNER, 3]] as const) {
-      for (let seed = 1; seed <= 12; seed++) {
+      for (let seed = 1; seed <= 24; seed++) {
         const { level } = draftLevel(req(n, seed, style, pace));
         if (!level.objectives.some((o) => o.kind === ObjectiveKind.Ice)) continue;
         const free = level.ice.filter((_, i) => level.mask[i] === 1 && level.crate[i] === 0);

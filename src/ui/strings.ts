@@ -47,7 +47,7 @@ export const S = {
   sound: 'Звук',
   haptics: 'Вибрация',
   fullscreen: 'Во весь экран',
-  boardSize: 'Размер поля',
+  boardSize: 'Размер фишек',
   smaller: 'Меньше',
   bigger: 'Больше',
   percent: (n: number): string => `${n}%`,
