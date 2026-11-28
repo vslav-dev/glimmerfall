@@ -261,6 +261,12 @@ export class BoardView {
     this.layout(this.width, this.height);
   }
 
+  /** The cells take the theme's color: a tint on their layer, white tiles turn colored glass at no cost a frame. */
+  public setTileTint(tint: number): void {
+    this.tiles.tint = tint;
+    this.scene.request();
+  }
+
   /** The atlas is repainted for the new cell size, so a smaller board stays sharp. */
   public setScale(scale: number): void {
     if (scale === this.scale) return;

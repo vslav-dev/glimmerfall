@@ -131,8 +131,11 @@ export class Ui {
     this.hudGlide.follow();
   }
 
-  public setTheme(level: number): void {
-    document.documentElement.dataset.theme = String(Math.floor((level - 1) / 20) % THEMES);
+  /** Sets the level's theme; returns its cell tint (`--tile`, a hex color) for the board. */
+  public setTheme(level: number): number {
+    const root = document.documentElement;
+    root.dataset.theme = String(Math.floor((level - 1) / 20) % THEMES);
+    return parseInt(getComputedStyle(root).getPropertyValue('--tile').trim().slice(1), 16);
   }
 
   // ---------- screens ----------

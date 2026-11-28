@@ -218,7 +218,7 @@ export class GameApp {
       perfContext({ level: game.level.number, board: `${game.board.cols}x${game.board.rows}` });
       this.view.inputEnabled = false;
       this.persist();
-      this.ui.setTheme(game.level.number);
+      this.view.setTileTint(this.ui.setTheme(game.level.number));
       this.ui.hideOverlay();
       this.ui.showHud(game.level);
       this.ui.updateHud(game);

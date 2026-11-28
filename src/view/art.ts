@@ -7,18 +7,22 @@ import { MAX_COLORS, NO_COLOR, Special } from '@/core/types';
 
 interface Palette {
   base: string;
+  /** the lit side: lighter, but still the gem's own hue, not a pastel */
   light: string;
   dark: string;
 }
 
-/** Each color also has its own silhouette, so the game is readable without color vision. */
+/**
+ * Each color also has its own silhouette, so the game is readable without color vision.
+ * Jewel tones: a saturated body, a lit side of the same hue and a deep, still colored, shade.
+ */
 export const GEM_PALETTES: Palette[] = [
-  { base: '#ff4f6d', light: '#ffd0d8', dark: '#9e1236' },
-  { base: '#ffbe2e', light: '#fff1c4', dark: '#a8650a' },
-  { base: '#35d07f', light: '#c9ffe0', dark: '#0d7a45' },
-  { base: '#3f8cff', light: '#cfe3ff', dark: '#1543a8' },
-  { base: '#a65cff', light: '#ead6ff', dark: '#5a1ea8' },
-  { base: '#2fe0e0', light: '#d0ffff', dark: '#0a7f8a' },
+  { base: '#ff2a55', light: '#ff9cb0', dark: '#8c0028' },
+  { base: '#ffb400', light: '#fff07a', dark: '#b05400' },
+  { base: '#14d465', light: '#8affb5', dark: '#006b30' },
+  { base: '#2a74ff', light: '#94c0ff', dark: '#0b2a9c' },
+  { base: '#a438ff', light: '#d9a6ff', dark: '#4a0a99' },
+  { base: '#00d5e8', light: '#96fbff', dark: '#00648a' },
 ];
 
 /** Hex tint per color for particles. */
@@ -310,9 +314,11 @@ function drawGem(ctx: CanvasRenderingContext2D, s: number, color: number, specia
   ctx.fill();
   ctx.restore();
 
+  // The pure color holds most of the body: the lit side and the shade are only its edges.
   const body = ctx.createRadialGradient(-r * 0.3, -r * 0.4, r * 0.05, 0, 0, r * 1.15);
   body.addColorStop(0, p.light);
-  body.addColorStop(0.45, p.base);
+  body.addColorStop(0.3, p.base);
+  body.addColorStop(0.7, p.base);
   body.addColorStop(1, p.dark);
   shape(ctx, r);
   ctx.fillStyle = body;
@@ -330,8 +336,13 @@ function drawGem(ctx: CanvasRenderingContext2D, s: number, color: number, specia
   bounce.addColorStop(1, `${p.light}00`);
   ctx.fillStyle = bounce;
   ctx.fillRect(-r * 1.2, -r * 1.2, r * 2.4, r * 2.4);
+  // A glassy rim: the lit color along the inside of the edge, so the gem reads cut and lit through.
+  shape(ctx, r);
+  ctx.lineWidth = s * 0.05;
+  ctx.strokeStyle = `${p.light}59`;
+  ctx.stroke();
   const shine = ctx.createRadialGradient(-r * 0.3, -r * 0.5, 0, -r * 0.3, -r * 0.5, r * 0.7);
-  shine.addColorStop(0, 'rgba(255,255,255,0.75)');
+  shine.addColorStop(0, 'rgba(255,255,255,0.8)');
   shine.addColorStop(1, 'rgba(255,255,255,0)');
   ctx.fillStyle = shine;
   ctx.beginPath();
@@ -400,7 +411,8 @@ function drawPrism(ctx: CanvasRenderingContext2D, s: number): void {
   ctx.shadowOffsetY = s * 0.035;
   ctx.beginPath();
   ctx.arc(0, 0, r, 0, Math.PI * 2);
-  const hues = ['#ff4f6d', '#ffbe2e', '#35d07f', '#2fe0e0', '#3f8cff', '#a65cff', '#ff4f6d'];
+  // The gems' own colors round the wheel: red, yellow, green, cyan, blue, purple, back to red.
+  const hues = [0, 1, 2, 5, 3, 4, 0].map((color) => GEM_PALETTES[color].base);
   // Conic gradients are missing only in very old WebViews; a diagonal rainbow is a fine fallback there.
   const rainbow = typeof ctx.createConicGradient === 'function' ? ctx.createConicGradient(0, 0, 0) : ctx.createLinearGradient(-r, -r, r, r);
   hues.forEach((h, i) => rainbow.addColorStop(i / (hues.length - 1), h));
